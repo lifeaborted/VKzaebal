@@ -14,17 +14,12 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_PREFIX_PATH "C:/Qt/6.11.1/msvc2022_64")
 
 # Ищем нужные модули Qt
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Network)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Network Multimedia)
 
 # Указываем путь к исходникам и заголовкам
 set(PROJECT_SOURCES
         src/utils/logger/logger.h
-        src/core/audio/AudioEngine/AudioEngine.h
-        src/core/network/NetworkStreamer.h
         src/main.cpp
-        src/core/audio/AudioEngine/AudioEngine.cpp
-        src/core/audio/miniaudio/miniaudio_impl.cpp
-        src/core/network/NetworkStreamer.cpp
         src/utils/logger/Logger.cpp
         src/utils/buffer/RingBuffer.h
         src/utils/buffer/RingBuffer.cpp
@@ -48,4 +43,5 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         Qt6::Qml
         Qt6::Quick
         Qt6::Network
+        Qt6::Multimedia
 )

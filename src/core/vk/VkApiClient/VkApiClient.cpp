@@ -1,11 +1,13 @@
 #include "VkApiClient.h"
 #include "utils/logger/logger.h"
+
 #include <QUrl>
 #include <QUrlQuery>
 #include <QNetworkRequest>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QRegularExpression>
 
 VkApiClient::VkApiClient(QObject* parent) 
     : QObject(parent), m_manager(new QNetworkAccessManager(this)) {
@@ -34,7 +36,7 @@ void VkApiClient::FetchUserAudio(long long ownerId, int count) {
     query.addQueryItem("count", QString::number(count));
     query.addQueryItem("v", "5.199");
     query.addQueryItem("access_token", QString::fromStdString(m_accessToken));
-    
+
     url.setQuery(query);
     QNetworkRequest request(url); //[cite: 4]
 
@@ -90,7 +92,7 @@ void VkApiClient::OnReplyFinished(QNetworkReply* reply) {
         t.title = trackObj["title"].toString().toStdString();
         t.url = trackObj["url"].toString().toStdString();
         t.duration = trackObj["duration"].toInt();
-        
+
         // VK иногда отдает пустые URL для заблокированных треков
         if (!t.url.empty()) {
             tracks.push_back(t);
