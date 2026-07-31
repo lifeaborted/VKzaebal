@@ -2,23 +2,24 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include "core/vk/Track.h"
 
 class PlaylistManager {
 public:
     PlaylistManager();
     ~PlaylistManager() = default;
 
-    void AddTrack(const std::string& url);
+    void AddTrack(const Track& track); // Принимаем весь объект Track
     void Next();
     void Previous();
 
-    std::string GetCurrentTrack() const;
     bool HasTracks() const;
 
-    // Коллбэк для оповещения о загрузки нового трека
-    std::function<void(const std::string&)> OnTrackRequested;
+    const Track& GetCurrentTrack() const; // Возвращаем ссылку на объект Track
+    
+    std::function<void(const Track& track)> OnTrackRequested;     // Коллбэк для оповещения о загрузке нового трека
 
 private:
-    std::vector<std::string> m_tracks;
-    int m_currentIndex;
+    std::vector<Track> m_tracks;
+    int m_currentIndex = 0;
 };

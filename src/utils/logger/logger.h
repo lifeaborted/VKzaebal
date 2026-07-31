@@ -1,7 +1,7 @@
 #pragma once
 #include <string>
 
-enum class LogLevel { INFO, WARNING, ERROR, DEBUG };
+enum class LogLevel { DEBUG, INFO, WARNING, ERROR };
 
 class Logger {
 public:

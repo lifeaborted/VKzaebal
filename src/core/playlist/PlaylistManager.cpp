@@ -3,8 +3,8 @@
 
 PlaylistManager::PlaylistManager() : m_currentIndex(-1) {}
 
-void PlaylistManager::AddTrack(const std::string& url) {
-    m_tracks.push_back(url);
+void PlaylistManager::AddTrack(const Track& track) {
+    m_tracks.push_back(track);
     if (m_currentIndex == -1) {
         m_currentIndex = 0; // Инициализируем индекс первым добавленным треком
     }
@@ -37,11 +37,12 @@ void PlaylistManager::Previous() {
     }
 }
 
-std::string PlaylistManager::GetCurrentTrack() const {
+const Track& PlaylistManager::GetCurrentTrack() const {
     if (m_currentIndex >= 0 && m_currentIndex < static_cast<int>(m_tracks.size())) {
         return m_tracks[m_currentIndex];
     }
-    return "";
+    static Track emptyTrack; // Безопасный возврат пустого трека
+    return emptyTrack;
 }
 
 bool PlaylistManager::HasTracks() const {

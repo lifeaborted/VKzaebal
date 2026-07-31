@@ -14,12 +14,12 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_PREFIX_PATH "C:/Qt/6.11.1/msvc2022_64")
 
 # Ищем нужные модули Qt
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Network Multimedia)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Network)
 
 # Указываем путь к исходникам и заголовкам
 set(PROJECT_SOURCES
-        src/utils/logger/logger.h
         src/main.cpp
+        src/utils/logger/logger.h
         src/utils/logger/Logger.cpp
         src/utils/buffer/RingBuffer.h
         src/utils/buffer/RingBuffer.cpp
@@ -33,15 +33,19 @@ set(PROJECT_SOURCES
 # Создаем исполняемый файл
 add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
 
-# Привязываем путь к заголовкам конкретно к нашей цели (Target-based подход)
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# Привязываем путь к заголовкам
+target_include_directories(${PROJECT_NAME} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass
+)
 
-# Линкуем модули Qt с приложением (добавлен Network, раз он запрашивался выше)
+# Линкуем модули Qt с приложением
 target_link_libraries(${PROJECT_NAME} PRIVATE
         Qt6::Core
         Qt6::Gui
         Qt6::Qml
         Qt6::Quick
         Qt6::Network
-        Qt6::Multimedia
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/bass.lib
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/basshls.lib
 )

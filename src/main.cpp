@@ -6,28 +6,28 @@
 #include <fstream>
 #include <sstream>
 
-#include <QMediaPlayer>
-#include <QAudioOutput>
-#include <QUrl>
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#endif
+
+#include "bass.h"
+
+#ifdef _WIN32
+#undef ERROR
+#endif
 
 #include "core/playlist/PlaylistManager.h"
 #include "core/vk/VkApiClient/VkApiClient.h"
 #include "utils/logger/logger.h"
 
-#ifdef _WIN32
-#define NOMINMAX
-#include <windows.h>
-#undef ERROR
-#endif
+HSTREAM g_CurrentStream = 0;
+float g_Volume = 1.0f; // Громкость от 0.0 до 1.0
 
 std::string GetEnvVar(const std::string& filePath, const std::string& key) {
     std::ifstream file(filePath);
-    if (!file.is_open()) {
-        Logger::Log(LogLevel::WARNING, "Could not open " + filePath + " file.");
-        return "";
-    }
-    std::string line;
-    std::string searchKey = key + "=";
+    if (!file.is_open()) return "";
+    std::string line, searchKey = key + "=";
     while (std::getline(file, line)) {
         if (line.find(searchKey) == 0) {
             std::string value = line.substr(searchKey.length());
@@ -39,12 +39,15 @@ std::string GetEnvVar(const std::string& filePath, const std::string& key) {
     return "";
 }
 
-// Функция-фильтр для подавления спама от Qt Multimedia
-void SuppressQtLogs(QtMsgType type, const QMessageLogContext &context, const QString &msg) {
-    // Пропускаем только фатальные краши самого Qt
-    if (type == QtFatalMsg) {
-        fprintf(stderr, "Qt Fatal: %s\n", msg.toLocal8Bit().constData());
-    }
+// Коллбэк BASS, вызываемый по завершении трека
+void CALLBACK OnTrackEnd(HSYNC handle, DWORD channel, DWORD data, void *user) {
+    Logger::Log(LogLevel::INFO, "--- TRACK COMPLETION EVENT RECEIVED ---");
+    PlaylistManager* playlist = static_cast<PlaylistManager*>(user);
+
+    // Передаем команду в главный поток Qt для безопасного переключения
+    QMetaObject::invokeMethod(QCoreApplication::instance(), [playlist]() {
+        playlist->Next();
+    }, Qt::QueuedConnection);
 }
 
 int main(int argc, char *argv[]) {
@@ -54,44 +57,62 @@ int main(int argc, char *argv[]) {
 #endif
 
     Logger::Init();
-    qputenv("QT_MEDIA_BACKEND_FFMPEG_LOGLEVEL", "error");
-    qputenv("QT_DEBUG_PLUGINS", "0");
-    qputenv("QT_MEDIA_BACKEND_FFMPEG_LOGLEVEL", "error");
     QCoreApplication app(argc, argv);
-    Logger::Log(LogLevel::INFO, "--- VK Audio Engine (QtMultimedia) Started ---");
+    Logger::Log(LogLevel::INFO, "--- VK Audio Engine (BASS) Started ---");
 
-    // Инициализация плеера Qt
-    QMediaPlayer* player = new QMediaPlayer(&app);
-    QAudioOutput* audioOutput = new QAudioOutput(&app);
-    player->setAudioOutput(audioOutput);
-    audioOutput->setVolume(1.0f); // 1.0 = 100%
+    // ==========================================
+    // 0. ИНИЦИАЛИЗАЦИЯ BASS
+    // ==========================================
+
+    // Инициализируем аудиоустройство по умолчанию (44100 Гц, стерео)
+    if (!BASS_Init(-1, 44100, 0, 0, NULL)) {
+        Logger::Log(LogLevel::ERROR, "Failed to initialize BASS. Error code: " + std::to_string(BASS_ErrorGetCode()));
+        return -1;
+    }
+
+    BASS_SetConfig(BASS_CONFIG_NET_TIMEOUT, 5000);
+
+    BASS_SetConfig(BASS_CONFIG_NET_PLAYLIST, 1);
+
+    // Загружаем плагин BASS_HLS для поддержки .m3u8
+    HPLUGIN hlsPlugin = BASS_PluginLoad("basshls.dll", 0);
+    if (hlsPlugin == 0) {
+        Logger::Log(LogLevel::ERROR, "Failed to load basshls.dll! Make sure it is in the same directory as the executable.");
+    } else {
+        Logger::Log(LogLevel::INFO, "BASS_HLS Plugin successfully loaded.");
+    }
 
     PlaylistManager playlist;
     VkApiClient vkClient;
 
-    // ==========================================
+// ==========================================
     // 1. НАСТРОЙКА МЕНЕДЖЕРА ПЛЕЙЛИСТА
     // ==========================================
 
-    playlist.OnTrackRequested = [&](const std::string& url) {
-        Logger::Log(LogLevel::INFO, ">>> Changing track to: " + url + " <<<");
+    playlist.OnTrackRequested = [&](const Track& track) {
+        // Красивый вывод метаданных
+        Logger::Log(LogLevel::INFO, ">>> Playing: " + track.artist + " - " + track.title + " [" + track.GetFormattedDuration() + "]");
 
-        // Все вызовы QMediaPlayer должны происходить в главном потоке Qt
-        QMetaObject::invokeMethod(&app, [player, url]() {
-            player->setSource(QUrl(QString::fromStdString(url)));
-            player->play();
-        }, Qt::QueuedConnection);
-    };
-
-    // Слушаем сигнал Qt о завершении трека
-    QObject::connect(player, &QMediaPlayer::mediaStatusChanged, [&](QMediaPlayer::MediaStatus status) {
-        if (status == QMediaPlayer::EndOfMedia) {
-            Logger::Log(LogLevel::INFO, "--- TRACK COMPLETION EVENT RECEIVED ---");
-            playlist.Next();
-        } else if (status == QMediaPlayer::InvalidMedia) {
-            Logger::Log(LogLevel::ERROR, "Media error: " + player->errorString().toStdString());
+        // Освобождаем предыдущий поток, если он был
+        if (g_CurrentStream != 0) {
+            BASS_StreamFree(g_CurrentStream);
+            g_CurrentStream = 0;
         }
-    });
+
+        // Передаем URL из объекта Track
+        g_CurrentStream = BASS_StreamCreateURL(track.url.c_str(), 0, BASS_STREAM_AUTOFREE, NULL, NULL);
+
+        if (g_CurrentStream != 0) {
+            BASS_ChannelSetAttribute(g_CurrentStream, BASS_ATTRIB_VOL, g_Volume);
+            BASS_ChannelSetSync(g_CurrentStream, BASS_SYNC_END, 0, OnTrackEnd, &playlist);
+            BASS_ChannelPlay(g_CurrentStream, FALSE);
+        } else {
+            int errorCode = BASS_ErrorGetCode();
+            Logger::Log(LogLevel::ERROR, "BASS failed to create stream! Error code: " + std::to_string(errorCode));
+            Logger::Log(LogLevel::WARNING, "Stream failed. Link might be expired.");
+            // playlist.Next(); // [В Р Е М Е Н Н О]
+        }
+    };
 
     // ==========================================
     // 2. ИНТЕГРАЦИЯ VK API
@@ -100,7 +121,6 @@ int main(int argc, char *argv[]) {
     std::string myVkToken = GetEnvVar(".env", "VK_TOKEN");
     if (!myVkToken.empty()) {
         vkClient.SetAccessToken(myVkToken);
-        Logger::Log(LogLevel::INFO, "VK Token successfully loaded from .env");
     } else {
         Logger::Log(LogLevel::ERROR, "VK Token is missing!");
     }
@@ -108,18 +128,15 @@ int main(int argc, char *argv[]) {
     QObject::connect(&vkClient, &VkApiClient::AudioFetched, [&](const std::vector<Track>& tracks) {
         std::cout << "\n=== ПЛЕЙЛИСТ VK ЗАГРУЖЕН ===" << std::endl;
         for (const auto& track : tracks) {
-            std::cout << "- " << track.artist << " - " << track.title
-                      << " [" << track.GetFormattedDuration() << "]" << std::endl;
-            playlist.AddTrack(track.url);
+            playlist.AddTrack(track); // Закидываем сам объект Track
         }
-        std::cout << "==========================\n" << std::endl;
+        std::cout << "Added " << tracks.size() << " tracks." << std::endl;
 
         if (playlist.HasTracks()) {
             playlist.OnTrackRequested(playlist.GetCurrentTrack());
         }
     });
 
-    Logger::Log(LogLevel::INFO, "Requesting audio from VK...");
     vkClient.FetchUserAudio(0, 50);
 
     // ==========================================
@@ -137,13 +154,15 @@ int main(int argc, char *argv[]) {
 
             switch (command) {
                 case 'p':
-                    QMetaObject::invokeMethod(&app, [player]() {
-                        if (player->playbackState() == QMediaPlayer::PlayingState) {
-                            player->pause();
+                    if (g_CurrentStream != 0) {
+                        if (BASS_ChannelIsActive(g_CurrentStream) == BASS_ACTIVE_PLAYING) {
+                            BASS_ChannelPause(g_CurrentStream);
+                            Logger::Log(LogLevel::INFO, "[PAUSED]");
                         } else {
-                            player->play();
+                            BASS_ChannelPlay(g_CurrentStream, FALSE);
+                            Logger::Log(LogLevel::INFO, "[PLAYING]");
                         }
-                    }, Qt::QueuedConnection);
+                    }
                     break;
                 case 'n':
                     QMetaObject::invokeMethod(&app, [&]() { playlist.Next(); }, Qt::QueuedConnection);
@@ -152,24 +171,19 @@ int main(int argc, char *argv[]) {
                     QMetaObject::invokeMethod(&app, [&]() { playlist.Previous(); }, Qt::QueuedConnection);
                     break;
                 case '+':
-                    QMetaObject::invokeMethod(&app, [audioOutput]() {
-                        float vol = std::min(1.0f, audioOutput->volume() + 0.1f);
-                        audioOutput->setVolume(vol);
-                    }, Qt::QueuedConnection);
+                    g_Volume = std::min(1.0f, g_Volume + 0.1f);
+                    if (g_CurrentStream) BASS_ChannelSetAttribute(g_CurrentStream, BASS_ATTRIB_VOL, g_Volume);
+                    Logger::Log(LogLevel::INFO, "[Volume]: " + std::to_string(static_cast<int>(g_Volume * 100)) + "%");
                     break;
                 case '-':
-                    QMetaObject::invokeMethod(&app, [audioOutput]() {
-                        float vol = std::max(0.0f, audioOutput->volume() - 0.1f);
-                        audioOutput->setVolume(vol);
-                    }, Qt::QueuedConnection);
+                    g_Volume = std::max(0.0f, g_Volume - 0.1f);
+                    if (g_CurrentStream) BASS_ChannelSetAttribute(g_CurrentStream, BASS_ATTRIB_VOL, g_Volume);
+                    Logger::Log(LogLevel::INFO, "[Volume]: " + std::to_string(static_cast<int>(g_Volume * 100)) + "%");
                     break;
                 case 'q':
-                    Logger::Log(LogLevel::INFO, "Quit command received.");
                     isRunning = false;
+                    Logger::Log(LogLevel::INFO, "Quit command received.");
                     QMetaObject::invokeMethod(&app, "quit", Qt::QueuedConnection);
-                    break;
-                default:
-                    Logger::Log(LogLevel::WARNING, "Unknown command.");
                     break;
             }
         }
@@ -177,11 +191,12 @@ int main(int argc, char *argv[]) {
 
     int exitCode = app.exec();
 
-    Logger::Log(LogLevel::INFO, "Press any key + Enter to completely close the terminal...");
     if (inputThread.joinable()) {
         inputThread.join();
     }
 
+    // Освобождаем BASS перед закрытием
+    BASS_Free();
     Logger::Close();
     return exitCode;
 }
