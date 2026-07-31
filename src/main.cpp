@@ -35,13 +35,28 @@ int main(int argc, char *argv[]) {
         QMetaObject::invokeMethod(&streamer, "ResumeDownload", Qt::QueuedConnection);
     };
 
+    // Сеть сообщает, что файл скачан целиком
+    QObject::connect(&streamer, &NetworkStreamer::DownloadFinished, [&]() {
+        engine.MarkStreamFinished();
+    });
+
+    // Движок сообщает, что последние байты доиграли в колонках
+    engine.OnTrackFinished = [&]() {
+        // ВАЖНО: Коллбэк вызывается из аудиопотока miniaudio!
+        // Перебрасываем исполнение в главный поток Qt для безопасности.
+        QMetaObject::invokeMethod(&app, [&]() {
+            Logger::Log(LogLevel::INFO, "--- TRACK COMPLETION EVENT RECEIVED ---");
+            // В будущем здесь будет вызов streamer.StartDownload(nextUrl);
+        }, Qt::QueuedConnection);
+    };
+
     // Связываем сигнал от сети с аудиодвижком
     QObject::connect(&streamer, &NetworkStreamer::DataReceived, [&](const QByteArray& data) {
         const uint8_t* rawData = reinterpret_cast<const uint8_t*>(data.constData());
         engine.PushAudioData(rawData, data.size());
     });
 
-    std::string testUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
+    std::string testUrl = "https://samplelib.com/mp3/sample-10s.mp3";
     streamer.StartDownload(testUrl);
 
     std::cout << "\nControls:\n";

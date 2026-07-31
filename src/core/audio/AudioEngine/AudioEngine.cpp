@@ -81,10 +81,30 @@ void AudioEngine::Shutdown() {
 }
 
 void AudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
-    // Получаем объект обратно из pUserData
     AudioEngine* engine = static_cast<AudioEngine*>(pDevice->pUserData);
-    if (engine && engine->m_isInitialized) {
-        ma_decoder_read_pcm_frames(&engine->m_decoder, pOutput, frameCount, NULL);
+    if (!engine || !engine->m_isInitialized) return;
+
+    ma_uint64 framesRead = 0;
+    ma_decoder_read_pcm_frames(&engine->m_decoder, pOutput, frameCount, &framesRead);
+
+    // Если миниаудио прочитал меньше фреймов, чем просила звуковая карта, значит буфер опустел
+    if (framesRead < frameCount) {
+        if (engine->m_isStreamFinished) {
+            // Файл скачан до конца + буфер пуст = трек реально завершился
+            if (engine->m_isPlaying) {
+                engine->m_isPlaying = false;
+                Logger::Log(LogLevel::INFO, "Playback reached End Of File (EOF).");
+
+                // Вызываем коллбэк наружу
+                if (engine->OnTrackFinished) {
+                    engine->OnTrackFinished();
+                }
+            }
+        } else {
+            // Файл еще качается, просто сеть не успевает за звуковой картой.
+            // miniaudio автоматически заполняет остаток pOutput нулями (тишиной).
+            Logger::Log(LogLevel::DEBUG, "Buffer underflow: waiting for network data...");
+        }
     }
     (void)pInput;
 }
@@ -131,6 +151,7 @@ ma_result AudioEngine::CustomSeek(ma_decoder* pDecoder, ma_int64 byteOffset, ma_
 }
 
 bool AudioEngine::InitializeStream(size_t bufferSize) {
+    m_isStreamFinished = false; // Сбрасываем флаг перед новым треком
     // Выделяем память под кольцевой буфер (по умолчанию 2 МБ)
     m_ringBuffer = std::make_unique<RingBuffer>(bufferSize);
 
@@ -198,4 +219,9 @@ bool AudioEngine::TryStartDecoder() {
     m_isDecoderReady = true;
     Logger::Log(LogLevel::INFO, "Decoder initialized from memory buffer successfully! Ready to play.");
     return true;
+}
+
+void AudioEngine::MarkStreamFinished() {
+    m_isStreamFinished = true;
+    Logger::Log(LogLevel::INFO, "AudioEngine: Network stream fully downloaded. Waiting for playback to complete...");
 }

@@ -10,28 +10,23 @@ public:
     AudioEngine();
     ~AudioEngine();
 
-    // Старый метод для локальных файлов (можно оставить для тестов)
     bool Initialize(const std::string& filePath);
+    bool InitializeStream(size_t bufferSize = 1024 * 1024 * 2); // метод для стриминга (инициализирует буфер, но не запускает декодер сразу, по умолчанию 2 МБ)
+    bool TryStartDecoder(); // Проверка, заполнения пре-буфера)
 
-    // Новый метод для стриминга (инициализирует буфер, но не запускает декодер сразу)
-    bool InitializeStream(size_t bufferSize = 1024 * 1024 * 2); // По умолчанию 2 МБ
-
-    // Метод, в который мы будем "заталкивать" скачанные байты
-    void PushAudioData(const uint8_t* data, size_t size);
-
-    void Play();
-    void Pause();
-    void SetVolume(float volume);
-    void Shutdown();
-
-    // Проверка, готов ли движок к воспроизведению (накопился ли пре-буфер)
-    bool TryStartDecoder();
+    void PushAudioData(const uint8_t* data, size_t size); // Метод, в который мы будем "заталкивать" скачанные байты
+    void Play(); // метод воспроизведения аудио
+    void Pause(); // метод паузы аудио
+    void SetVolume(float volume); // метод изменения громкости
+    void Shutdown(); // метод отключения воспроизведения
+    void MarkStreamFinished(); // Метод проверки скачан ли файл
 
     std::function<void()> OnBufferFull;
     std::function<void()> OnBufferNeedsData;
+    std::function<void()> OnTrackFinished; // Коллбэк для переключения трека
 
 private:
-    // Коллбэк для вывода звука на колонки
+    // Коллбэк для вывода звука
     static void DataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
 
     // коллбэки для чтения напрямую из памяти
@@ -40,11 +35,12 @@ private:
 
     ma_decoder m_decoder;
     ma_device m_device;
-    bool m_isInitialized;
-    bool m_isPlaying;
+
+    bool m_isInitialized; // флаг инициализации проигрывателя
+    bool m_isPlaying; // фалг проигрывания аудио
     bool m_isDecoderReady; // Флаг того, что заголовки прочитаны
     bool m_isNetworkPaused = false; // флаг защиты от спама
+    bool m_isStreamFinished = false; // Флаг полного скачивания
 
-    // потокобезопасный буфер
-    std::unique_ptr<RingBuffer> m_ringBuffer;
+    std::unique_ptr<RingBuffer> m_ringBuffer; // потокобезопасный буфер
 };
