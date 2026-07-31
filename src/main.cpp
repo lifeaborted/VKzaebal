@@ -5,7 +5,7 @@
 #include <QMetaObject>
 #include "core/audio/AudioEngine/AudioEngine.h"
 #include "utils/logger/logger.h"
-#include "core/audio/network/NetworkStreamer.h"
+#include "core/network/NetworkStreamer.h"
 
 int main(int argc, char *argv[]) {
     // Инициализируем запись в файл
@@ -16,14 +16,22 @@ int main(int argc, char *argv[]) {
 
     AudioEngine engine;
 
-    std::string filePath = "C:\\others\\Codes\\audio player\\src\\test.mp3";
-    if (!engine.Initialize(filePath)) {
-        Logger::Close(); // Не забываем закрыть при ошибке
+    if (!engine.InitializeStream()) {
+        Logger::Close();
         return -1;
     }
-    engine.Play();
+    //engine.Play();
 
     NetworkStreamer streamer;
+
+    // Связываем сигнал от сети с нашим аудиодвижком
+    QObject::connect(&streamer, &NetworkStreamer::DataReceived, [&](const QByteArray& data) {
+        const uint8_t* rawData = reinterpret_cast<const uint8_t*>(data.constData());
+
+        // Заталкиваем байты в движок
+        engine.PushAudioData(rawData, data.size());
+    });
+
     std::string testUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
     streamer.StartDownload(testUrl);
 

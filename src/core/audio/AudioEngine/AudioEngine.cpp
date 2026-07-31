@@ -1,5 +1,5 @@
-#include "../../../AudioEngine.h"
-#include "../../../utils/logger/logger.h"
+#include "AudioEngine.h"
+#include "utils/logger/logger.h"
 
 AudioEngine::AudioEngine() : m_isInitialized(false), m_isPlaying(false) {
     Logger::Log(LogLevel::INFO, "AudioEngine created.");
@@ -87,4 +87,27 @@ void AudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void* pI
         ma_decoder_read_pcm_frames(&engine->m_decoder, pOutput, frameCount, NULL);
     }
     (void)pInput;
+}
+
+bool AudioEngine::InitializeStream(size_t bufferSize) {
+    // Выделяем память под кольцевой буфер (по умолчанию 2 МБ)
+    m_ringBuffer = std::make_unique<RingBuffer>(bufferSize);
+
+    m_isDecoderReady = false;
+    m_isInitialized = true;
+
+    Logger::Log(LogLevel::INFO, "AudioEngine stream initialized with buffer size: " + std::to_string(bufferSize) + " bytes.");
+    return true;
+}
+
+void AudioEngine::PushAudioData(const uint8_t* data, size_t size) {
+    if (!m_ringBuffer) return;
+
+    // Пишем данные в кольцевой буфер
+    size_t written = m_ringBuffer->Write(data, size);
+
+    // Если буфер переполнен (сеть качает быстрее, чем мы слушаем)
+    if (written < size) {
+        Logger::Log(LogLevel::WARNING, "RingBuffer overflow! Lost " + std::to_string(size - written) + " bytes.");
+    }
 }

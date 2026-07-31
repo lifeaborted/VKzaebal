@@ -1,5 +1,5 @@
-#include "../../../../NetworkStreamer.h"
-#include "../../../utils/logger/logger.h"
+#include "NetworkStreamer.h"
+#include "utils/logger/logger.h"
 #include <QNetworkRequest>
 #include <QUrl>
 
