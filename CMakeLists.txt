@@ -30,6 +30,9 @@ set(PROJECT_SOURCES
         src/utils/buffer/RingBuffer.cpp
         src/core/playlist/PlaylistManager.cpp
         src/core/playlist/PlaylistManager.h
+        src/core/vk/Track.h
+        src/core/vk/VkApiClient/VkApiClient.cpp
+        src/core/vk/VkApiClient/VkApiClient.h
 )
 
 # Создаем исполняемый файл
