@@ -24,11 +24,20 @@ int main(int argc, char *argv[]) {
 
     NetworkStreamer streamer;
 
-    // Связываем сигнал от сети с нашим аудиодвижком
+    // НАСТРОЙКА ВАТЕРМАРОК
+    engine.OnBufferFull = [&streamer]() {
+        // Можно вызывать напрямую, но invokeMethod гарантирует потокобезопасность
+        QMetaObject::invokeMethod(&streamer, "PauseDownload", Qt::QueuedConnection);
+    };
+
+    engine.OnBufferNeedsData = [&streamer]() {
+        // Перебрасываем вызов в главный поток.
+        QMetaObject::invokeMethod(&streamer, "ResumeDownload", Qt::QueuedConnection);
+    };
+
+    // Связываем сигнал от сети с аудиодвижком
     QObject::connect(&streamer, &NetworkStreamer::DataReceived, [&](const QByteArray& data) {
         const uint8_t* rawData = reinterpret_cast<const uint8_t*>(data.constData());
-
-        // Заталкиваем байты в движок
         engine.PushAudioData(rawData, data.size());
     });
 

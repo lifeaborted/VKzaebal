@@ -20,13 +20,20 @@ public:
     void DownloadFinished();
     void DownloadError(const std::string& errorString);
 
+
     // Слоты (обработчики событий внутри сети)
+public slots:
+    void PauseDownload();
+    void ResumeDownload();
+
 private slots:
     void OnReadyRead();
     void OnFinished();
     void OnErrorOccurred(QNetworkReply::NetworkError code);
 
+
 private:
+    bool m_isPaused = false;
     QNetworkAccessManager* m_manager;
     QNetworkReply* m_reply;
 };

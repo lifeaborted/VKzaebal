@@ -104,6 +104,13 @@ ma_result AudioEngine::CustomRead(ma_decoder* pDecoder, void* pBufferOut, size_t
         *pBytesRead = actualRead;
     }
 
+    if (engine->m_ringBuffer->GetAvailableRead() < 500 * 1024) {
+        if (engine->m_isNetworkPaused) { // Отправляем сигнал только один раз!
+            engine->m_isNetworkPaused = false;
+            if (engine->OnBufferNeedsData) engine->OnBufferNeedsData();
+        }
+    }
+
     return MA_SUCCESS;
 }
 
@@ -140,8 +147,12 @@ void AudioEngine::PushAudioData(const uint8_t* data, size_t size) {
     // Пишем данные в кольцевой буфер
     size_t written = m_ringBuffer->Write(data, size);
 
-    if (written < size) {
-        Logger::Log(LogLevel::WARNING, "RingBuffer overflow! Lost " + std::to_string(size - written) + " bytes.");
+    if (m_ringBuffer->GetAvailableWrite() < 500 * 1024) {
+        if (!m_isNetworkPaused) {
+            m_isNetworkPaused = true;
+            if (OnBufferFull) OnBufferFull();
+            Logger::Log(LogLevel::WARNING, "High Watermark: Pausing network.");
+        }
     }
 
     // Если декодер еще не запущен, пытаемся его стартовать
@@ -176,7 +187,7 @@ bool AudioEngine::TryStartDecoder() {
     deviceConfig.playback.channels = m_decoder.outputChannels;
     deviceConfig.sampleRate        = m_decoder.outputSampleRate;
     deviceConfig.dataCallback      = DataCallback;
-    deviceConfig.pUserData         = &m_decoder;
+    deviceConfig.pUserData         = this;
 
     if (ma_device_init(NULL, &deviceConfig, &m_device) != MA_SUCCESS) {
         Logger::Log(LogLevel::ERROR, "Failed to initialize playback device.");

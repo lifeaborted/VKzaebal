@@ -16,6 +16,7 @@ NetworkStreamer::~NetworkStreamer() {
 void NetworkStreamer::StartDownload(const std::string& urlString) {
     Logger::Log(LogLevel::INFO, "Starting network stream from: " + urlString);
 
+
     if (m_reply) {
         Logger::Log(LogLevel::WARNING, "Download already in progress. Stopping previous stream.");
         StopDownload();
@@ -26,6 +27,8 @@ void NetworkStreamer::StartDownload(const std::string& urlString) {
 
     // Запускаем GET-запрос
     m_reply = m_manager->get(request);
+    m_reply->setReadBufferSize(512 * 1024);
+    m_isPaused = false;
 
     // Подключаем события сети к нашим функциям
     connect(m_reply, &QNetworkReply::readyRead, this, &NetworkStreamer::OnReadyRead);
@@ -43,7 +46,8 @@ void NetworkStreamer::StopDownload() {
 }
 
 void NetworkStreamer::OnReadyRead() {
-    if (!m_reply) return;
+    // Если поток на паузе — просто игнорируем сигнал.
+    if (!m_reply || m_isPaused) return;
 
     // Считываем всё, что успело прилететь по TCP с момента прошлого вызова
     QByteArray data = m_reply->readAll();
@@ -53,6 +57,27 @@ void NetworkStreamer::OnReadyRead() {
 
     // Отправляем сырые байты наружу (пока в пустоту, позже мы направим их в кольцевой буфер)
     emit DataReceived(data);
+}
+
+// Реализация паузы скачивания
+void NetworkStreamer::PauseDownload() {
+    if (!m_isPaused) {
+        m_isPaused = true;
+        Logger::Log(LogLevel::INFO, "High Watermark reached. Pausing network read.");
+    }
+}
+
+// Реализация восстановления скачивания
+void NetworkStreamer::ResumeDownload() {
+    if (m_isPaused) {
+        m_isPaused = false;
+        Logger::Log(LogLevel::INFO, "Low Watermark reached. Resuming network read.");
+
+        // Вручную дергаем чтение, чтобы выгрести то, что накопилось во время паузы
+        if (m_reply && m_reply->bytesAvailable() > 0) {
+            OnReadyRead();
+        }
+    }
 }
 
 void NetworkStreamer::OnFinished() {
