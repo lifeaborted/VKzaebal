@@ -72,10 +72,20 @@ void AudioEngine::SetVolume(float volume) {
 void AudioEngine::Shutdown() {
     if (m_isInitialized) {
         Logger::Log(LogLevel::INFO, "Shutting down AudioEngine...");
-        ma_device_uninit(&m_device);
-        ma_decoder_uninit(&m_decoder);
+
+        // Отключаем устройства только если они были запущены
+        if (m_isDecoderReady) {
+            ma_device_uninit(&m_device);
+            ma_decoder_uninit(&m_decoder);
+            m_isDecoderReady = false;
+        }
+
         m_isInitialized = false;
         m_isPlaying = false;
+        m_isNetworkPaused = false;
+        m_isStreamFinished = false;
+        m_ringBuffer.reset(); // Очищаем кольцевой буфер от старого трека
+
         Logger::Log(LogLevel::INFO, "AudioEngine shutdown complete.");
     }
 }
@@ -101,8 +111,6 @@ void AudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void* pI
                 }
             }
         } else {
-            // Файл еще качается, просто сеть не успевает за звуковой картой.
-            // miniaudio автоматически заполняет остаток pOutput нулями (тишиной).
             Logger::Log(LogLevel::DEBUG, "Buffer underflow: waiting for network data...");
         }
     }

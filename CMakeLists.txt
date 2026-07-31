@@ -28,6 +28,8 @@ set(PROJECT_SOURCES
         src/utils/logger/Logger.cpp
         src/utils/buffer/RingBuffer.h
         src/utils/buffer/RingBuffer.cpp
+        src/core/playlist/PlaylistManager.cpp
+        src/core/playlist/PlaylistManager.h
 )
 
 # Создаем исполняемый файл
