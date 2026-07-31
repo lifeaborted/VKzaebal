@@ -31,8 +31,8 @@ private:
     static void DataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
 
     // НОВЫЕ коллбэки для чтения напрямую из памяти
-    static size_t CustomRead(ma_decoder* pDecoder, void* pBufferOut, size_t bytesToRead);
-    static ma_bool32 CustomSeek(ma_decoder* pDecoder, ma_int64 byteOffset, ma_seek_origin origin);
+    static ma_result CustomRead(ma_decoder* pDecoder, void* pBufferOut, size_t bytesToRead, size_t* pBytesRead);
+    static ma_result CustomSeek(ma_decoder* pDecoder, ma_int64 byteOffset, ma_seek_origin origin);
 
     ma_decoder m_decoder;
     ma_device m_device;
