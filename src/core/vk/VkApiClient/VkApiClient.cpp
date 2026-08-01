@@ -71,11 +71,19 @@ void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(c
             QByteArray response_data = reply->readAll();
             QJsonDocument json = QJsonDocument::fromJson(response_data);
             QJsonObject root = json.object();
-            QJsonArray responseArray = root["response"].toArray();
 
-            if (!responseArray.isEmpty()) {
-                QJsonObject trackObj = responseArray[0].toObject();
-                freshUrl = trackObj["url"].toString().toStdString();
+            // --- НОВЫЙ БЛОК: Проверяем, не ругается ли сам VK API ---
+            if (root.contains("error")) {
+                QJsonObject errObj = root["error"].toObject();
+                std::string errMsg = errObj["error_msg"].toString().toStdString();
+                int errCode = errObj["error_code"].toInt();
+                Logger::Log(LogLevel::ERROR, "VK API Error [" + std::to_string(errCode) + "]: " + errMsg);
+            } else {
+                QJsonArray responseArray = root["response"].toArray();
+                if (!responseArray.isEmpty()) {
+                    QJsonObject trackObj = responseArray[0].toObject();
+                    freshUrl = trackObj["url"].toString().toStdString();
+                }
             }
         } else {
             Logger::Log(LogLevel::ERROR, "Network error while fetching track URL: " + reply->errorString().toStdString());

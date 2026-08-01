@@ -1,25 +1,34 @@
 #pragma once
 #include <vector>
-#include <string>
 #include <functional>
 #include "core/vk/Track.h"
 
+enum class RepeatMode { None, All, One };
+
 class PlaylistManager {
 public:
-    PlaylistManager();
-    ~PlaylistManager() = default;
+    PlaylistManager() = default;
 
-    void AddTrack(const Track& track); // Принимаем весь объект Track
+    void AddTrack(const Track& track);
+    bool HasTracks() const;
+    Track GetCurrentTrack() const;
+
     void Next();
     void Previous();
+    void JumpTo(int index); // index от 0
 
-    bool HasTracks() const;
+    void ToggleShuffle();
+    void ToggleRepeat();
 
-    const Track& GetCurrentTrack() const; // Возвращаем ссылку на объект Track
-    
-    std::function<void(const Track& track)> OnTrackRequested;     // Коллбэк для оповещения о загрузке нового трека
+    std::function<void(const Track&)> OnTrackRequested;
 
 private:
     std::vector<Track> m_tracks;
-    int m_currentIndex = 0;
+    std::vector<int> m_playQueue; // Хранит индексы треков
+    int m_queueIndex = 0;         // Текущая позиция в очереди
+
+    bool m_isShuffle = false;
+    RepeatMode m_repeatMode = RepeatMode::All;
+
+    void RebuildQueue(bool keepCurrentTrack);
 };

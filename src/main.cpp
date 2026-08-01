@@ -87,14 +87,20 @@ int main(int argc, char *argv[]) {
         attemptPlay(track, 1);
     };
 
-    // Интеграция VK
+// Интеграция VK
     std::string myVkToken = GetEnvVar(".env", "VK_TOKEN");
     if (!myVkToken.empty()) vkClient.SetAccessToken(myVkToken);
 
     QObject::connect(&vkClient, &VkApiClient::AudioFetched, [&](const std::vector<Track>& tracks) {
         std::cout << "\n=== ПЛЕЙЛИСТ VK ЗАГРУЖЕН ===" << std::endl;
-        for (const auto& track : tracks) playlist.AddTrack(track);
-        std::cout << "Added " << tracks.size() << " tracks." << std::endl;
+
+        for (size_t i = 0; i < tracks.size(); ++i) {
+            playlist.AddTrack(tracks[i]);
+            // Выводим список в формате: [1] Artist - Title (MM:SS)
+            std::cout << "[" << i + 1 << "] " << tracks[i].artist << " - " << tracks[i].title
+                      << " (" << tracks[i].GetFormattedDuration() << ")" << std::endl;
+        }
+        std::cout << "Added " << tracks.size() << " tracks.\n" << std::endl;
 
         if (playlist.HasTracks()) playlist.OnTrackRequested(playlist.GetCurrentTrack());
     });
@@ -102,7 +108,8 @@ int main(int argc, char *argv[]) {
     vkClient.FetchUserAudio(0, 50);
 
     // Консольный ввод
-    std::cout << "\nControls:\n [P] Play/Pause\n [N] Next\n [B] Prev\n [+] Vol Up\n [-] Vol Down\n [Q] Quit\n-----------------------\n";
+    std::cout << "\nControls:\n [P] Play/Pause\n [N] Next\n [B] Prev\n [+] Vol Up\n [-] Vol Down\n [S] Shuffle\n [R] Repeat Mode\n [J <num>] Jump to track (e.g., J 5)\n [Q] Quit\n-----------------------\n";
+
     std::thread inputThread([&]() {
         char command;
         bool isRunning = true;
@@ -115,10 +122,31 @@ int main(int argc, char *argv[]) {
                         else audio.Resume();
                     }, Qt::QueuedConnection);
                     break;
-                case 'n': QMetaObject::invokeMethod(&app, [&]() { playlist.Next(); }, Qt::QueuedConnection); break;
-                case 'b': QMetaObject::invokeMethod(&app, [&]() { playlist.Previous(); }, Qt::QueuedConnection); break;
-                case '+': QMetaObject::invokeMethod(&app, [&]() { audio.SetVolume(audio.GetVolume() + 0.1f); }, Qt::QueuedConnection); break;
-                case '-': QMetaObject::invokeMethod(&app, [&]() { audio.SetVolume(audio.GetVolume() - 0.1f); }, Qt::QueuedConnection); break;
+                case 'n':
+                    QMetaObject::invokeMethod(&app, [&]() { playlist.Next(); }, Qt::QueuedConnection);
+                    break;
+                case 'b':
+                    QMetaObject::invokeMethod(&app, [&]() { playlist.Previous(); }, Qt::QueuedConnection);
+                    break;
+                case '+':
+                    QMetaObject::invokeMethod(&app, [&]() { audio.SetVolume(audio.GetVolume() + 0.1f); }, Qt::QueuedConnection);
+                    break;
+                case '-':
+                    QMetaObject::invokeMethod(&app, [&]() { audio.SetVolume(audio.GetVolume() - 0.1f); }, Qt::QueuedConnection);
+                    break;
+                case 's':
+                    QMetaObject::invokeMethod(&app, [&]() { playlist.ToggleShuffle(); }, Qt::QueuedConnection);
+                    break;
+                case 'r':
+                    QMetaObject::invokeMethod(&app, [&]() { playlist.ToggleRepeat(); }, Qt::QueuedConnection);
+                    break;
+                case 'j': {
+                    int index;
+                    if (std::cin >> index) {
+                        QMetaObject::invokeMethod(&app, [&playlist, index]() { playlist.JumpTo(index - 1); }, Qt::QueuedConnection);
+                    }
+                    break;
+                }
                 case 'q':
                     isRunning = false;
                     QMetaObject::invokeMethod(&app, "quit", Qt::QueuedConnection);
