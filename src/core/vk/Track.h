@@ -2,23 +2,19 @@
 #include <string>
 
 struct Track {
-    long long id;
-    long long ownerId;
+    std::string id;
+    std::string ownerId;
     std::string artist;
     std::string title;
     std::string url;
-    int duration; // в секундах
+    int duration = 0; // в секундах
 
-    // вывода времени (ММ:СС)
+    // Вывод времени (ММ:СС)
     std::string GetFormattedDuration() const {
-        std::string min = std::to_string(duration / 60);
-        std::string sec = std::to_string(duration % 60);
-
-        // Добавляем ведущий ноль для секунд
-        if (sec.length() < 2) {
-            sec = "0" + sec;
-        }
-
+        int m = duration / 60;
+        int s = duration % 60;
+        std::string min = std::to_string(m);
+        std::string sec = s < 10 ? "0" + std::to_string(s) : std::to_string(s);
         return min + ":" + sec;
     }
 };

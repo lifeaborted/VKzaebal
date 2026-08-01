@@ -4,6 +4,7 @@
 #include <QNetworkReply>
 #include <vector>
 #include <string>
+#include <functional>
 #include "core/vk/Track.h"
 
 class VkApiClient : public QObject {
@@ -14,6 +15,9 @@ public:
 
     // Установка токена доступа
     void SetAccessToken(const std::string& token);
+
+    // запрос свежей ссылки на трек
+    void FetchTrackUrl(const std::string& trackId, std::function<void(const std::string& freshUrl)> callback);
 
     // Запрос списка аудиозаписей пользователя
     void FetchUserAudio(long long ownerId = 0, int count = 100);

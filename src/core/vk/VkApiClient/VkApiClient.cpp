@@ -49,6 +49,41 @@ void VkApiClient::FetchUserAudio(long long ownerId, int count) {
     connect(reply, &QNetworkReply::finished, this, [this, reply]() { OnReplyFinished(reply); });
 }
 
+void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&)> callback) {
+    // Формируем запрос к методу audio.getById
+    QUrl url("https://api.vk.com/method/audio.getById");
+    QUrlQuery query;
+    query.addQueryItem("audios", QString::fromStdString(trackId));
+    query.addQueryItem("access_token", QString::fromStdString(m_accessToken));
+    query.addQueryItem("v", "5.199");
+    url.setQuery(query);
+
+    QNetworkRequest request(url);
+    QNetworkReply* reply = m_manager->get(request);
+
+    QObject::connect(reply, &QNetworkReply::finished, [reply, callback]() {
+        std::string freshUrl = "";
+
+        if (reply->error() == QNetworkReply::NoError) {
+            QByteArray response_data = reply->readAll();
+            QJsonDocument json = QJsonDocument::fromJson(response_data);
+            QJsonObject root = json.object();
+            QJsonArray responseArray = root["response"].toArray();
+
+            if (!responseArray.isEmpty()) {
+                QJsonObject trackObj = responseArray[0].toObject();
+                freshUrl = trackObj["url"].toString().toStdString();
+            }
+        } else {
+            Logger::Log(LogLevel::ERROR, "Network error while fetching track URL: " + reply->errorString().toStdString());
+        }
+
+        // Вызываем коллбэк с полученным URL
+        callback(freshUrl);
+        reply->deleteLater();
+    });
+}
+
 void VkApiClient::OnReplyFinished(QNetworkReply* reply) {
     reply->deleteLater();
 
@@ -69,7 +104,7 @@ void VkApiClient::OnReplyFinished(QNetworkReply* reply) {
 
     QJsonObject rootObj = jsonDoc.object();
     
-    // Проверка на ошибку от самого API VK
+    // Проверка на ошибку от API VK
     if (rootObj.contains("error")) {
         QJsonObject errObj = rootObj["error"].toObject();
         std::string errMsg = errObj["error_msg"].toString().toStdString();
@@ -86,15 +121,20 @@ void VkApiClient::OnReplyFinished(QNetworkReply* reply) {
         QJsonObject trackObj = itemsArray[i].toObject();
         
         Track t;
-        t.id = trackObj["id"].toInt();
-        t.ownerId = trackObj["owner_id"].toInt();
+        int audioId = trackObj["id"].toInt();
+        int ownerId = trackObj["owner_id"].toInt();
+
+        // Склеиваем ID в формат "ownerId_audioId"
+        t.id = std::to_string(ownerId) + "_" + std::to_string(audioId);
+        t.ownerId = std::to_string(ownerId);
+
         t.artist = trackObj["artist"].toString().toStdString();
         t.title = trackObj["title"].toString().toStdString();
         t.url = trackObj["url"].toString().toStdString();
         t.duration = trackObj["duration"].toInt();
 
-        // VK иногда отдает пустые URL для заблокированных треков
-        if (!t.url.empty()) {
+        // Если у трека есть валидный ID, добавляем его в плейлист
+        if (audioId != 0) {
             tracks.push_back(t);
         }
     }

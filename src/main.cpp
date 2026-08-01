@@ -90,28 +90,37 @@ int main(int argc, char *argv[]) {
     // ==========================================
 
     playlist.OnTrackRequested = [&](const Track& track) {
-        // Красивый вывод метаданных
-        Logger::Log(LogLevel::INFO, ">>> Playing: " + track.artist + " - " + track.title + " [" + track.GetFormattedDuration() + "]");
+        Logger::Log(LogLevel::INFO, ">>> Requesting fresh URL for: " + track.artist + " - " + track.title);
 
-        // Освобождаем предыдущий поток, если он был
-        if (g_CurrentStream != 0) {
-            BASS_StreamFree(g_CurrentStream);
-            g_CurrentStream = 0;
-        }
+        // Асинхронно запрашиваем свежую ссылку по ID трека
+        vkClient.FetchTrackUrl(track.id, [&playlist, track](const std::string& freshUrl) {
+            if (freshUrl.empty()) {
+                Logger::Log(LogLevel::ERROR, "Failed to fetch fresh URL for track. Skipping...");
+                playlist.Next();
+                return;
+            }
 
-        // Передаем URL из объекта Track
-        g_CurrentStream = BASS_StreamCreateURL(track.url.c_str(), 0, BASS_STREAM_AUTOFREE, NULL, NULL);
+            // Освобождаем предыдущий поток, если он был
+            if (g_CurrentStream != 0) {
+                BASS_StreamFree(g_CurrentStream);
+                g_CurrentStream = 0;
+            }
 
-        if (g_CurrentStream != 0) {
-            BASS_ChannelSetAttribute(g_CurrentStream, BASS_ATTRIB_VOL, g_Volume);
-            BASS_ChannelSetSync(g_CurrentStream, BASS_SYNC_END, 0, OnTrackEnd, &playlist);
-            BASS_ChannelPlay(g_CurrentStream, FALSE);
-        } else {
-            int errorCode = BASS_ErrorGetCode();
-            Logger::Log(LogLevel::ERROR, "BASS failed to create stream! Error code: " + std::to_string(errorCode));
-            Logger::Log(LogLevel::WARNING, "Stream failed. Link might be expired.");
-            // playlist.Next(); // [В Р Е М Е Н Н О]
-        }
+            // Создаем новый поток со свежей ссылкой
+            g_CurrentStream = BASS_StreamCreateURL(freshUrl.c_str(), 0, BASS_STREAM_AUTOFREE, NULL, NULL);
+
+            if (g_CurrentStream != 0) {
+                BASS_ChannelSetAttribute(g_CurrentStream, BASS_ATTRIB_VOL, g_Volume);
+                BASS_ChannelSetSync(g_CurrentStream, BASS_SYNC_END, 0, OnTrackEnd, &playlist);
+                BASS_ChannelPlay(g_CurrentStream, FALSE);
+
+                Logger::Log(LogLevel::INFO, ">>> Playing: " + track.artist + " - " + track.title + " [" + track.GetFormattedDuration() + "]");
+            } else {
+                int errorCode = BASS_ErrorGetCode();
+                Logger::Log(LogLevel::ERROR, "BASS failed to create stream! Error code: " + std::to_string(errorCode));
+                playlist.Next(); // Пропускаем сломанный трек
+            }
+        });
     };
 
     // ==========================================
