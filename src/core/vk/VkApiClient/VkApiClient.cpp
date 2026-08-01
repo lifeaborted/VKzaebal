@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QRegularExpression>
+#include  <iostream>
 
 VkApiClient::VkApiClient(QObject* parent) 
     : QObject(parent), m_manager(new QNetworkAccessManager(this)) {
@@ -152,4 +153,71 @@ void VkApiClient::OnReplyFinished(QNetworkReply* reply) {
 
     Logger::Log(LogLevel::INFO, "VkApiClient: Successfully parsed " + std::to_string(tracks.size()) + " tracks.");
     emit AudioFetched(tracks);
+}
+
+void VkApiClient::FetchAllUserAudio(int offset, int count) {
+    Logger::Log(LogLevel::INFO, "VkApiClient: Fetching tracks chunk (offset: " + std::to_string(offset) + ", count: " + std::to_string(count) + ")...");
+
+    // Формируем запрос
+    QUrl url("https://api.vk.com/method/audio.get");
+    QUrlQuery query;
+    query.addQueryItem("access_token", QString::fromStdString(m_accessToken));
+    query.addQueryItem("v", "5.199");
+    query.addQueryItem("offset", QString::number(offset));
+    query.addQueryItem("count", QString::number(count));
+    url.setQuery(query);
+
+    QNetworkRequest request(url);
+    // Спуфинг User-Agent, чтобы VK не блокировал запросы
+    request.setRawHeader("User-Agent", "KateMobileAndroid/56 lite-460 (Android 4.4.2; SDK 19; x86; unknown Android SDK built for x86; en)");
+
+    QNetworkReply* reply = m_manager->get(request);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, offset, count]() {
+        reply->deleteLater();
+
+        if (reply->error() != QNetworkReply::NoError) {
+            Logger::Log(LogLevel::ERROR, "Network error during audio.get: " + reply->errorString().toStdString());
+            return;
+        }
+
+        QByteArray response_data = reply->readAll();
+        QJsonDocument json = QJsonDocument::fromJson(response_data);
+        QJsonObject root = json.object();
+
+        // Проверяем ошибки API
+        if (root.contains("error")) {
+            QJsonObject errObj = root["error"].toObject();
+            Logger::Log(LogLevel::ERROR, "VK API Error: " + errObj["error_msg"].toString().toStdString());
+            return;
+        }
+
+        std::vector<Track> chunkTracks;
+        QJsonObject responseObj = root["response"].toObject();
+        QJsonArray items = responseObj["items"].toArray();
+
+        for (const QJsonValue& val : items) {
+            QJsonObject trackJson = val.toObject();
+            Track track;
+            // id в VK может быть числом, приводим к строке
+            track.id = std::to_string(trackJson["owner_id"].toInt()) + "_" + std::to_string(trackJson["id"].toInt());
+            track.artist = trackJson["artist"].toString().toStdString();
+            track.title = trackJson["title"].toString().toStdString();
+            track.duration = trackJson["duration"].toInt();
+            chunkTracks.push_back(track);
+        }
+
+        // Отправляем скачанный чанк в главное окно
+        if (!chunkTracks.empty()) {
+            emit AudioFetched(chunkTracks);
+        }
+
+        // ПАГИНАЦИЯ: Если мы получили ровно столько, сколько просили, значит есть еще
+        if (items.size() == count) {
+            FetchAllUserAudio(offset + count, count);
+        } else {
+            Logger::Log(LogLevel::INFO, "VkApiClient: Finished fetching all tracks.");
+            std::cout << "\n=== ВСЕ ДОСТУПНЫЕ ТРЕКИ УСПЕШНО ЗАГРУЖЕНЫ ===" << std::endl;
+        }
+    });
 }

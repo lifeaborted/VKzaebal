@@ -92,20 +92,22 @@ int main(int argc, char *argv[]) {
     if (!myVkToken.empty()) vkClient.SetAccessToken(myVkToken);
 
     QObject::connect(&vkClient, &VkApiClient::AudioFetched, [&](const std::vector<Track>& tracks) {
-        std::cout << "\n=== ПЛЕЙЛИСТ VK ЗАГРУЖЕН ===" << std::endl;
+            // Проверяем, пуст ли плейлист до добавления новых треков
+            bool isFirstChunk = !playlist.HasTracks();
 
-        for (size_t i = 0; i < tracks.size(); ++i) {
-            playlist.AddTrack(tracks[i]);
-            // Выводим список в формате: [1] Artist - Title (MM:SS)
-            std::cout << "[" << i + 1 << "] " << tracks[i].artist << " - " << tracks[i].title
-                      << " (" << tracks[i].GetFormattedDuration() << ")" << std::endl;
-        }
-        std::cout << "Added " << tracks.size() << " tracks.\n" << std::endl;
+            for (const auto& track : tracks) {
+                playlist.AddTrack(track);
+            }
 
-        if (playlist.HasTracks()) playlist.OnTrackRequested(playlist.GetCurrentTrack());
-    });
+            std::cout << "[Плейлист] Загружена порция из " << tracks.size() << " треков." << std::endl;
 
-    vkClient.FetchUserAudio(0, 50);
+            if (isFirstChunk && playlist.HasTracks()) {
+                std::cout << "\n=== ПЕРВАЯ ЧАСТЬ ПЛЕЙЛИСТА ЗАГРУЖЕНА, НАЧИНАЕМ ВОСПРОИЗВЕДЕНИЕ ===\n" << std::endl;
+                playlist.OnTrackRequested(playlist.GetCurrentTrack());
+            }
+        });
+
+    vkClient.FetchAllUserAudio();
 
     // Консольный ввод
     std::cout << "\nControls:\n [P] Play/Pause\n [N] Next\n [B] Prev\n [+] Vol Up\n [-] Vol Down\n [S] Shuffle\n [R] Repeat Mode\n [J <num>] Jump to track (e.g., J 5)\n [Q] Quit\n-----------------------\n";
