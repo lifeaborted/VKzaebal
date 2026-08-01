@@ -22,13 +22,12 @@ public:
     // Запрос списка аудиозаписей пользователя
     void FetchUserAudio(long long ownerId = 0, int count = 100);
 
-    void FetchAllUserAudio(int offset = 0, int count = 200); // загрузчик треков 
+    void FetchAllUserAudio(int offset = 0, int count = 200); // загрузчик треков
 
     signals:
-        // Сигнал, который отдаст нам готовый плейлист после успешного парсинга
         void AudioFetched(const std::vector<Track>& tracks);
-    void ApiError(const std::string& errorMessage);
-
+        void ApiError(const std::string& errorMessage);
+        void TokenExpired();
 private slots:
     void OnReplyFinished(QNetworkReply* reply);
 

@@ -14,7 +14,7 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_PREFIX_PATH "C:/Qt/6.11.1/msvc2022_64")
 
 # Ищем нужные модули Qt
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Network)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Widgets Quick Network QuickWidgets WebView)
 
 # Указываем путь к исходникам и заголовкам
 set(PROJECT_SOURCES
@@ -30,6 +30,9 @@ set(PROJECT_SOURCES
         src/core/vk/VkApiClient/VkApiClient.h
         src/core/audio/AudioEngine/AudioEngine.cpp
         src/core/audio/AudioEngine/AudioEngine.h
+        src/core/vk/VkAuthManager/VkAuthManager.cpp
+        src/core/vk/VkAuthManager/VkAuthManager.h
+        src/resources.qrc
 )
 
 # Создаем исполняемый файл
@@ -48,6 +51,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         Qt6::Qml
         Qt6::Quick
         Qt6::Network
+        Qt6::Widgets
+        Qt6::Quick
+        Qt6::QuickWidgets
+        Qt6::WebView
         ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/bass.lib
         ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/basshls.lib
 )

@@ -60,12 +60,12 @@ void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(c
 
     QNetworkRequest request(url);
 
-    request.setHeader(QNetworkRequest::UserAgentHeader, "KateMobileAndroid/56 lite-460 (Android 4.4.2; SDK 19; x86; unknown Android SDK built for x86; en)");
+    request.setHeader(QNetworkRequest::UserAgentHeader, "VKAndroidApp/5.56.1-12345 (Android 11; SDK 30; x86_64; en; 2274003)");
     request.setTransferTimeout(5000);
 
     QNetworkReply* reply = m_manager->get(request);
 
-    QObject::connect(reply, &QNetworkReply::finished, [reply, callback]() {
+    QObject::connect(reply, &QNetworkReply::finished, this, [this, reply, callback]() {
         std::string freshUrl = "";
 
         if (reply->error() == QNetworkReply::NoError) {
@@ -73,12 +73,16 @@ void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(c
             QJsonDocument json = QJsonDocument::fromJson(response_data);
             QJsonObject root = json.object();
 
-            // --- НОВЫЙ БЛОК: Проверяем, не ругается ли сам VK API ---
             if (root.contains("error")) {
                 QJsonObject errObj = root["error"].toObject();
                 std::string errMsg = errObj["error_msg"].toString().toStdString();
                 int errCode = errObj["error_code"].toInt();
                 Logger::Log(LogLevel::ERROR, "VK API Error [" + std::to_string(errCode) + "]: " + errMsg);
+
+                if (errCode == 5) {
+                    emit TokenExpired();
+                }
+                // Убрали return;, чтобы код гарантированно дошел до вызова коллбэка и очистки памяти
             } else {
                 QJsonArray responseArray = root["response"].toArray();
                 if (!responseArray.isEmpty()) {
@@ -90,7 +94,7 @@ void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(c
             Logger::Log(LogLevel::ERROR, "Network error while fetching track URL: " + reply->errorString().toStdString());
         }
 
-        // Вызываем коллбэк с полученным URL
+        // Вызываем коллбэк с полученным URL (даже если была ошибка, отправится пустая строка)
         callback(freshUrl);
         reply->deleteLater();
     });
@@ -188,7 +192,15 @@ void VkApiClient::FetchAllUserAudio(int offset, int count) {
         // Проверяем ошибки API
         if (root.contains("error")) {
             QJsonObject errObj = root["error"].toObject();
-            Logger::Log(LogLevel::ERROR, "VK API Error: " + errObj["error_msg"].toString().toStdString());
+            int errCode = errObj["error_code"].toInt();
+            std::string errMsg = errObj["error_msg"].toString().toStdString();
+
+            Logger::Log(LogLevel::ERROR, "VK API Error [" + std::to_string(errCode) + "]: " + errMsg);
+
+            // Если токен сгорел, инвалиден или сброшен пользователем
+            if (errCode == 5) {
+                emit TokenExpired();
+            }
             return;
         }
 
