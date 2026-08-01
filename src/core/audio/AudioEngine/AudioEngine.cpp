@@ -1,235 +1,102 @@
 #include "AudioEngine.h"
 #include "utils/logger/logger.h"
+#include <QCoreApplication>
+#include <QMetaObject>
 
-AudioEngine::AudioEngine() : m_isInitialized(false), m_isPlaying(false) {
-    Logger::Log(LogLevel::INFO, "AudioEngine created.");
+AudioEngine::AudioEngine() {
 }
 
 AudioEngine::~AudioEngine() {
-    Shutdown();
-    Logger::Log(LogLevel::INFO, "AudioEngine destroyed.");
+    if (m_currentStream != 0) {
+        BASS_StreamFree(m_currentStream);
+    }
+    BASS_Free();
+    Logger::Log(LogLevel::INFO, "AudioEngine: BASS freed.");
 }
 
-bool AudioEngine::Initialize(const std::string& filePath) {
-    Logger::Log(LogLevel::INFO, "Initializing AudioEngine with file: " + filePath);
-
-    if (ma_decoder_init_file(filePath.c_str(), NULL, &m_decoder) != MA_SUCCESS) {
-        Logger::Log(LogLevel::ERROR, "Failed to initialize decoder. Check file path.");
+bool AudioEngine::Init() {
+    if (!BASS_Init(-1, 44100, 0, 0, nullptr)) {
+        Logger::Log(LogLevel::ERROR, "AudioEngine: Failed to initialize BASS. Code: " + std::to_string(BASS_ErrorGetCode()));
         return false;
     }
 
-    ma_device_config deviceConfig = ma_device_config_init(ma_device_type_playback);
-    deviceConfig.playback.format   = m_decoder.outputFormat;
-    deviceConfig.playback.channels = m_decoder.outputChannels;
-    deviceConfig.sampleRate        = m_decoder.outputSampleRate;
-    deviceConfig.dataCallback      = DataCallback;
-    deviceConfig.pUserData         = this; // Передаем указатель на текущий экземпляр класса
+    BASS_SetConfig(BASS_CONFIG_NET_TIMEOUT, 5000);
+    BASS_SetConfig(BASS_CONFIG_NET_PLAYLIST, 1);
+    BASS_SetConfig(BASS_CONFIG_NET_BUFFER, 15000); // 15 секунд сетевого буфера
+    BASS_SetConfig(BASS_CONFIG_NET_PREBUF, 50);    // Стартовать воспроизведение только после заполнения буфера на 50%
+    BASS_SetConfigPtr(BASS_CONFIG_NET_AGENT, "KateMobileAndroid/56 lite-460 (Android 4.4.2; SDK 19; x86; unknown Android SDK built for x86; en)");
 
-    if (ma_device_init(NULL, &deviceConfig, &m_device) != MA_SUCCESS) {
-        Logger::Log(LogLevel::ERROR, "Failed to initialize playback device.");
-        ma_decoder_uninit(&m_decoder);
+    HPLUGIN hlsPlugin = BASS_PluginLoad("basshls.dll", 0);
+
+    if (hlsPlugin == 0) {
+        Logger::Log(LogLevel::ERROR, "AudioEngine: Failed to load basshls.dll!");
         return false;
     }
 
-    m_isInitialized = true;
-    Logger::Log(LogLevel::INFO, "AudioEngine initialized successfully.");
+    Logger::Log(LogLevel::INFO, "AudioEngine: BASS & HLS Plugin initialized successfully.");
     return true;
 }
 
-void AudioEngine::Play() {
-    if (!m_isInitialized) return;
-    
-    if (ma_device_start(&m_device) != MA_SUCCESS) {
-        Logger::Log(LogLevel::ERROR, "Failed to start device playback.");
-        return;
+bool AudioEngine::PlayStream(const std::string& url) {
+    if (m_currentStream != 0) {
+        BASS_StreamFree(m_currentStream);
+        m_currentStream = 0;
     }
-    m_isPlaying = true;
-    Logger::Log(LogLevel::INFO, "Playback started/resumed.");
+
+    m_currentStream = BASS_StreamCreateURL(url.c_str(), 0, BASS_STREAM_AUTOFREE, nullptr, nullptr);
+
+    if (m_currentStream != 0) {
+        BASS_ChannelSetAttribute(m_currentStream, BASS_ATTRIB_VOL, m_volume);
+        BASS_ChannelSetSync(m_currentStream, BASS_SYNC_END, 0, &AudioEngine::BassTrackEndCallback, this);
+        BASS_ChannelPlay(m_currentStream, FALSE);
+        return true;
+    } else {
+        Logger::Log(LogLevel::ERROR, "AudioEngine: Failed to create stream! Error code: " + std::to_string(BASS_ErrorGetCode()));
+
+        return false;
+    }
 }
 
 void AudioEngine::Pause() {
-    if (!m_isInitialized || !m_isPlaying) return;
-
-    if (ma_device_stop(&m_device) != MA_SUCCESS) {
-        Logger::Log(LogLevel::ERROR, "Failed to stop device playback.");
-        return;
+    if (m_currentStream != 0 && BASS_ChannelIsActive(m_currentStream) == BASS_ACTIVE_PLAYING) {
+        BASS_ChannelPause(m_currentStream);
+        Logger::Log(LogLevel::INFO, "AudioEngine: Paused.");
     }
-    m_isPlaying = false;
-    Logger::Log(LogLevel::INFO, "Playback paused.");
+}
+
+void AudioEngine::Resume() {
+    if (m_currentStream != 0 && BASS_ChannelIsActive(m_currentStream) == BASS_ACTIVE_PAUSED) {
+        BASS_ChannelPlay(m_currentStream, FALSE);
+        Logger::Log(LogLevel::INFO, "AudioEngine: Resumed.");
+    }
 }
 
 void AudioEngine::SetVolume(float volume) {
-    if (!m_isInitialized) return;
-    
-    // Защита от выхода за пределы
-    if (volume < 0.0f) volume = 0.0f;
-    if (volume > 1.0f) volume = 1.0f;
+    m_volume = volume;
+    if (m_volume < 0.0f) m_volume = 0.0f;
+    if (m_volume > 1.0f) m_volume = 1.0f;
 
-    ma_device_set_master_volume(&m_device, volume);
-    Logger::Log(LogLevel::INFO, "Volume set to: " + std::to_string(volume));
+    if (m_currentStream != 0) {
+        BASS_ChannelSetAttribute(m_currentStream, BASS_ATTRIB_VOL, m_volume);
+    }
+    Logger::Log(LogLevel::INFO, "AudioEngine: Volume set to " + std::to_string(static_cast<int>(m_volume * 100)) + "%");
 }
 
-void AudioEngine::Shutdown() {
-    if (m_isInitialized) {
-        Logger::Log(LogLevel::INFO, "Shutting down AudioEngine...");
-
-        // Отключаем устройства только если они были запущены
-        if (m_isDecoderReady) {
-            ma_device_uninit(&m_device);
-            ma_decoder_uninit(&m_decoder);
-            m_isDecoderReady = false;
-        }
-
-        m_isInitialized = false;
-        m_isPlaying = false;
-        m_isNetworkPaused = false;
-        m_isStreamFinished = false;
-        m_ringBuffer.reset(); // Очищаем кольцевой буфер от старого трека
-
-        Logger::Log(LogLevel::INFO, "AudioEngine shutdown complete.");
-    }
+float AudioEngine::GetVolume() const {
+    return m_volume;
 }
 
-void AudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
-    AudioEngine* engine = static_cast<AudioEngine*>(pDevice->pUserData);
-    if (!engine || !engine->m_isInitialized) return;
-
-    ma_uint64 framesRead = 0;
-    ma_decoder_read_pcm_frames(&engine->m_decoder, pOutput, frameCount, &framesRead);
-
-    // Если миниаудио прочитал меньше фреймов, чем просила звуковая карта, значит буфер опустел
-    if (framesRead < frameCount) {
-        if (engine->m_isStreamFinished) {
-            // Файл скачан до конца + буфер пуст = трек реально завершился
-            if (engine->m_isPlaying) {
-                engine->m_isPlaying = false;
-                Logger::Log(LogLevel::INFO, "Playback reached End Of File (EOF).");
-
-                // Вызываем коллбэк наружу
-                if (engine->OnTrackFinished) {
-                    engine->OnTrackFinished();
-                }
-            }
-        } else {
-            Logger::Log(LogLevel::DEBUG, "Buffer underflow: waiting for network data...");
-        }
-    }
-    (void)pInput;
+bool AudioEngine::IsPlaying() const {
+    return m_currentStream != 0 && BASS_ChannelIsActive(m_currentStream) == BASS_ACTIVE_PLAYING;
 }
 
-ma_result AudioEngine::CustomRead(ma_decoder* pDecoder, void* pBufferOut, size_t bytesToRead, size_t* pBytesRead) {
-    auto* engine = static_cast<AudioEngine*>(pDecoder->pUserData);
+void CALLBACK AudioEngine::BassTrackEndCallback(HSYNC handle, DWORD channel, DWORD data, void* user) {
+    Logger::Log(LogLevel::INFO, "AudioEngine: --- TRACK COMPLETION EVENT ---");
+    AudioEngine* engine = static_cast<AudioEngine*>(user);
 
-    if (!engine || !engine->m_ringBuffer) {
-        if (pBytesRead) *pBytesRead = 0;
-        return MA_ERROR;
+    if (engine->OnTrackFinished) {
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [engine]() {
+            engine->OnTrackFinished();
+        }, Qt::QueuedConnection);
     }
-
-    // Читаем байты напрямую из RingBuffer в буфер miniaudio
-    size_t actualRead = engine->m_ringBuffer->Read(static_cast<uint8_t*>(pBufferOut), bytesToRead);
-
-    if (pBytesRead) {
-        *pBytesRead = actualRead;
-    }
-
-    if (engine->m_ringBuffer->GetAvailableRead() < 500 * 1024) {
-        if (engine->m_isNetworkPaused) { // Отправляем сигнал только один раз!
-            engine->m_isNetworkPaused = false;
-            if (engine->OnBufferNeedsData) engine->OnBufferNeedsData();
-        }
-    }
-
-    return MA_SUCCESS;
-}
-
-ma_result AudioEngine::CustomSeek(ma_decoder* pDecoder, ma_int64 byteOffset, ma_seek_origin origin) {
-    auto* engine = static_cast<AudioEngine*>(pDecoder->pUserData);
-    if (!engine || !engine->m_ringBuffer) {
-        return MA_ERROR;
-    }
-
-    if (origin == ma_seek_origin_current && byteOffset > 0) {
-        std::vector<uint8_t> dummy(static_cast<size_t>(byteOffset));
-        engine->m_ringBuffer->Read(dummy.data(), dummy.size());
-        return MA_SUCCESS;
-    }
-
-    // Произвольная перемотка назад пока не поддерживается
-    return MA_NOT_IMPLEMENTED;
-}
-
-bool AudioEngine::InitializeStream(size_t bufferSize) {
-    m_isStreamFinished = false; // Сбрасываем флаг перед новым треком
-    // Выделяем память под кольцевой буфер (по умолчанию 2 МБ)
-    m_ringBuffer = std::make_unique<RingBuffer>(bufferSize);
-
-    m_isDecoderReady = false;
-    m_isInitialized = true;
-
-    Logger::Log(LogLevel::INFO, "AudioEngine stream initialized with buffer size: " + std::to_string(bufferSize) + " bytes.");
-    return true;
-}
-
-void AudioEngine::PushAudioData(const uint8_t* data, size_t size) {
-    if (!m_ringBuffer) return;
-
-    // Пишем данные в кольцевой буфер
-    size_t written = m_ringBuffer->Write(data, size);
-
-    if (m_ringBuffer->GetAvailableWrite() < 500 * 1024) {
-        if (!m_isNetworkPaused) {
-            m_isNetworkPaused = true;
-            if (OnBufferFull) OnBufferFull();
-            Logger::Log(LogLevel::WARNING, "High Watermark: Pausing network.");
-        }
-    }
-
-    // Если декодер еще не запущен, пытаемся его стартовать
-    if (!m_isDecoderReady) {
-        if (TryStartDecoder()) {
-            Play(); // Автоматически начинаем воспроизведение, как только накопили пре-буфер!
-        }
-    }
-}
-
-bool AudioEngine::TryStartDecoder() {
-    if (m_isDecoderReady) return true;
-
-    // Снижаем порог до 32 КБ, чтобы декодер мгновенно подхватывал поток
-    const size_t PREBUFFER_SIZE = 32 * 1024;
-
-    if (m_ringBuffer->GetAvailableRead() < PREBUFFER_SIZE) {
-        return false;
-    }
-
-    ma_decoder_config config = ma_decoder_config_init_default();
-    config.encodingFormat = ma_encoding_format_mp3;
-
-    ma_result result = ma_decoder_init(CustomRead, CustomSeek, this, &config, &m_decoder);
-    if (result != MA_SUCCESS) {
-        Logger::Log(LogLevel::ERROR, "Failed to initialize custom decoder from memory.");
-        return false;
-    }
-
-    ma_device_config deviceConfig = ma_device_config_init(ma_device_type_playback);
-    deviceConfig.playback.format   = m_decoder.outputFormat;
-    deviceConfig.playback.channels = m_decoder.outputChannels;
-    deviceConfig.sampleRate        = m_decoder.outputSampleRate;
-    deviceConfig.dataCallback      = DataCallback;
-    deviceConfig.pUserData         = this;
-
-    if (ma_device_init(NULL, &deviceConfig, &m_device) != MA_SUCCESS) {
-        Logger::Log(LogLevel::ERROR, "Failed to initialize playback device.");
-        ma_decoder_uninit(&m_decoder);
-        return false;
-    }
-
-    m_isDecoderReady = true;
-    Logger::Log(LogLevel::INFO, "Decoder initialized from memory buffer successfully! Ready to play.");
-    return true;
-}
-
-void AudioEngine::MarkStreamFinished() {
-    m_isStreamFinished = true;
-    Logger::Log(LogLevel::INFO, "AudioEngine: Network stream fully downloaded. Waiting for playback to complete...");
 }

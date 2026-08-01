@@ -50,7 +50,6 @@ void VkApiClient::FetchUserAudio(long long ownerId, int count) {
 }
 
 void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&)> callback) {
-    // Формируем запрос к методу audio.getById
     QUrl url("https://api.vk.com/method/audio.getById");
     QUrlQuery query;
     query.addQueryItem("audios", QString::fromStdString(trackId));
@@ -59,6 +58,10 @@ void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(c
     url.setQuery(query);
 
     QNetworkRequest request(url);
+
+    request.setHeader(QNetworkRequest::UserAgentHeader, "KateMobileAndroid/56 lite-460 (Android 4.4.2; SDK 19; x86; unknown Android SDK built for x86; en)");
+    request.setTransferTimeout(5000);
+
     QNetworkReply* reply = m_manager->get(request);
 
     QObject::connect(reply, &QNetworkReply::finished, [reply, callback]() {

@@ -28,6 +28,8 @@ set(PROJECT_SOURCES
         src/core/vk/Track.h
         src/core/vk/VkApiClient/VkApiClient.cpp
         src/core/vk/VkApiClient/VkApiClient.h
+        src/core/audio/AudioEngine/AudioEngine.cpp
+        src/core/audio/AudioEngine/AudioEngine.h
 )
 
 # Создаем исполняемый файл
