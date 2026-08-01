@@ -21,7 +21,7 @@ bool AudioEngine::Init() {
     }
 
     BASS_SetConfig(BASS_CONFIG_NET_TIMEOUT, 5000);
-    BASS_SetConfig(BASS_CONFIG_NET_PLAYLIST, 1);
+    BASS_SetConfig(BASS_CONFIG_NET_PLAYLIST, 0);
     BASS_SetConfig(BASS_CONFIG_NET_BUFFER, 15000); // 15 секунд сетевого буфера
     BASS_SetConfig(BASS_CONFIG_NET_PREBUF, 50);    // Стартовать воспроизведение только после заполнения буфера на 50%
     BASS_SetConfigPtr(BASS_CONFIG_NET_AGENT, "KateMobileAndroid/56 lite-460 (Android 4.4.2; SDK 19; x86; unknown Android SDK built for x86; en)");
