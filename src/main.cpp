@@ -3,15 +3,18 @@
 #include <thread>
 #include <atomic>
 #include <cctype>
+#include <cstdlib>
 
 #ifdef _WIN32
 #include <windows.h>
 #endif
 
-#include <QApplication> // ИЗМЕНЕНО: Был QCoreApplication
+// Возвращаем графическое приложение, оно необходимо для QDesktopServices
+#include <QGuiApplication>
+#include <QDesktopServices>
+#include <QUrl>
 #include <QMetaObject>
 #include <QTimer>
-#include <QtWebView/QtWebView>
 
 #include "core/audio/AudioEngine/AudioEngine.h"
 #include "core/playlist/PlaylistManager.h"
@@ -19,7 +22,13 @@
 #include "core/vk/VkAuthManager/VkAuthManager.h"
 #include "utils/logger/logger.h"
 
-const int VK_APP_ID = 2685278; // ID приложения KateMobile
+// Состояния нашего умного консольного ввода
+enum class ConsoleState {
+    COMMAND_MODE,
+    WAITING_TOKEN_URL // Режим ожидания ссылки с токеном из системного браузера
+};
+
+std::atomic<ConsoleState> currentState(ConsoleState::COMMAND_MODE);
 
 int main(int argc, char *argv[]) {
 #ifdef _WIN32
@@ -27,10 +36,7 @@ int main(int argc, char *argv[]) {
     SetConsoleCP(CP_UTF8);
 #endif
 
-    // Инициализация WebView ДО QApplication
-    QtWebView::initialize();
-    QApplication app(argc, argv); // ИЗМЕНЕНО
-
+    QGuiApplication app(argc, argv);
     Logger::Init();
     Logger::Log(LogLevel::INFO, "--- VK Audio Player Started ---");
 
@@ -84,32 +90,56 @@ int main(int argc, char *argv[]) {
     QObject::connect(&authManager, &VkAuthManager::TokenReceived, [&](const std::string& token) {
         authManager.SaveToken(token);
         vkClient.SetAccessToken(token);
-        std::cout << "\n[УСПЕХ] Токен перехвачен! Загрузка аудио...\n> ";
+        currentState = ConsoleState::COMMAND_MODE;
+        std::cout << "\n[УСПЕХ] Авторизация пройдена! Загрузка аудио...\n> ";
         vkClient.FetchAllUserAudio(0, 200);
     });
 
     QObject::connect(&authManager, &VkAuthManager::AuthFailed, [&](const std::string& error) {
         std::cout << "\n[ОШИБКА АВТОРИЗАЦИИ] " << error << "\n";
+        std::cout << "Перезапустите приложение для повторной попытки.\n> ";
+        currentState = ConsoleState::COMMAND_MODE;
     });
 
     QObject::connect(&vkClient, &VkApiClient::TokenExpired, [&]() {
-        Logger::Log(LogLevel::WARNING, "Main: Token expired or invalid. Re-authenticating...");
-        std::cout << "\n[ВНИМАНИЕ] Токен устарел. Открываем окно входа...\n> ";
-        authManager.Authenticate(VK_APP_ID);
+        Logger::Log(LogLevel::WARNING, "Main: Token expired or invalid.");
+        std::cout << "\n[ВНИМАНИЕ] Токен устарел. Удалите файл .vk_token и перезапустите плеер.\n> ";
+        currentState = ConsoleState::COMMAND_MODE;
     });
 
     // --- ПЕРВИЧНЫЙ ЗАПУСК ---
-    std::string savedToken = authManager.GetSavedToken();
-    if (savedToken.empty()) {
-        Logger::Log(LogLevel::INFO, "Main: No saved token found. Starting WebView Auth flow...");
-        authManager.Authenticate(VK_APP_ID);
+    std::string savedToken = "";
+
+    if (const char* envToken = std::getenv("VK_TOKEN")) {
+        savedToken = envToken;
+        Logger::Log(LogLevel::INFO, "Main: Found token in environment variable VK_TOKEN.");
     } else {
-        Logger::Log(LogLevel::INFO, "Main: Found saved token. Fetching audio...");
+        savedToken = authManager.GetSavedToken();
+        if (!savedToken.empty()) {
+            Logger::Log(LogLevel::INFO, "Main: Found saved token in file.");
+        }
+    }
+
+    if (savedToken.empty()) {
+        Logger::Log(LogLevel::INFO, "Main: No token found. Opening default OS browser...");
+        std::cout << "\n=== Авторизация ВКонтакте ===\n";
+        std::cout << "Сейчас откроется ваш браузер по умолчанию. Нажмите 'Продолжить как...',\n";
+        std::cout << "затем СКОПИРУЙТЕ всю ссылку из адресной строки пустой страницы\n";
+        std::cout << "и вставьте ее сюда:\n\n> ";
+
+        // Открываем системный браузер
+        QString authUrl = "https://id.vk.ru/auth?return_auth_hash=09186539220f2b7497&redirect_uri=https%3A%2F%2Foauth.vk.ru%2Fblank.html&redirect_uri_hash=0b961e14fbf361d5d9&force_hash=1&app_id=6287487&response_type=token&code_challenge=&code_challenge_method=&scope=408861919&state=";
+        QDesktopServices::openUrl(QUrl(authUrl));
+
+        currentState = ConsoleState::WAITING_TOKEN_URL;
+    } else {
         vkClient.SetAccessToken(savedToken);
+        currentState = ConsoleState::COMMAND_MODE;
+        std::cout << "\n[УСПЕХ] Токен найден! Загрузка аудио...\n> ";
         vkClient.FetchAllUserAudio(0, 200);
     }
 
-    // --- ЧИСТЫЙ КОНСОЛЬНЫЙ ВВОД (только команды плеера) ---
+    // --- КОНСОЛЬНЫЙ ВВОД ---
     std::thread inputThread([&]() {
         std::string input;
         bool isRunning = true;
@@ -118,26 +148,42 @@ int main(int argc, char *argv[]) {
             std::cin >> input;
             if (input.empty()) continue;
 
-            char command = std::tolower(input[0]);
-            switch (command) {
-                case 'p': QMetaObject::invokeMethod(&app, [&]() { if (audio.IsPlaying()) audio.Pause(); else audio.Resume(); }, Qt::QueuedConnection); break;
-                case 'n': QMetaObject::invokeMethod(&app, [&]() { playlist.Next(); }, Qt::QueuedConnection); break;
-                case 'b': QMetaObject::invokeMethod(&app, [&]() { playlist.Previous(); }, Qt::QueuedConnection); break;
-                case '+': QMetaObject::invokeMethod(&app, [&]() { audio.SetVolume(audio.GetVolume() + 0.1f); }, Qt::QueuedConnection); break;
-                case '-': QMetaObject::invokeMethod(&app, [&]() { audio.SetVolume(audio.GetVolume() - 0.1f); }, Qt::QueuedConnection); break;
-                case 's': QMetaObject::invokeMethod(&app, [&]() { playlist.ToggleShuffle(); }, Qt::QueuedConnection); break;
-                case 'r': QMetaObject::invokeMethod(&app, [&]() { playlist.ToggleRepeat(); }, Qt::QueuedConnection); break;
-                case 'j': {
-                    int idx;
-                    if (std::cin >> idx) {
-                        QMetaObject::invokeMethod(&app, [&, idx]() { playlist.JumpTo(idx - 1); }, Qt::QueuedConnection);
+            if (currentState == ConsoleState::WAITING_TOKEN_URL) {
+                QString urlStr = QString::fromStdString(input);
+                std::cout << "Обработка ссылки...\n";
+
+                QMetaObject::invokeMethod(&app, [&authManager, urlStr]() {
+                    authManager.onUrlIntercepted(urlStr);
+                }, Qt::QueuedConnection);
+
+                // Переводим консоль в режим блокировки до ответа
+                currentState = ConsoleState::COMMAND_MODE;
+                continue;
+            }
+
+            // Команды плеера
+            if (currentState == ConsoleState::COMMAND_MODE) {
+                char command = std::tolower(input[0]);
+                switch (command) {
+                    case 'p': QMetaObject::invokeMethod(&app, [&]() { if (audio.IsPlaying()) audio.Pause(); else audio.Resume(); }, Qt::QueuedConnection); break;
+                    case 'n': QMetaObject::invokeMethod(&app, [&]() { playlist.Next(); }, Qt::QueuedConnection); break;
+                    case 'b': QMetaObject::invokeMethod(&app, [&]() { playlist.Previous(); }, Qt::QueuedConnection); break;
+                    case '+': QMetaObject::invokeMethod(&app, [&]() { audio.SetVolume(audio.GetVolume() + 0.1f); }, Qt::QueuedConnection); break;
+                    case '-': QMetaObject::invokeMethod(&app, [&]() { audio.SetVolume(audio.GetVolume() - 0.1f); }, Qt::QueuedConnection); break;
+                    case 's': QMetaObject::invokeMethod(&app, [&]() { playlist.ToggleShuffle(); }, Qt::QueuedConnection); break;
+                    case 'r': QMetaObject::invokeMethod(&app, [&]() { playlist.ToggleRepeat(); }, Qt::QueuedConnection); break;
+                    case 'j': {
+                        int idx;
+                        if (std::cin >> idx) {
+                            QMetaObject::invokeMethod(&app, [&, idx]() { playlist.JumpTo(idx - 1); }, Qt::QueuedConnection);
+                        }
+                        break;
                     }
-                    break;
+                    case 'q':
+                        isRunning = false;
+                        QMetaObject::invokeMethod(&app, "quit", Qt::QueuedConnection);
+                        break;
                 }
-                case 'q':
-                    isRunning = false;
-                    QMetaObject::invokeMethod(&app, "quit", Qt::QueuedConnection);
-                    break;
             }
         }
     });

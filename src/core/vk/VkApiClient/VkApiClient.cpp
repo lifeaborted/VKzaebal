@@ -41,8 +41,7 @@ void VkApiClient::FetchUserAudio(long long ownerId, int count) {
     url.setQuery(query);
     QNetworkRequest request(url); //[cite: 4]
 
-    // Маскируемся под Android-клиент
-    request.setHeader(QNetworkRequest::UserAgentHeader, "KateMobileAndroid/56 lite-460 (Android 4.4.2; SDK 19; x86; unknown Android SDK built for x86; en)");
+    request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
     Logger::Log(LogLevel::INFO, "VkApiClient: Fetching audio...");
     
@@ -82,7 +81,6 @@ void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(c
                 if (errCode == 5) {
                     emit TokenExpired();
                 }
-                // Убрали return;, чтобы код гарантированно дошел до вызова коллбэка и очистки памяти
             } else {
                 QJsonArray responseArray = root["response"].toArray();
                 if (!responseArray.isEmpty()) {
@@ -94,7 +92,6 @@ void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(c
             Logger::Log(LogLevel::ERROR, "Network error while fetching track URL: " + reply->errorString().toStdString());
         }
 
-        // Вызываем коллбэк с полученным URL (даже если была ошибка, отправится пустая строка)
         callback(freshUrl);
         reply->deleteLater();
     });
@@ -172,8 +169,8 @@ void VkApiClient::FetchAllUserAudio(int offset, int count) {
     url.setQuery(query);
 
     QNetworkRequest request(url);
-    // Спуфинг User-Agent, чтобы VK не блокировал запросы
-    request.setRawHeader("User-Agent", "KateMobileAndroid/56 lite-460 (Android 4.4.2; SDK 19; x86; unknown Android SDK built for x86; en)");
+    // User-Agent, чтобы VK не блокировал запросы
+    request.setRawHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
     QNetworkReply* reply = m_manager->get(request);
 
@@ -211,7 +208,6 @@ void VkApiClient::FetchAllUserAudio(int offset, int count) {
         for (const QJsonValue& val : items) {
             QJsonObject trackJson = val.toObject();
             Track track;
-            // id в VK может быть числом, приводим к строке
             track.id = std::to_string(trackJson["owner_id"].toInt()) + "_" + std::to_string(trackJson["id"].toInt());
             track.artist = trackJson["artist"].toString().toStdString();
             track.title = trackJson["title"].toString().toStdString();
@@ -224,7 +220,7 @@ void VkApiClient::FetchAllUserAudio(int offset, int count) {
             emit AudioFetched(chunkTracks);
         }
 
-        // ПАГИНАЦИЯ: Если мы получили ровно столько, сколько просили, значит есть еще
+        // пагинация
         if (items.size() == count) {
             FetchAllUserAudio(offset + count, count);
         } else {
