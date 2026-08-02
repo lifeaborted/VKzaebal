@@ -20,11 +20,12 @@ bool AudioEngine::Init() {
         return false;
     }
 
-    BASS_SetConfig(BASS_CONFIG_NET_TIMEOUT, 5000);
+    BASS_SetConfig(BASS_CONFIG_NET_TIMEOUT, 15000);
+    BASS_SetConfig(BASS_CONFIG_NET_READTIMEOUT, 15000);
     BASS_SetConfig(BASS_CONFIG_NET_PLAYLIST, 0);
     BASS_SetConfig(BASS_CONFIG_NET_BUFFER, 15000); // 15 секунд сетевого буфера
     BASS_SetConfig(BASS_CONFIG_NET_PREBUF, 50);    // Стартовать воспроизведение только после заполнения буфера на 50%
-    BASS_SetConfigPtr(BASS_CONFIG_NET_AGENT, "KateMobileAndroid/56 lite-460 (Android 4.4.2; SDK 19; x86; unknown Android SDK built for x86; en)");
+    BASS_SetConfigPtr(BASS_CONFIG_NET_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
     HPLUGIN hlsPlugin = BASS_PluginLoad("basshls.dll", 0);
 

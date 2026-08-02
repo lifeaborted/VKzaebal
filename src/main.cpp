@@ -164,13 +164,14 @@ int main(int argc, char *argv[]) {
         });
     }
 
-    // --- КОНСОЛЬНЫЙ ВВОД ---
+// --- КОНСОЛЬНЫЙ ВВОД ---
     std::thread inputThread([&]() {
         std::string input;
         bool isRunning = true;
 
         while (isRunning) {
-            std::cin >> input;
+            // Заменяем cin на getline, чтобы читать строку целиком вместе с пробелами
+            std::getline(std::cin, input);
             if (input.empty()) continue;
 
             if (currentState == ConsoleState::WAITING_TOKEN_URL) {
@@ -188,6 +189,36 @@ int main(int argc, char *argv[]) {
 
             // Команды плеера
             if (currentState == ConsoleState::COMMAND_MODE) {
+                // 1. Команда изменения громкости (например: "v 50")
+                if (input.length() >= 3 && std::tolower(input[0]) == 'v' && input[1] == ' ') {
+                    try {
+                        int volTarget = std::stoi(input.substr(2));
+                        if (volTarget >= 0 && volTarget <= 100) {
+                            float normalizedVol = volTarget / 100.0f;
+                            QMetaObject::invokeMethod(&app, [&, normalizedVol]() {
+                                audio.SetVolume(normalizedVol);
+                            }, Qt::QueuedConnection);
+                        } else {
+                            std::cout << "[Ошибка] Введите значение от 0 до 100 (например: v 50)\n> ";
+                        }
+                    } catch (...) {
+                        std::cout << "[Ошибка] Неверный формат числа для громкости.\n> ";
+                    }
+                    continue;
+                }
+
+                // 2. Команда прыжка к треку (например: "j 14")
+                if (input.length() >= 3 && std::tolower(input[0]) == 'j' && input[1] == ' ') {
+                    try {
+                        int idx = std::stoi(input.substr(2));
+                        QMetaObject::invokeMethod(&app, [&, idx]() { playlist.JumpTo(idx - 1); }, Qt::QueuedConnection);
+                    } catch (...) {
+                        std::cout << "[Ошибка] Неверный номер трека.\n> ";
+                    }
+                    continue;
+                }
+
+                // 3. Старые односимвольные команды
                 char command = std::tolower(input[0]);
                 switch (command) {
                     case 'p': QMetaObject::invokeMethod(&app, [&]() { if (audio.IsPlaying()) audio.Pause(); else audio.Resume(); }, Qt::QueuedConnection); break;
@@ -197,13 +228,6 @@ int main(int argc, char *argv[]) {
                     case '-': QMetaObject::invokeMethod(&app, [&]() { audio.SetVolume(audio.GetVolume() - 0.1f); }, Qt::QueuedConnection); break;
                     case 's': QMetaObject::invokeMethod(&app, [&]() { playlist.ToggleShuffle(); }, Qt::QueuedConnection); break;
                     case 'r': QMetaObject::invokeMethod(&app, [&]() { playlist.ToggleRepeat(); }, Qt::QueuedConnection); break;
-                    case 'j': {
-                        int idx;
-                        if (std::cin >> idx) {
-                            QMetaObject::invokeMethod(&app, [&, idx]() { playlist.JumpTo(idx - 1); }, Qt::QueuedConnection);
-                        }
-                        break;
-                    }
                     case 'q':
                         isRunning = false;
                         QMetaObject::invokeMethod(&app, "quit", Qt::QueuedConnection);
