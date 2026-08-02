@@ -50,35 +50,63 @@ int main(int argc, char *argv[]) {
     // --- НАСТРОЙКА АУДИОДВИЖКА И ПЛЕЙЛИСТА ---
     audio.OnTrackFinished = [&]() { playlist.Next(); };
 
-    std::function<void(const Track&, int)> attemptPlay;
-    attemptPlay = [&](const Track& track, int attempt) {
-        Logger::Log(LogLevel::INFO, ">>> Requesting fresh URL for: " + track.artist + " - " + track.title + " (Attempt " + std::to_string(attempt) + "/3)");
+    std::string prefetchedTrackId = "";
+    std::string prefetchedUrl = "";
 
-        // Обрати внимание: добавлен параметр bool isNetworkError
-        vkClient.FetchTrackUrl(track.id, [&audio, &playlist, track, attempt, &attemptPlay](const std::string& freshUrl, bool isNetworkError) {
+    std::atomic<int> playbackGeneration{0};
 
-            // 1. Трек изъят правообладателем или удален (сеть есть, API ответил успехом, но URL пустой)
-            if (!isNetworkError && freshUrl.empty()) {
-                Logger::Log(LogLevel::WARNING, "Track is restricted or deleted by copyright. Skipping immediately.");
-                playlist.Next();
-                return; // Моментально уходим, ретраи не нужны
+    std::function<void(Track, int)> attemptPlay;
+    attemptPlay = [&](Track track, int attempt) {
+
+        // система поколений
+        int currentGen = (attempt == 1) ? ++playbackGeneration : playbackGeneration.load();
+
+        Logger::Log(LogLevel::INFO, ">>> Requesting URL for: " + track.artist + " - " + track.title + " (Attempt " + std::to_string(attempt) + "/3)");
+
+        auto executePlay = [track, attempt, currentGen, &audio, &playlist, &prefetchedTrackId, &prefetchedUrl, &vkClient, &attemptPlay, &playbackGeneration](const std::string& freshUrl, bool isNetworkError) {
+
+            if (currentGen != playbackGeneration.load()) {
+                Logger::Log(LogLevel::INFO, "Main: Ignored outdated response for " + track.title);
+                return;
             }
 
-            // 2. Пытаемся запустить поток BASS (если URL получен)
+            if (!isNetworkError && freshUrl.empty()) {
+                Logger::Log(LogLevel::WARNING, "Track is restricted or deleted. Skipping immediately.");
+                playlist.Next();
+                return;
+            }
+
             bool playSuccess = false;
             if (!freshUrl.empty()) {
                 playSuccess = audio.PlayStream(freshUrl);
             }
 
-            // 3. Успешный запуск трека
             if (playSuccess) {
                 Logger::Log(LogLevel::INFO, ">>> Playing: " + track.artist + " - " + track.title + " [" + track.GetFormattedDuration() + "]");
+
+                prefetchedTrackId = "";
+                prefetchedUrl = "";
+
+                Track nextTrack = playlist.GetNextTrackPreview();
+                if (!nextTrack.id.empty()) {
+                    prefetchedTrackId = nextTrack.id;
+                    Logger::Log(LogLevel::INFO, "Background API request for next track: " + nextTrack.title);
+
+                    vkClient.FetchTrackUrl(nextTrack.id, [&audio, &prefetchedUrl, currentGen, &playbackGeneration](const std::string& nextUrl, bool nextNetError) {
+
+                        // Если трек переключили, пока шла фоновая загрузка — отменяем
+                        if (currentGen != playbackGeneration.load()) return;
+
+                        if (!nextNetError && !nextUrl.empty()) {
+                            prefetchedUrl = nextUrl;
+                            audio.PreloadStream(nextUrl);
+                        }
+                    });
+                }
                 return;
             }
 
-            // 4. Ошибка (таймаут сети VK API, либо отвал BASS при подключении к CDN)
             Logger::Log(LogLevel::WARNING, "Playback or network failed for track: " + track.title);
-
             if (attempt < 3) {
                 Logger::Log(LogLevel::INFO, "Retrying in 2 seconds...");
                 QTimer::singleShot(2000, [track, attempt, &attemptPlay]() { attemptPlay(track, attempt + 1); });
@@ -86,10 +114,17 @@ int main(int argc, char *argv[]) {
                 Logger::Log(LogLevel::ERROR, "Max retries reached. Skipping track.");
                 playlist.Next();
             }
-        });
+        };
+
+        if (track.id == prefetchedTrackId && !prefetchedUrl.empty()) {
+            Logger::Log(LogLevel::INFO, "Main: Cache hit! Using prefetched URL.");
+            executePlay(prefetchedUrl, false);
+        } else {
+            vkClient.FetchTrackUrl(track.id, executePlay);
+        }
     };
 
-    playlist.OnTrackRequested = [&](const Track& track) { attemptPlay(track, 1); };
+    playlist.OnTrackRequested = [&](Track track) { attemptPlay(track, 1); };
 
     // --- ЛОГИКА АВТОРИЗАЦИИ И СКАЧИВАНИЯ ---
     QObject::connect(&vkClient, &VkApiClient::AudioFetched, [&](const std::vector<Track>& tracks) {

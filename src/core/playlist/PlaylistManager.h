@@ -12,6 +12,7 @@ public:
     void AddTrack(const Track& track);
     bool HasTracks() const;
     Track GetCurrentTrack() const;
+    Track GetNextTrackPreview() const;
 
     void Next();
     void Previous();
