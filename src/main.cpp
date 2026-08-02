@@ -107,7 +107,7 @@ int main(int argc, char *argv[]) {
         currentState = ConsoleState::COMMAND_MODE;
     });
 
-    // --- ПЕРВИЧНЫЙ ЗАПУСК ---
+// --- ПЕРВИЧНЫЙ ЗАПУСК ---
     std::string savedToken = "";
 
     if (const char* envToken = std::getenv("VK_TOKEN")) {
@@ -120,23 +120,48 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (savedToken.empty()) {
-        Logger::Log(LogLevel::INFO, "Main: No token found. Opening default OS browser...");
+    // Лямбда для запуска процесса авторизации
+    std::function<void()> startAuthFlow = [&]() {
+        Logger::Log(LogLevel::INFO, "Main: Starting auth flow. Opening default OS browser...");
         std::cout << "\n=== Авторизация ВКонтакте ===\n";
         std::cout << "Сейчас откроется ваш браузер по умолчанию. Нажмите 'Продолжить как...',\n";
         std::cout << "затем СКОПИРУЙТЕ всю ссылку из адресной строки пустой страницы\n";
         std::cout << "и вставьте ее сюда:\n\n> ";
 
-        // Открываем системный браузер
-        QString authUrl = "https://id.vk.ru/auth?return_auth_hash=09186539220f2b7497&redirect_uri=https%3A%2F%2Foauth.vk.ru%2Fblank.html&redirect_uri_hash=0b961e14fbf361d5d9&force_hash=1&app_id=6287487&response_type=token&code_challenge=&code_challenge_method=&scope=408861919&state=";
+        QString authUrl = "https://oauth.vk.com/authorize?client_id=6121396&scope=audio,offline,friends,groups,wall&response_type=token&display=page&redirect_uri=https://oauth.vk.com/blank.html";
         QDesktopServices::openUrl(QUrl(authUrl));
 
         currentState = ConsoleState::WAITING_TOKEN_URL;
+    };
+
+    // Обновленная обработка протухшего токена прямо во время работы
+    QObject::connect(&vkClient, &VkApiClient::TokenExpired, [&]() {
+        Logger::Log(LogLevel::WARNING, "Main: Token expired during playback.");
+        std::cout << "\n[ВНИМАНИЕ] Токен устарел.\n";
+        authManager.ClearSavedToken();
+        vkClient.SetAccessToken("");
+        startAuthFlow();
+    });
+
+    // Логика запуска с валидацией
+    if (savedToken.empty()) {
+        startAuthFlow();
     } else {
         vkClient.SetAccessToken(savedToken);
-        currentState = ConsoleState::COMMAND_MODE;
-        std::cout << "\n[УСПЕХ] Токен найден! Загрузка аудио...\n> ";
-        vkClient.FetchAllUserAudio(0, 200);
+        std::cout << "Проверка сохраненного токена...\n";
+
+        vkClient.ValidateToken([&, startAuthFlow](bool isValid) {
+            if (isValid) {
+                currentState = ConsoleState::COMMAND_MODE;
+                std::cout << "\n[УСПЕХ] Токен действителен! Загрузка аудио...\n> ";
+                vkClient.FetchAllUserAudio(0, 200);
+            } else {
+                std::cout << "\n[ВНИМАНИЕ] Сохраненный токен недействителен. Запуск новой авторизации...\n";
+                authManager.ClearSavedToken();
+                vkClient.SetAccessToken("");
+                startAuthFlow();
+            }
+        });
     }
 
     // --- КОНСОЛЬНЫЙ ВВОД ---

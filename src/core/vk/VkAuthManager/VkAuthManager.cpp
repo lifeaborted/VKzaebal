@@ -30,6 +30,14 @@ void VkAuthManager::SaveToken(const std::string& token) const {
     }
 }
 
+void VkAuthManager::ClearSavedToken() const {
+    QFile file(TOKEN_FILE);
+    if (file.exists()) {
+        file.remove();
+        Logger::Log(LogLevel::INFO, "VkAuthManager: Token file removed.");
+    }
+}
+
 void VkAuthManager::onUrlIntercepted(const QString& urlStr) {
     // Ищем токен в адресной строке
     if (urlStr.contains("access_token=")) {

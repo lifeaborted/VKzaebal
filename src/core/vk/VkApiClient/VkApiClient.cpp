@@ -23,6 +23,44 @@ void VkApiClient::SetAccessToken(const std::string& token) {
     m_accessToken = token;
 }
 
+void VkApiClient::ValidateToken(std::function<void(bool)> callback) {
+    if (m_accessToken.empty()) {
+        callback(false);
+        return;
+    }
+
+    QUrl url("https://api.vk.com/method/users.get");
+    QUrlQuery query;
+    query.addQueryItem("v", "5.199");
+    query.addQueryItem("access_token", QString::fromStdString(m_accessToken));
+    url.setQuery(query);
+
+    QNetworkRequest request(url);
+    request.setRawHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+
+    QNetworkReply* reply = m_manager->get(request);
+
+    connect(reply, &QNetworkReply::finished, this, [reply, callback]() {
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) {
+            callback(false);
+            return;
+        }
+
+        QByteArray response_data = reply->readAll();
+        QJsonDocument json = QJsonDocument::fromJson(response_data);
+
+        // Если ВК вернул ошибку, значит токен невалиден
+        if (json.object().contains("error")) {
+            Logger::Log(LogLevel::WARNING, "VkApiClient: Token validation failed (API error).");
+            callback(false);
+        } else {
+            Logger::Log(LogLevel::INFO, "VkApiClient: Token is valid.");
+            callback(true);
+        }
+    });
+}
+
 void VkApiClient::FetchUserAudio(long long ownerId, int count) {
     if (m_accessToken.empty()) {
         emit ApiError("Access token is missing!");

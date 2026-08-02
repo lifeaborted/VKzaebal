@@ -16,6 +16,9 @@ public:
     // Установка токена доступа
     void SetAccessToken(const std::string& token);
 
+    // Валидация токена
+    void ValidateToken(std::function<void(bool isValid)> callback); //
+
     // запрос свежей ссылки на трек
     void FetchTrackUrl(const std::string& trackId, std::function<void(const std::string& freshUrl)> callback);
 
