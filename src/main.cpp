@@ -54,18 +54,37 @@ int main(int argc, char *argv[]) {
     attemptPlay = [&](const Track& track, int attempt) {
         Logger::Log(LogLevel::INFO, ">>> Requesting fresh URL for: " + track.artist + " - " + track.title + " (Attempt " + std::to_string(attempt) + "/3)");
 
-        vkClient.FetchTrackUrl(track.id, [&audio, &playlist, track, attempt, &attemptPlay](const std::string& freshUrl) {
-            if (!freshUrl.empty() && audio.PlayStream(freshUrl)) {
+        // Обрати внимание: добавлен параметр bool isNetworkError
+        vkClient.FetchTrackUrl(track.id, [&audio, &playlist, track, attempt, &attemptPlay](const std::string& freshUrl, bool isNetworkError) {
+
+            // 1. Трек изъят правообладателем или удален (сеть есть, API ответил успехом, но URL пустой)
+            if (!isNetworkError && freshUrl.empty()) {
+                Logger::Log(LogLevel::WARNING, "Track is restricted or deleted by copyright. Skipping immediately.");
+                playlist.Next();
+                return; // Моментально уходим, ретраи не нужны
+            }
+
+            // 2. Пытаемся запустить поток BASS (если URL получен)
+            bool playSuccess = false;
+            if (!freshUrl.empty()) {
+                playSuccess = audio.PlayStream(freshUrl);
+            }
+
+            // 3. Успешный запуск трека
+            if (playSuccess) {
                 Logger::Log(LogLevel::INFO, ">>> Playing: " + track.artist + " - " + track.title + " [" + track.GetFormattedDuration() + "]");
+                return;
+            }
+
+            // 4. Ошибка (таймаут сети VK API, либо отвал BASS при подключении к CDN)
+            Logger::Log(LogLevel::WARNING, "Playback or network failed for track: " + track.title);
+
+            if (attempt < 3) {
+                Logger::Log(LogLevel::INFO, "Retrying in 2 seconds...");
+                QTimer::singleShot(2000, [track, attempt, &attemptPlay]() { attemptPlay(track, attempt + 1); });
             } else {
-                Logger::Log(LogLevel::WARNING, "Playback failed for track: " + track.title);
-                if (attempt < 3) {
-                    Logger::Log(LogLevel::INFO, "Retrying in 2 seconds...");
-                    QTimer::singleShot(2000, [track, attempt, &attemptPlay]() { attemptPlay(track, attempt + 1); });
-                } else {
-                    Logger::Log(LogLevel::ERROR, "Max retries reached. Skipping track.");
-                    playlist.Next();
-                }
+                Logger::Log(LogLevel::ERROR, "Max retries reached. Skipping track.");
+                playlist.Next();
             }
         });
     };

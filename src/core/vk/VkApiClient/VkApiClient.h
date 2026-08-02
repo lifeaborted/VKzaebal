@@ -20,7 +20,7 @@ public:
     void ValidateToken(std::function<void(bool isValid)> callback); //
 
     // запрос свежей ссылки на трек
-    void FetchTrackUrl(const std::string& trackId, std::function<void(const std::string& freshUrl)> callback);
+    void FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool isNetworkError)> callback);
 
     // Запрос списка аудиозаписей пользователя
     void FetchUserAudio(long long ownerId = 0, int count = 100);

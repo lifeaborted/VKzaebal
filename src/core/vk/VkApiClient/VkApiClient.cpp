@@ -88,7 +88,7 @@ void VkApiClient::FetchUserAudio(long long ownerId, int count) {
     connect(reply, &QNetworkReply::finished, this, [this, reply]() { OnReplyFinished(reply); });
 }
 
-void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&)> callback) {
+void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) {
     QUrl url("https://api.vk.com/method/audio.getById");
     QUrlQuery query;
     query.addQueryItem("audios", QString::fromStdString(trackId));
@@ -97,7 +97,6 @@ void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(c
     url.setQuery(query);
 
     QNetworkRequest request(url);
-
     request.setHeader(QNetworkRequest::UserAgentHeader, "VKAndroidApp/5.56.1-12345 (Android 11; SDK 30; x86_64; en; 2274003)");
     request.setTransferTimeout(5000);
 
@@ -105,6 +104,7 @@ void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(c
 
     QObject::connect(reply, &QNetworkReply::finished, this, [this, reply, callback]() {
         std::string freshUrl = "";
+        bool isNetworkError = false; // Флаг ошибки соединения
 
         if (reply->error() == QNetworkReply::NoError) {
             QByteArray response_data = reply->readAll();
@@ -129,9 +129,10 @@ void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(c
             }
         } else {
             Logger::Log(LogLevel::ERROR, "Network error while fetching track URL: " + reply->errorString().toStdString());
+            isNetworkError = true; // Записываем, что это именно отвал сети
         }
 
-        callback(freshUrl);
+        callback(freshUrl, isNetworkError); // Передаем оба параметра
         reply->deleteLater();
     });
 }
