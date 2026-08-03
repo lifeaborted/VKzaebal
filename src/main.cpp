@@ -42,26 +42,54 @@ int main(int argc, char *argv[]) {
     AudioEngine audio;
     if (!audio.Init()) return -1;
 
-    PlaylistManager playlist;
+PlaylistManager playlist;
     VkApiClient vkClient;
     VkAuthManager authManager;
+
+    bool gaplessEnabled = settings.value("Audio/GaplessPlayback", true).toBool();
+    Track preloadedTrack;
 
     ConsoleController console(audio, playlist, authManager, dbManager);
     QObject::connect(&console, &ConsoleController::QuitRequested, &app, &QCoreApplication::quit);
 
-    // --- ЛОГИКА ВОСПРОИЗВЕДЕНИЯ ---
     audio.OnTrackFinished = [&]() { playlist.Next(); };
+
+    audio.OnTrackNearEnd = [&]() {
+        if (!gaplessEnabled) return;
+
+        Track nextTrack = playlist.PeekNextTrack();
+        if (nextTrack.id.empty()) return;
+
+        // Запрашиваем URL за 10 секунд до конца текущего трека
+        vkClient.FetchTrackUrl(nextTrack.id, [nextTrack, &audio, &preloadedTrack](const std::string& freshUrl, bool isNetworkError) {
+            if (!isNetworkError && !freshUrl.empty()) {
+                if (audio.PreloadStream(freshUrl)) {
+                    preloadedTrack = nextTrack;
+                }
+            }
+        });
+    };
 
     std::atomic<int> playbackGeneration{0};
 
     std::function<void(Track, int)> attemptPlay;
     attemptPlay = [&](Track track, int attempt) {
         int currentGen = (attempt == 1) ? ++playbackGeneration : playbackGeneration.load();
-        //Logger::Log(LogLevel::INFO, ">>> Requesting URL for: " + track.artist + " - " + track.title + " (Attempt " + std::to_string(attempt) + "/3)");
+
+        // --- GAPLESS PLAYBACK INTERCEPT ---
+        // Если трек уже скачан в фоне, мгновенно запускаем его без лишних запросов к API ВК!
+        if (gaplessEnabled && attempt == 1 && audio.HasPreloadedStream() && preloadedTrack.id == track.id) {
+            if (audio.PlayPreloaded()) {
+                std::cout << "\r                                                                                \r";
+                std::cout << track.artist << " - " << track.title
+                          << " [" << track.GetFormattedDuration() << "]\n> ";
+                std::cout.flush();
+                return;
+            }
+        }
+        // ----------------------------------
 
         auto executePlay = [track, attempt, currentGen, &audio, &playlist, &vkClient, &attemptPlay, &playbackGeneration](const std::string& freshUrl, bool isNetworkError) {
-
-            // Защита от спама кнопкой "Next"
             if (currentGen != playbackGeneration.load()) return;
 
             if (!isNetworkError && freshUrl.empty()) {
@@ -93,7 +121,7 @@ int main(int argc, char *argv[]) {
             }
         };
 
-        // Запрашиваем URL только здесь и сейчас
+        // Если предзагрузки не было (например, при ручном скипе трека), грузим по старинке
         vkClient.FetchTrackUrl(track.id, executePlay);
     };
 
@@ -139,7 +167,7 @@ int main(int argc, char *argv[]) {
         std::cout << "\n=== Авторизация ВКонтакте ===\n";
         std::cout << "СКОПИРУЙТЕ всю ссылку из адресной строки пустой страницы и вставьте ее сюда:\n> ";
 
-        QString authUrl = "https://oauth.vk.com/authorize?client_id=6121396&scope=audio,offline,friends,groups,wall&response_type=token&display=page&redirect_uri=https://oauth.vk.com/blank.html";
+        QString authUrl = "https://id.vk.ru/auth?return_auth_hash=8f84ec1a42e15d06f3&redirect_uri=https%3A%2F%2Foauth.vk.ru%2Fblank.html&redirect_uri_hash=840d020814e3175427&force_hash=1&app_id=6287487&response_type=token&code_challenge=&code_challenge_method=&scope=408861919&state=";
         QDesktopServices::openUrl(QUrl(authUrl));
         console.SetState(ConsoleState::WAITING_TOKEN_URL);
     };

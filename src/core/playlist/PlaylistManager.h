@@ -12,12 +12,13 @@ public:
     void AddTrack(const Track& track);
     bool HasTracks() const;
     bool IsShuffle() const { return m_isShuffle; }
+    
     Track GetCurrentTrack() const;
-    Track GetNextTrackPreview() const;
+    Track PeekNextTrack() const;
 
     void Next();
     void Previous();
-    void JumpTo(int index); // index от 0
+    void JumpTo(int index);
 
     void ToggleShuffle();
     void ToggleRepeat();

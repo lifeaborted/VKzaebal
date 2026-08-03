@@ -19,18 +19,21 @@ Track PlaylistManager::GetCurrentTrack() const {
     return m_tracks[m_playQueue[m_queueIndex]];
 }
 
-Track PlaylistManager::GetNextTrackPreview() const {
+Track PlaylistManager::PeekNextTrack() const {
     if (m_tracks.empty() || m_playQueue.empty()) return Track();
-    if (m_repeatMode == RepeatMode::One) return GetCurrentTrack(); // При повторе предзагружаем этот же трек
+
+    if (m_repeatMode == RepeatMode::One) return GetCurrentTrack();
 
     int previewIndex = m_queueIndex + 1;
+
     if (previewIndex >= m_playQueue.size()) {
         if (m_repeatMode == RepeatMode::All) {
-            previewIndex = 0; // Зацикливаем
+            previewIndex = 0;
         } else {
             return Track();
         }
     }
+
     return m_tracks[m_playQueue[previewIndex]];
 }
 
