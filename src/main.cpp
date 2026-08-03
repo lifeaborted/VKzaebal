@@ -101,19 +101,23 @@ int main(int argc, char *argv[]) {
 
     // --- ЛОГИКА СКАЧИВАНИЯ СПИСКА ---
     QObject::connect(&vkClient, &VkApiClient::AudioFetched, [&](const std::vector<Track>& tracks) {
-        bool isFirstChunk = !playlist.HasTracks();
         for (const auto& track : tracks) playlist.AddTrack(track);
-        //std::cout << "[Плейлист] Загружена порция из " << tracks.size() << " треков. Всего: " << playlist.GetAllTracks().size() << "\n";
 
+        // Молча сохраняем в базу по мере поступления
         dbManager.SaveTracks(tracks);
         dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
-        //dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
+    });
 
-        if (isFirstChunk && playlist.HasTracks()) {
-            std::cout << "Controls:\n [P] Play/Pause\n [N] Next\n [B] Prev\n"
-                      << " [+] Vol Up\n [-] Vol Down\n [S] Shuffle\n [R] Repeat Mode\n"
-                      << " [J <num>] Jump to track\n [cv] Current volume\n [pr] Progress bar\n [Q] Quit\n-----------------------\n\n> ";
+    // --- ЛОГИКА ЗАВЕРШЕНИЯ ЗАГРУЗКИ ---
+    QObject::connect(&vkClient, &VkApiClient::FinishedFetching, [&]() {
 
+        if (playlist.HasTracks()) {
+            std::cout << "\r                                                                                \r"
+                      << "=== ВСЕ ТРЕКИ ЗАГРУЖЕНЫ ===\n"
+                      << "Введите 'h' для вывода списка команд\n> ";
+            std::cout.flush();
+
+            // Запрашиваем URL и начинаем играть
             playlist.OnTrackRequested(playlist.GetCurrentTrack());
         }
     });

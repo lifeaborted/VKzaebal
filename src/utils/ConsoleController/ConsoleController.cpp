@@ -36,19 +36,22 @@ void ConsoleController::Stop() {
 }
 
 void ConsoleController::InputLoop() {
-    std::string input;
+    std::string rawInput;
     std::string clearLine = "\r                                                                                \r";
 
     while (m_isRunning) {
-        std::getline(std::cin, input);
-        if (input.empty()) continue;
+        std::getline(std::cin, rawInput);
+
+        // 1. Очищаем от лишних пробелов и скрытых символов (\r, \n, \t) по краям
+        size_t start = rawInput.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos) continue; // Если ввели только пробелы или Enter — игнорируем
+        std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
 
         if (m_currentState == ConsoleState::WAITING_TOKEN_URL) {
             QString urlStr = QString::fromStdString(input);
             std::cout << clearLine << "Обработка ссылки...\n";
             std::cout.flush();
 
-            // Прокидываем ссылку в AuthManager через главный поток Qt
             QMetaObject::invokeMethod(&m_authManager, [&, urlStr]() {
                 m_authManager.onUrlIntercepted(urlStr);
             }, Qt::QueuedConnection);
@@ -59,8 +62,12 @@ void ConsoleController::InputLoop() {
 
         if (m_currentState == ConsoleState::COMMAND_MODE) {
 
+            // 2. Переводим всю строку в нижний регистр для безопасных проверок команд
+            std::string lowerInput = input;
+            for (char& c : lowerInput) c = std::tolower(c);
+
             // --- КОМАНДА: Установка громкости (v <num>) ---
-            if (input.substr(0, 2) == "v ") {
+            if (lowerInput.length() >= 2 && lowerInput[0] == 'v' && lowerInput[1] == ' ') {
                 try {
                     int vol = std::stoi(input.substr(2));
                     if (vol < 0) vol = 0;
@@ -79,16 +86,16 @@ void ConsoleController::InputLoop() {
                 continue;
             }
 
-            // --- КОМАНДА: Текущая громкость ---
-            if (input == "cv") {
+            // --- КОМАНДА: Теку громкость ---
+            if (lowerInput == "cv") {
                 int vol = static_cast<int>(m_audio.GetVolume() * 100);
                 std::cout << clearLine << "[Громкость] Текущая громкость: " << vol << "%\n> ";
                 std::cout.flush();
                 continue;
             }
 
-            // Прыжок к треку
-            if (input.length() >= 3 && std::tolower(input[0]) == 'j' && input[1] == ' ') {
+            // --- КОМАНДА: Прыжок к треку (j <num>) ---
+            if (lowerInput.length() >= 2 && lowerInput[0] == 'j' && lowerInput[1] == ' ') {
                 try {
                     int idx = std::stoi(input.substr(2));
                     QMetaObject::invokeMethod(QCoreApplication::instance(), [&, idx]() {
@@ -101,22 +108,32 @@ void ConsoleController::InputLoop() {
                 continue;
             }
 
-            // Базовые команды
-            char command = std::tolower(input[0]);
+            // Базовые односимвольные команды
+            char command = lowerInput[0];
+            std::string s(50, '*');
             switch (command) {
+                case 'h': // <--- ДОБАВЛЕНА КОМАНДА HELP
+                    std::cout << clearLine
+                              << "\n"
+                              <<s<<"\n"
+                              << " [P] Play/Pause\n [N] Next\n [B] Prev\n"
+                              << " [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n"
+                              << " [S] Shuffle\n [R] Repeat Mode\n"
+                              << " [J <num>] Jump to track\n [cv] Current volume\n [Q] Quit\n"
+                              <<s
+                              <<"\n\n> ";
+                    std::cout.flush();
+                    break;
                 case 'p': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { if (m_audio.IsPlaying()) m_audio.Pause(); else m_audio.Resume(); }, Qt::QueuedConnection); break;
                 case 'n': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { m_playlist.Next(); }, Qt::QueuedConnection); break;
                 case 'b': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { m_playlist.Previous(); }, Qt::QueuedConnection); break;
                 case '+': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { m_audio.SetVolume(m_audio.GetVolume() + 0.1f); }, Qt::QueuedConnection); break;
                 case '-': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { m_audio.SetVolume(m_audio.GetVolume() - 0.1f); }, Qt::QueuedConnection); break;
-                case 's': 
-                    QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { 
+                case 's':
+                    QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() {
                         m_playlist.ToggleShuffle();
-
-                        // Сохраняем новую очередь в БД и выгружаем в TXT
                         m_dbManager.SaveQueue(m_playlist.GetQueueTracks(), m_playlist.IsShuffle());
                         m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
-
                     }, Qt::QueuedConnection);
                     break;
                 case 'r': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { m_playlist.ToggleRepeat(); }, Qt::QueuedConnection); break;
@@ -157,20 +174,19 @@ void ConsoleController::UiLoop() {
                     int totMin = static_cast<int>(total) / 60;
                     int totSec = static_cast<int>(total) % 60;
 
-                    int barLength = 30;
+                    int barLength = 50;
                     int filled = static_cast<int>((current / total) * barLength);
                     if (filled > barLength) filled = barLength;
                     if (filled < 0) filled = 0;
 
                     std::string bar = "[";
                     for (int i = 0; i < barLength; ++i) {
-                        if (i < filled) bar += "=";
-                        else if (i == filled) bar += ">";
+                        if (i < filled) bar += "\xE2\x96\x88";
                         else bar += "-";
                     }
                     bar += "]";
 
-                    printf("\r[Прогресс] %02d:%02d / %02d:%02d %s %d%%          ",
+                    printf("\r%02d:%02d / %02d:%02d %s %d%%          ",
                            curMin, curSec, totMin, totSec, bar.c_str(), percent);
                     fflush(stdout);
                 }

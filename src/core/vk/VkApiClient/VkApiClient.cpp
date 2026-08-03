@@ -10,7 +10,7 @@
 #include <QRegularExpression>
 #include  <iostream>
 
-VkApiClient::VkApiClient(QObject* parent) 
+VkApiClient::VkApiClient(QObject* parent)
     : QObject(parent), m_manager(new QNetworkAccessManager(this)) {
     Logger::Log(LogLevel::INFO, "VkApiClient created.");
 }
@@ -83,7 +83,7 @@ void VkApiClient::FetchUserAudio(long long ownerId, int count) {
     request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
     Logger::Log(LogLevel::INFO, "VkApiClient: Fetching audio...");
-    
+
     QNetworkReply* reply = m_manager->get(request);
     connect(reply, &QNetworkReply::finished, this, [this, reply]() { OnReplyFinished(reply); });
 }
@@ -156,7 +156,7 @@ void VkApiClient::OnReplyFinished(QNetworkReply* reply) {
     }
 
     QJsonObject rootObj = jsonDoc.object();
-    
+
     // Проверка на ошибку от API VK
     if (rootObj.contains("error")) {
         QJsonObject errObj = rootObj["error"].toObject();
@@ -172,7 +172,7 @@ void VkApiClient::OnReplyFinished(QNetworkReply* reply) {
     std::vector<Track> tracks;
     for (int i = 0; i < itemsArray.size(); ++i) {
         QJsonObject trackObj = itemsArray[i].toObject();
-        
+
         Track t;
         int audioId = trackObj["id"].toInt();
         int ownerId = trackObj["owner_id"].toInt();
@@ -264,7 +264,8 @@ void VkApiClient::FetchAllUserAudio(int offset, int count) {
         if (items.size() == count) {
             FetchAllUserAudio(offset + count, count);
         } else {
-            Logger::Log(LogLevel::INFO, "=== ВСЕ ДОСТУПНЫЕ ТРЕКИ УСПЕШНО ЗАГРУЖЕНЫ ===");
+            // Испускаем сигнал, что это был последний чанк
+            emit FinishedFetching();
         }
     });
 }

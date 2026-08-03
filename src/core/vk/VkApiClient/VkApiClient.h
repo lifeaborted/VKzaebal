@@ -31,6 +31,7 @@ public:
         void AudioFetched(const std::vector<Track>& tracks);
         void ApiError(const std::string& errorMessage);
         void TokenExpired();
+        void FinishedFetching();
 private slots:
     void OnReplyFinished(QNetworkReply* reply);
 
