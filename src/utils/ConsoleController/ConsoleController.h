@@ -25,6 +25,8 @@ public:
     void Stop();
     void SetState(ConsoleState state);
 
+    std::function<void(bool)> OnGaplessModeChanged;
+
     signals:
         void QuitRequested();
 

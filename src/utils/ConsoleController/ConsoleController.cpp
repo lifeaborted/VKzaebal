@@ -107,6 +107,32 @@ void ConsoleController::InputLoop() {
                 continue;
             }
 
+            // --- КОМАНДА: Смена режима перехода (mode <0/1>) ---
+            if (lowerInput.length() >= 6 && lowerInput.substr(0, 5) == "mode ") {
+                try {
+                    int mode = std::stoi(input.substr(5));
+                    if (mode == 0 || mode == 1) {
+                        bool isGapless = (mode == 1);
+
+                        if (OnGaplessModeChanged) {
+                            QMetaObject::invokeMethod(QCoreApplication::instance(), [&, isGapless]() {
+                                OnGaplessModeChanged(isGapless);
+                            }, Qt::QueuedConnection);
+                        }
+
+                        std::cout << clearLine << "[Режим] Установлен " << (isGapless ? "плавный (gapless)" : "стандартный") << " переход.\n> ";
+                        std::cout.flush();
+                    } else {
+                        std::cout << clearLine << "[Ошибка] Используй: mode 0 (стандарт) или mode 1 (плавный)\n> ";
+                        std::cout.flush();
+                    }
+                } catch (...) {
+                    std::cout << clearLine << "[Ошибка] Неверный формат. Используй: mode 0 или mode 1\n> ";
+                    std::cout.flush();
+                }
+                continue;
+            }
+
             // Базовые односимвольные команды
             char command = lowerInput[0];
             std::string s(50, '*');
@@ -119,6 +145,7 @@ void ConsoleController::InputLoop() {
                               << " [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n"
                               << " [S] Shuffle\n [R] Repeat Mode\n"
                               << " [J <num>] Jump to track\n [cv] Current volume\n [Q] Quit\n"
+                              << " [mode <0/1>] 0 - Standard, 1 - Gapless transition\n"
                               << " [tl] Export tracklist to TXT\n"
                               <<s
                               <<"\n\n> ";

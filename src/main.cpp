@@ -46,82 +46,101 @@ PlaylistManager playlist;
     VkApiClient vkClient;
     VkAuthManager authManager;
 
-    bool gaplessEnabled = settings.value("Audio/GaplessPlayback", true).toBool();
+// Переименовали переменную для ясности
+    bool crossfadeEnabled = settings.value("Audio/CrossfadePlayback", false).toBool();
     Track preloadedTrack;
+    std::string cachedNextUrl = "";
+
+    float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
+    int savedTrackIndex = settings.value("Session/CurrentTrackIndex", -1).toInt();
+    double savedPosition = settings.value("Session/Position", 0.0).toDouble();
+
+    audio.SetVolume(savedVolume);
 
     ConsoleController console(audio, playlist, authManager, dbManager);
     QObject::connect(&console, &ConsoleController::QuitRequested, &app, &QCoreApplication::quit);
 
-    audio.OnTrackFinished = [&]() { playlist.Next(); };
+    // Связываем команду "mode" с включением кроссфейда
+    console.OnGaplessModeChanged = [&](bool isCrossfade) {
+        crossfadeEnabled = isCrossfade;
+        settings.setValue("Audio/CrossfadePlayback", isCrossfade);
+        settings.sync();
+        Logger::Log(LogLevel::INFO, std::string("Main: Crossfade transition set to ") + (isCrossfade ? "ON" : "OFF"));
+    };
 
+    audio.OnTrackFinished = [&]() {
+        Logger::Log(LogLevel::INFO, "Main: Auto-switching to next track...");
+        playlist.Next();
+    };
+
+    // ФОНОВАЯ ЗАГРУЗКА URL ТЕПЕРЬ РАБОТАЕТ ВСЕГДА
     audio.OnTrackNearEnd = [&]() {
-        if (!gaplessEnabled) return;
-
         Track nextTrack = playlist.PeekNextTrack();
         if (nextTrack.id.empty()) return;
 
-        // Запрашиваем URL за 10 секунд до конца текущего трека
-        vkClient.FetchTrackUrl(nextTrack.id, [nextTrack, &audio, &preloadedTrack](const std::string& freshUrl, bool isNetworkError) {
+        vkClient.FetchTrackUrl(nextTrack.id, [nextTrack, &cachedNextUrl, &preloadedTrack](const std::string& freshUrl, bool isNetworkError) {
             if (!isNetworkError && !freshUrl.empty()) {
-                if (audio.PreloadStream(freshUrl)) {
-                    preloadedTrack = nextTrack;
-                }
+                cachedNextUrl = freshUrl;
+                preloadedTrack = nextTrack;
+                Logger::Log(LogLevel::INFO, "Main: Next track URL pre-fetched successfully in background.");
             }
         });
     };
 
     std::atomic<int> playbackGeneration{0};
-
     std::function<void(Track, int)> attemptPlay;
+
     attemptPlay = [&](Track track, int attempt) {
         int currentGen = (attempt == 1) ? ++playbackGeneration : playbackGeneration.load();
 
-        // --- GAPLESS PLAYBACK INTERCEPT ---
-        // Если трек уже скачан в фоне, мгновенно запускаем его без лишних запросов к API ВК!
-        if (gaplessEnabled && attempt == 1 && audio.HasPreloadedStream() && preloadedTrack.id == track.id) {
-            if (audio.PlayPreloaded()) {
+        // Если ссылка была загружена в фоне — используем ее мгновенно
+        if (attempt == 1 && !cachedNextUrl.empty() && preloadedTrack.id == track.id) {
+            // Передаем флаг crossfadeEnabled в движок!
+            if (audio.PlayStream(cachedNextUrl, track.duration, crossfadeEnabled)) {
+                cachedNextUrl = ""; // Чистим кэш
+                if (savedPosition > 0.0) {
+                    audio.SetPositionSeconds(savedPosition);
+                    savedPosition = 0.0;
+                }
                 std::cout << "\r                                                                                \r";
-                std::cout << track.artist << " - " << track.title
-                          << " [" << track.GetFormattedDuration() << "]\n> ";
+                std::cout << track.artist << " - " << track.title << " [" << track.GetFormattedDuration() << "]\n> ";
                 std::cout.flush();
                 return;
             }
+        } else if (attempt == 1) {
+            std::cout << "\r                                                                                \r";
+            std::cout << "[Загрузка] " << track.artist << " - " << track.title << "...\n> ";
+            std::cout.flush();
         }
-        // ----------------------------------
 
-        auto executePlay = [track, attempt, currentGen, &audio, &playlist, &vkClient, &attemptPlay, &playbackGeneration](const std::string& freshUrl, bool isNetworkError) {
+        auto executePlay = [track, attempt, currentGen, &audio, &playlist, &vkClient, &attemptPlay, &playbackGeneration, &savedPosition, &crossfadeEnabled](const std::string& freshUrl, bool isNetworkError) {
             if (currentGen != playbackGeneration.load()) return;
 
             if (!isNetworkError && freshUrl.empty()) {
-                Logger::Log(LogLevel::WARNING, "Track is restricted or deleted by copyright. Skipping...");
+                Logger::Log(LogLevel::WARNING, "Track is restricted. Skipping...");
                 playlist.Next();
                 return;
             }
 
-            bool playSuccess = false;
-            if (!freshUrl.empty()) {
-                playSuccess = audio.PlayStream(freshUrl);
-            }
-
-            if (playSuccess) {
+            if (!freshUrl.empty() && audio.PlayStream(freshUrl, track.duration, crossfadeEnabled)) {
+                if (savedPosition > 0.0) {
+                    audio.SetPositionSeconds(savedPosition);
+                    savedPosition = 0.0;
+                }
                 std::cout << "\r                                                                                \r";
-                std::cout << track.artist << " - " << track.title
-                          << " [" << track.GetFormattedDuration() << "]\n> ";
+                std::cout << track.artist << " - " << track.title << " [" << track.GetFormattedDuration() << "]\n> ";
                 std::cout.flush();
                 return;
             }
 
-            Logger::Log(LogLevel::WARNING, "Playback failed for track: " + track.title);
             if (attempt < 3) {
                 Logger::Log(LogLevel::INFO, "Retrying stream in 2 seconds...");
                 QTimer::singleShot(2000, [track, attempt, &attemptPlay]() { attemptPlay(track, attempt + 1); });
             } else {
-                Logger::Log(LogLevel::ERROR, "Max retries reached. Moving to next track.");
                 playlist.Next();
             }
         };
 
-        // Если предзагрузки не было (например, при ручном скипе трека), грузим по старинке
         vkClient.FetchTrackUrl(track.id, executePlay);
     };
 
@@ -133,14 +152,13 @@ PlaylistManager playlist;
 
         dbManager.SaveTracks(tracks);
         dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
-        // Здесь dbManager.ExportQueueToTxt ВЫКЛЮЧЕН
+        // Здесь dbManager.ExportQueueToTxt
     });
 
     // --- ЛОГИКА ЗАВЕРШЕНИЯ ЗАГРУЗКИ ---
     QObject::connect(&vkClient, &VkApiClient::FinishedFetching, [&]() {
         Logger::Log(LogLevel::INFO, "=== ВСЕ ДОСТУПНЫЕ ТРЕКИ УСПЕШНО ЗАГРУЖЕНЫ ===");
 
-        // Записываем плейлист ОДИН раз, когда все треки получены
         dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
 
         if (playlist.HasTracks()) {
@@ -149,7 +167,11 @@ PlaylistManager playlist;
                       << "Введите 'h' для вывода списка команд\n> ";
             std::cout.flush();
 
-            playlist.OnTrackRequested(playlist.GetCurrentTrack());
+            if (savedTrackIndex >= 0 && savedTrackIndex < playlist.GetAllTracks().size()) {
+                playlist.JumpTo(savedTrackIndex);
+            } else {
+                playlist.OnTrackRequested(playlist.GetCurrentTrack());
+            }
         }
     });
 
@@ -202,6 +224,15 @@ PlaylistManager playlist;
             }
         });
     }
+
+    // --- СОХРАНЕНИЕ СЕССИИ ПРИ ВЫХОДЕ ---
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, [&]() {
+        Logger::Log(LogLevel::INFO, "Main: Saving session state...");
+        settings.setValue("Session/Volume", audio.GetVolume());
+        settings.setValue("Session/CurrentTrackIndex", playlist.GetCurrentAbsoluteIndex());
+        settings.setValue("Session/Position", audio.GetPositionSeconds());
+        settings.sync();
+    });
 
     console.Start();
     int exitCode = app.exec();

@@ -12,8 +12,9 @@ public:
     void AddTrack(const Track& track);
     bool HasTracks() const;
     bool IsShuffle() const { return m_isShuffle; }
-    
+
     Track GetCurrentTrack() const;
+    int GetCurrentAbsoluteIndex() const { return m_tracks.empty() ? -1 : m_playQueue[m_queueIndex]; }
     Track PeekNextTrack() const;
 
     void Next();

@@ -8,51 +8,35 @@ AudioEngine::AudioEngine() {
 }
 
 AudioEngine::~AudioEngine() {
-    if (m_currentStream != 0) {
-        // Снимаем коллбэк перед удалением потока, чтобы избежать гонки потоков
-        if (m_syncEnd != 0) BASS_ChannelRemoveSync(m_currentStream, m_syncEnd);
-        BASS_StreamFree(m_currentStream);
+    if (m_activeStream != 0) {
+        if (m_syncEnd != 0) BASS_ChannelRemoveSync(m_activeStream, m_syncEnd);
+        BASS_StreamFree(m_activeStream);
     }
-
-    // Освобождаем плагин (закрываем утечку памяти)
+    if (m_fadingStream != 0) {
+        BASS_StreamFree(m_fadingStream);
+    }
     if (m_hlsPlugin != 0) {
         BASS_PluginFree(m_hlsPlugin);
     }
-
     BASS_Free();
     Logger::Log(LogLevel::INFO, "AudioEngine: BASS freed.");
 }
 
 bool AudioEngine::Init() {
-    // Читаем настройки из config.ini
     QSettings settings("config.ini", QSettings::IniFormat);
-
     int netTimeout = settings.value("Audio/NetTimeout", 5000).toInt();
     int netReadTimeout = settings.value("Audio/NetReadTimeout", 5000).toInt();
-    int netPlaylist = settings.value("Audio/NetPlaylist", 0).toInt();
-    int netBuffer = settings.value("Audio/NetBuffer", 20000).toInt();
-    int netPrebuf = settings.value("Audio/NetPrebuf", 50).toInt();
 
     BASS_SetConfig(BASS_CONFIG_NET_TIMEOUT, netTimeout);
     BASS_SetConfig(BASS_CONFIG_NET_READTIMEOUT, netReadTimeout);
-    BASS_SetConfig(BASS_CONFIG_NET_PLAYLIST, netPlaylist);
-    BASS_SetConfig(BASS_CONFIG_NET_BUFFER, netBuffer);
-    BASS_SetConfig(BASS_CONFIG_NET_PREBUF, netPrebuf);
-    BASS_SetConfigPtr(BASS_CONFIG_NET_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+    BASS_SetConfig(BASS_CONFIG_NET_PLAYLIST, 0);
+    BASS_SetConfig(BASS_CONFIG_NET_BUFFER, 20000);
+    BASS_SetConfig(BASS_CONFIG_NET_PREBUF, 50);
+    BASS_SetConfigPtr(BASS_CONFIG_NET_AGENT, "VKAndroidApp/5.56.1-12345 (Android 11; SDK 30; x86_64; en; 2274003)");
 
-    if (!BASS_Init(-1, 44100, 0, 0, nullptr)) {
-        Logger::Log(LogLevel::ERROR, "AudioEngine: Failed to initialize BASS. Code: " + std::to_string(BASS_ErrorGetCode()));
-        return false;
-    }
-
+    if (!BASS_Init(-1, 44100, 0, 0, nullptr)) return false;
     m_hlsPlugin = BASS_PluginLoad("basshls.dll", 0);
-    if (m_hlsPlugin == 0) {
-        Logger::Log(LogLevel::ERROR, "AudioEngine: Failed to load basshls.dll!");
-        return false;
-    }
-
-    Logger::Log(LogLevel::INFO, "AudioEngine: BASS & HLS Plugin initialized successfully.");
-    return true;
+    return m_hlsPlugin != 0;
 }
 
 void CALLBACK AudioEngine::BassTrackNearEndCallback(HSYNC handle, DWORD channel, DWORD data, void* user) {
@@ -62,117 +46,6 @@ void CALLBACK AudioEngine::BassTrackNearEndCallback(HSYNC handle, DWORD channel,
             engine->OnTrackNearEnd();
         }, Qt::QueuedConnection);
     }
-}
-
-// --- ФОНОВАЯ ЗАГРУЗКА ---
-bool AudioEngine::PreloadStream(const std::string& url) {
-    if (m_nextStream != 0) {
-        BASS_StreamFree(m_nextStream);
-    }
-    // Фоновая буфферизация
-    m_nextStream = BASS_StreamCreateURL(url.c_str(), 0, 0, nullptr, nullptr);
-    if (m_nextStream != 0) {
-        Logger::Log(LogLevel::INFO, "AudioEngine: Next track preloaded in background.");
-        return true;
-    }
-    return false;
-}
-
-bool AudioEngine::PlayPreloaded() {
-    if (m_nextStream == 0) return false;
-
-    if (m_currentStream != 0) {
-        if (m_syncEnd != 0) BASS_ChannelRemoveSync(m_currentStream, m_syncEnd);
-        if (m_syncNearEnd != 0) BASS_ChannelRemoveSync(m_currentStream, m_syncNearEnd);
-        BASS_StreamFree(m_currentStream);
-    }
-
-    m_currentStream = m_nextStream;
-    m_nextStream = 0;
-    m_syncEnd = 0;
-    m_syncNearEnd = 0;
-
-    BASS_ChannelSetAttribute(m_currentStream, BASS_ATTRIB_VOL, m_volume);
-    m_syncEnd = BASS_ChannelSetSync(m_currentStream, BASS_SYNC_END, 0, &AudioEngine::BassTrackEndCallback, this);
-
-    QWORD length = BASS_ChannelGetLength(m_currentStream, BASS_POS_BYTE);
-    if (length != (QWORD)-1) {
-        QWORD prefetchPos = length - BASS_ChannelSeconds2Bytes(m_currentStream, 10.0);
-        if (prefetchPos > 0 && prefetchPos < length) {
-            m_syncNearEnd = BASS_ChannelSetSync(m_currentStream, BASS_SYNC_POS, prefetchPos, &AudioEngine::BassTrackNearEndCallback, this);
-        }
-    }
-
-    return BASS_ChannelPlay(m_currentStream, FALSE) != 0;
-}
-
-bool AudioEngine::PlayStream(const std::string& url) {
-    if (m_currentStream != 0) {
-        if (m_syncEnd != 0) BASS_ChannelRemoveSync(m_currentStream, m_syncEnd);
-        if (m_syncNearEnd != 0) BASS_ChannelRemoveSync(m_currentStream, m_syncNearEnd);
-        BASS_StreamFree(m_currentStream);
-        m_currentStream = 0;
-        m_syncEnd = 0;
-        m_syncNearEnd = 0;
-    }
-
-    if (m_nextStream != 0) {
-        BASS_StreamFree(m_nextStream);
-        m_nextStream = 0;
-    }
-
-    m_currentStream = BASS_StreamCreateURL(url.c_str(), 0, 0, nullptr, nullptr);
-    if (m_currentStream != 0) {
-        BASS_ChannelSetAttribute(m_currentStream, BASS_ATTRIB_VOL, m_volume);
-        m_syncEnd = BASS_ChannelSetSync(m_currentStream, BASS_SYNC_END, 0, &AudioEngine::BassTrackEndCallback, this);
-
-        // Ставим хук за 10 секунд до конца трека
-        QWORD length = BASS_ChannelGetLength(m_currentStream, BASS_POS_BYTE);
-        if (length != (QWORD)-1) {
-            QWORD prefetchPos = length - BASS_ChannelSeconds2Bytes(m_currentStream, 10.0);
-            if (prefetchPos > 0 && prefetchPos < length) {
-                m_syncNearEnd = BASS_ChannelSetSync(m_currentStream, BASS_SYNC_POS, prefetchPos, &AudioEngine::BassTrackNearEndCallback, this);
-            }
-        }
-
-        BASS_ChannelPlay(m_currentStream, FALSE);
-        return true;
-    } else {
-        Logger::Log(LogLevel::ERROR, "AudioEngine: Failed to create stream! Error code: " + std::to_string(BASS_ErrorGetCode()));
-        return false;
-    }
-}
-
-void AudioEngine::Pause() {
-    if (m_currentStream != 0 && BASS_ChannelIsActive(m_currentStream) == BASS_ACTIVE_PLAYING) {
-        BASS_ChannelPause(m_currentStream);
-        Logger::Log(LogLevel::INFO, "AudioEngine: Paused.");
-    }
-}
-
-void AudioEngine::Resume() {
-    if (m_currentStream != 0 && BASS_ChannelIsActive(m_currentStream) == BASS_ACTIVE_PAUSED) {
-        BASS_ChannelPlay(m_currentStream, FALSE);
-        Logger::Log(LogLevel::INFO, "AudioEngine: Resumed.");
-    }
-}
-
-void AudioEngine::SetVolume(float volume) {
-    m_volume = volume;
-    if (m_volume < 0.0f) m_volume = 0.0f;
-    if (m_volume > 1.0f) m_volume = 1.0f;
-    if (m_currentStream != 0) {
-        BASS_ChannelSetAttribute(m_currentStream, BASS_ATTRIB_VOL, m_volume);
-    }
-    Logger::Log(LogLevel::INFO, "AudioEngine: Volume set to " + std::to_string(static_cast<int>(m_volume * 100)) + "%");
-}
-
-float AudioEngine::GetVolume() const {
-    return m_volume;
-}
-
-bool AudioEngine::IsPlaying() const {
-    return m_currentStream != 0 && BASS_ChannelIsActive(m_currentStream) == BASS_ACTIVE_PLAYING;
 }
 
 void CALLBACK AudioEngine::BassTrackEndCallback(HSYNC handle, DWORD channel, DWORD data, void* user) {
@@ -185,17 +58,110 @@ void CALLBACK AudioEngine::BassTrackEndCallback(HSYNC handle, DWORD channel, DWO
     }
 }
 
+bool AudioEngine::PlayStream(const std::string& url, int durationSec, bool crossfade) {
+    if (m_activeStream != 0) {
+        if (m_syncEnd != 0) BASS_ChannelRemoveSync(m_activeStream, m_syncEnd);
+        if (m_syncNearEnd != 0) BASS_ChannelRemoveSync(m_activeStream, m_syncNearEnd);
+
+        if (crossfade) {
+            // Если предыдущий трек еще затухает, убиваем его
+            if (m_fadingStream != 0) BASS_StreamFree(m_fadingStream);
+
+            m_fadingStream = m_activeStream;
+
+            // Плавно глушим старый трек за 3000 мс
+            BASS_ChannelSlideAttribute(m_fadingStream, BASS_ATTRIB_VOL, -1.0f, 3000);
+
+            // Ставим хук: как только громкость упадет до 0, вычищаем трек из памяти
+            BASS_ChannelSetSync(m_fadingStream, BASS_SYNC_SLIDE | BASS_SYNC_ONETIME, 0,
+                [](HSYNC handle, DWORD channel, DWORD data, void* user) {
+                    BASS_StreamFree(channel);
+                    Logger::Log(LogLevel::INFO, "AudioEngine: Faded track properly freed.");
+                }, nullptr);
+        } else {
+            BASS_StreamFree(m_activeStream);
+        }
+
+        m_activeStream = 0;
+        m_syncEnd = 0;
+        m_syncNearEnd = 0;
+    }
+
+    m_activeStream = BASS_StreamCreateURL(url.c_str(), 0, 0, nullptr, nullptr);
+    if (m_activeStream != 0) {
+        if (crossfade) {
+            // Новый трек стартует с 0 громкости и нарастает за 3000 мс
+            BASS_ChannelSetAttribute(m_activeStream, BASS_ATTRIB_VOL, 0.0f);
+            BASS_ChannelSlideAttribute(m_activeStream, BASS_ATTRIB_VOL, m_volume, 3000);
+        } else {
+            BASS_ChannelSetAttribute(m_activeStream, BASS_ATTRIB_VOL, m_volume);
+        }
+
+        m_syncEnd = BASS_ChannelSetSync(m_activeStream, BASS_SYNC_END, 0, &AudioEngine::BassTrackEndCallback, this);
+
+        QWORD length = BASS_ChannelGetLength(m_activeStream, BASS_POS_BYTE);
+        double actualDuration = (length != (QWORD)-1) ? BASS_ChannelBytes2Seconds(m_activeStream, length) : static_cast<double>(durationSec);
+
+        // Хук предзагрузки за 10 сек до конца
+        if (actualDuration > 10.0) {
+            QWORD prefetchPos = BASS_ChannelSeconds2Bytes(m_activeStream, actualDuration - 10.0);
+            m_syncNearEnd = BASS_ChannelSetSync(m_activeStream, BASS_SYNC_POS, prefetchPos, &AudioEngine::BassTrackNearEndCallback, this);
+        }
+
+        BASS_ChannelPlay(m_activeStream, FALSE);
+        return true;
+    }
+
+    Logger::Log(LogLevel::ERROR, "AudioEngine: Failed to create stream! Error: " + std::to_string(BASS_ErrorGetCode()));
+    return false;
+}
+
+void AudioEngine::SetPositionSeconds(double pos) {
+    if (m_activeStream != 0) {
+        QWORD bytePos = BASS_ChannelSeconds2Bytes(m_activeStream, pos);
+        BASS_ChannelSetPosition(m_activeStream, bytePos, BASS_POS_BYTE);
+
+        QWORD length = BASS_ChannelGetLength(m_activeStream, BASS_POS_BYTE);
+        if (length != (QWORD)-1) {
+            QWORD prefetchPos = length - BASS_ChannelSeconds2Bytes(m_activeStream, 10.0);
+            if (bytePos >= prefetchPos && OnTrackNearEnd) {
+                QMetaObject::invokeMethod(QCoreApplication::instance(), [this]() {
+                    this->OnTrackNearEnd();
+                }, Qt::QueuedConnection);
+            }
+        }
+    }
+}
+
+void AudioEngine::Pause() {
+    if (m_activeStream != 0) BASS_ChannelPause(m_activeStream);
+}
+
+void AudioEngine::Resume() {
+    if (m_activeStream != 0) BASS_ChannelPlay(m_activeStream, FALSE);
+}
+
+void AudioEngine::SetVolume(float volume) {
+    m_volume = volume;
+    if (m_volume < 0.0f) m_volume = 0.0f;
+    if (m_volume > 1.0f) m_volume = 1.0f;
+    if (m_activeStream != 0) BASS_ChannelSetAttribute(m_activeStream, BASS_ATTRIB_VOL, m_volume);
+}
+
+float AudioEngine::GetVolume() const { return m_volume; }
+
+bool AudioEngine::IsPlaying() const {
+    return m_activeStream != 0 && BASS_ChannelIsActive(m_activeStream) == BASS_ACTIVE_PLAYING;
+}
+
 double AudioEngine::GetPositionSeconds() const {
-    if (m_currentStream == 0) return 0.0;
-    QWORD pos = BASS_ChannelGetPosition(m_currentStream, BASS_POS_BYTE);
-    if (pos == (QWORD)-1) return 0.0;
-    return BASS_ChannelBytes2Seconds(m_currentStream, pos);
+    if (m_activeStream == 0) return 0.0;
+    QWORD pos = BASS_ChannelGetPosition(m_activeStream, BASS_POS_BYTE);
+    return (pos == (QWORD)-1) ? 0.0 : BASS_ChannelBytes2Seconds(m_activeStream, pos);
 }
 
 double AudioEngine::GetLengthSeconds() const {
-    if (m_currentStream == 0) return 0.0;
-    QWORD len = BASS_ChannelGetLength(m_currentStream, BASS_POS_BYTE);
-    if (len == (QWORD)-1) return 0.0;
-    return BASS_ChannelBytes2Seconds(m_currentStream, len);
+    if (m_activeStream == 0) return 0.0;
+    QWORD len = BASS_ChannelGetLength(m_activeStream, BASS_POS_BYTE);
+    return (len == (QWORD)-1) ? 0.0 : BASS_ChannelBytes2Seconds(m_activeStream, len);
 }
-

@@ -18,24 +18,24 @@ public:
     ~AudioEngine();
 
     bool Init();
-    bool PlayStream(const std::string& url);
+    // Добавили флаг crossfade
+    bool PlayStream(const std::string& url, int durationSec, bool crossfade);
     void Pause();
     void Resume();
     void SetVolume(float volume);
-    bool PlayPreloaded();
+    void SetPositionSeconds(double pos);
     float GetVolume() const;
     bool IsPlaying() const;
     double GetPositionSeconds() const;
     double GetLengthSeconds() const;
-    bool PreloadStream(const std::string& url);
-    bool HasPreloadedStream() const { return m_nextStream != 0; }
 
     std::function<void()> OnTrackNearEnd;
     std::function<void()> OnTrackFinished;
 
 private:
-    HSTREAM m_currentStream = 0;
-    HSTREAM m_nextStream = 0;
+    HSTREAM m_activeStream = 0;   // Текущий играющий трек
+    HSTREAM m_fadingStream = 0;   // Трек, который плавно затухает
+
     HPLUGIN m_hlsPlugin = 0;
     HSYNC m_syncEnd = 0;
     HSYNC m_syncNearEnd = 0;
