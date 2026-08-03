@@ -42,9 +42,8 @@ void ConsoleController::InputLoop() {
     while (m_isRunning) {
         std::getline(std::cin, rawInput);
 
-        // 1. Очищаем от лишних пробелов и скрытых символов (\r, \n, \t) по краям
         size_t start = rawInput.find_first_not_of(" \t\r\n");
-        if (start == std::string::npos) continue; // Если ввели только пробелы или Enter — игнорируем
+        if (start == std::string::npos) continue;
         std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
 
         if (m_currentState == ConsoleState::WAITING_TOKEN_URL) {
@@ -112,7 +111,7 @@ void ConsoleController::InputLoop() {
             char command = lowerInput[0];
             std::string s(50, '*');
             switch (command) {
-                case 'h': // <--- ДОБАВЛЕНА КОМАНДА HELP
+                case 'h':
                     std::cout << clearLine
                               << "\n"
                               <<s<<"\n"
@@ -120,10 +119,19 @@ void ConsoleController::InputLoop() {
                               << " [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n"
                               << " [S] Shuffle\n [R] Repeat Mode\n"
                               << " [J <num>] Jump to track\n [cv] Current volume\n [Q] Quit\n"
+                              << " [tl] Export tracklist to TXT\n"
                               <<s
                               <<"\n\n> ";
                     std::cout.flush();
                     break;
+                case 'tl':
+                    QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() {
+                    m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
+                }, Qt::QueuedConnection);
+
+                    std::cout << clearLine << "[Инфо] Текущий плейлист успешно экспортирован в playlist.txt\n> ";
+                    std::cout.flush();
+                    continue;
                 case 'p': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { if (m_audio.IsPlaying()) m_audio.Pause(); else m_audio.Resume(); }, Qt::QueuedConnection); break;
                 case 'n': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { m_playlist.Next(); }, Qt::QueuedConnection); break;
                 case 'b': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { m_playlist.Previous(); }, Qt::QueuedConnection); break;

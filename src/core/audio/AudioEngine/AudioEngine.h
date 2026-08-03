@@ -7,6 +7,7 @@
 #include <windows.h>
 #endif
 #include "bass.h"
+
 #ifdef _WIN32
 #undef ERROR
 #endif
@@ -30,6 +31,8 @@ public:
 
 private:
     HSTREAM m_currentStream = 0;
+    HPLUGIN m_hlsPlugin = 0;
+    HSYNC m_syncEnd = 0;
     float m_volume = 1.0f;
 
     static void CALLBACK BassTrackEndCallback(HSYNC handle, DWORD channel, DWORD data, void* user);

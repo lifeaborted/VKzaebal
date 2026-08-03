@@ -103,13 +103,17 @@ int main(int argc, char *argv[]) {
     QObject::connect(&vkClient, &VkApiClient::AudioFetched, [&](const std::vector<Track>& tracks) {
         for (const auto& track : tracks) playlist.AddTrack(track);
 
-        // Молча сохраняем в базу по мере поступления
         dbManager.SaveTracks(tracks);
         dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
+        // Здесь dbManager.ExportQueueToTxt ВЫКЛЮЧЕН
     });
 
     // --- ЛОГИКА ЗАВЕРШЕНИЯ ЗАГРУЗКИ ---
     QObject::connect(&vkClient, &VkApiClient::FinishedFetching, [&]() {
+        Logger::Log(LogLevel::INFO, "=== ВСЕ ДОСТУПНЫЕ ТРЕКИ УСПЕШНО ЗАГРУЖЕНЫ ===");
+
+        // Записываем плейлист ОДИН раз, когда все треки получены
+        dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
 
         if (playlist.HasTracks()) {
             std::cout << "\r                                                                                \r"
@@ -117,7 +121,6 @@ int main(int argc, char *argv[]) {
                       << "Введите 'h' для вывода списка команд\n> ";
             std::cout.flush();
 
-            // Запрашиваем URL и начинаем играть
             playlist.OnTrackRequested(playlist.GetCurrentTrack());
         }
     });
