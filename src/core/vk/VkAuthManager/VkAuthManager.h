@@ -13,6 +13,7 @@ public:
     void SaveToken(const std::string& token) const;
     void ClearSavedToken() const;
 
+
     // Обычный C++ метод для парсинга
     void onUrlIntercepted(const QString& urlStr);
 

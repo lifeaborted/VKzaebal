@@ -41,14 +41,11 @@ void VkAuthManager::ClearSavedToken() const {
 void VkAuthManager::onUrlIntercepted(const QString& urlStr) {
     // Ищем токен в адресной строке
     if (urlStr.contains("access_token=")) {
-        // ИЗМЕНЕННАЯ РЕГУЛЯРКА: берем всё от access_token= и до первого амперсанда & или конца строки
         QRegularExpression re("access_token=([^&]+)");
         QRegularExpressionMatch match = re.match(urlStr);
 
         if (match.hasMatch()) {
             std::string token = match.captured(1).toStdString();
-
-            // Выводим в лог кусок токена, чтобы убедиться, что точки на месте
             Logger::Log(LogLevel::INFO, "VkAuthManager: Token intercepted from URL! Starts with: " + token.substr(0, 6) + "...");
 
             emit TokenReceived(token);

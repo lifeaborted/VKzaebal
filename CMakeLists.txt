@@ -14,7 +14,7 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_PREFIX_PATH "C:/Qt/6.11.1/msvc2022_64")
 
 # Ищем базовые модули Qt (Gui нужен для QDesktopServices)
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Sql)
 
 # Указываем путь к исходникам и заголовкам
 set(PROJECT_SOURCES
@@ -32,6 +32,10 @@ set(PROJECT_SOURCES
         src/core/audio/AudioEngine/AudioEngine.h
         src/core/vk/VkAuthManager/VkAuthManager.cpp
         src/core/vk/VkAuthManager/VkAuthManager.h
+        src/utils/DatabaseManager/DatabaseManager.cpp
+        src/utils/DatabaseManager/DatabaseManager.h
+        src/utils/ConsoleController/ConsoleController.cpp
+        src/utils/ConsoleController/ConsoleController.h
 )
 
 # Создаем исполняемый файл
@@ -49,6 +53,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         Qt6::Gui
         Qt6::Network
         Qt6::Widgets
+        Qt6::Sql
         ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/bass.lib
         ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/basshls.lib
 )

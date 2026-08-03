@@ -140,3 +140,11 @@ void PlaylistManager::ToggleRepeat() {
         Logger::Log(LogLevel::INFO, "Repeat Mode: ALL TRACKS");
     }
 }
+
+std::vector<Track> PlaylistManager::GetQueueTracks() const {
+    std::vector<Track> queue;
+    for (int index : m_playQueue) {
+        queue.push_back(m_tracks[index]);
+    }
+    return queue;
+}

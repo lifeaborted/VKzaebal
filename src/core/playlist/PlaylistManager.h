@@ -11,6 +11,7 @@ public:
 
     void AddTrack(const Track& track);
     bool HasTracks() const;
+    bool IsShuffle() const { return m_isShuffle; }
     Track GetCurrentTrack() const;
     Track GetNextTrackPreview() const;
 
@@ -22,6 +23,8 @@ public:
     void ToggleRepeat();
 
     std::function<void(const Track&)> OnTrackRequested;
+    std::vector<Track> GetQueueTracks() const;
+    std::vector<Track> GetAllTracks() const { return m_tracks; }
 
 private:
     std::vector<Track> m_tracks;
