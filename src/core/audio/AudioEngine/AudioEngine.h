@@ -18,22 +18,17 @@ public:
 
     bool Init();
     bool PlayStream(const std::string& url);
-    bool PreloadStream(const std::string& url);
     void Pause();
     void Resume();
     void SetVolume(float volume);
     float GetVolume() const;
     bool IsPlaying() const;
 
-    // Коллбэк, который будет вызываться, когда трек физически закончится
     std::function<void()> OnTrackFinished;
 
 private:
     HSTREAM m_currentStream = 0;
-    HSTREAM m_nextStream = 0;
-    std::string m_nextStreamUrl = "";
     float m_volume = 1.0f;
 
-    // Статический коллбэк для BASS, который прокинет вызов внутрь экземпляра класса
     static void CALLBACK BassTrackEndCallback(HSYNC handle, DWORD channel, DWORD data, void* user);
 };

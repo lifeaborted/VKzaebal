@@ -81,11 +81,10 @@ int main(int argc, char *argv[]) {
                     prefetchedTrackId = nextTrack.id;
                     Logger::Log(LogLevel::INFO, "Background API request for next track: " + nextTrack.title);
 
-                    vkClient.FetchTrackUrl(nextTrack.id, [&audio, &prefetchedUrl, currentGen, &playbackGeneration](const std::string& nextUrl, bool nextNetError) {
+                    vkClient.FetchTrackUrl(nextTrack.id, [&prefetchedUrl, currentGen, &playbackGeneration](const std::string& nextUrl, bool nextNetError) {
                         if (currentGen != playbackGeneration.load()) return;
                         if (!nextNetError && !nextUrl.empty()) {
                             prefetchedUrl = nextUrl;
-                            audio.PreloadStream(nextUrl);
                         }
                     });
                 }

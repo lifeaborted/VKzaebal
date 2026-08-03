@@ -10,11 +10,6 @@ AudioEngine::~AudioEngine() {
     if (m_currentStream != 0) {
         BASS_StreamFree(m_currentStream);
     }
-
-    if (m_nextStream != 0) {
-        BASS_StreamFree(m_nextStream);
-    }
-
     BASS_Free();
     Logger::Log(LogLevel::INFO, "AudioEngine: BASS freed.");
 }
@@ -44,22 +39,7 @@ bool AudioEngine::Init() {
 }
 
 bool AudioEngine::PlayStream(const std::string& url) {
-    // 1. Проверяем, не предзагружен ли этот URL
-    if (url == m_nextStreamUrl && m_nextStream != 0) {
-        Logger::Log(LogLevel::INFO, "AudioEngine: Activating preloaded stream!");
-
-        if (m_currentStream != 0) BASS_StreamFree(m_currentStream);
-
-        m_currentStream = m_nextStream;
-        m_nextStream = 0;
-        m_nextStreamUrl = "";
-
-        BASS_ChannelSetSync(m_currentStream, BASS_SYNC_END, 0, &AudioEngine::BassTrackEndCallback, this);
-        BASS_ChannelPlay(m_currentStream, FALSE);
-        return true;
-    }
-
-    // 2. Обычная логика (если пользователь включил другой трек вручную)
+    // Просто очищаем старый поток и создаем новый
     if (m_currentStream != 0) {
         BASS_StreamFree(m_currentStream);
         m_currentStream = 0;
@@ -67,7 +47,7 @@ bool AudioEngine::PlayStream(const std::string& url) {
 
     m_currentStream = BASS_StreamCreateURL(url.c_str(), 0, BASS_STREAM_AUTOFREE, nullptr, nullptr);
     if (m_currentStream != 0) {
-        BASS_ChannelSetAttribute(m_currentStream, BASS_ATTRIB_VOL, m_volume);
+        BASS_ChannelSetAttribute(m_currentStream, BASS_ATTRIB_VOL, m_volume); // Применяется актуальная громкость
         BASS_ChannelSetSync(m_currentStream, BASS_SYNC_END, 0, &AudioEngine::BassTrackEndCallback, this);
         BASS_ChannelPlay(m_currentStream, FALSE);
         return true;
@@ -75,27 +55,6 @@ bool AudioEngine::PlayStream(const std::string& url) {
         Logger::Log(LogLevel::ERROR, "AudioEngine: Failed to create stream! Error code: " + std::to_string(BASS_ErrorGetCode()));
         return false;
     }
-}
-
-bool AudioEngine::PreloadStream(const std::string& url) {
-    if (m_nextStream != 0) {
-        BASS_StreamFree(m_nextStream);
-        m_nextStream = 0;
-    }
-    m_nextStreamUrl = url;
-    Logger::Log(LogLevel::INFO, "AudioEngine: Preloading stream into memory...");
-
-    // Создаем поток, соединяемся с сервером, заполняем буфер, но НЕ запускаем
-    m_nextStream = BASS_StreamCreateURL(url.c_str(), 0, BASS_STREAM_AUTOFREE, nullptr, nullptr);
-
-    if (m_nextStream != 0) {
-        // Устанавливаем громкость заранее
-        BASS_ChannelSetAttribute(m_nextStream, BASS_ATTRIB_VOL, m_volume);
-        return true;
-    }
-
-    Logger::Log(LogLevel::ERROR, "AudioEngine: Failed to preload stream. Code: " + std::to_string(BASS_ErrorGetCode()));
-    return false;
 }
 
 void AudioEngine::Pause() {
