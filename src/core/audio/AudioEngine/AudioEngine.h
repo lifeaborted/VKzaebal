@@ -23,6 +23,8 @@ public:
     void SetVolume(float volume);
     float GetVolume() const;
     bool IsPlaying() const;
+    double GetPositionSeconds() const;
+    double GetLengthSeconds() const;
 
     std::function<void()> OnTrackFinished;
 

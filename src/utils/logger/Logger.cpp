@@ -1,4 +1,4 @@
-#define _CRT_SECURE_NO_WARNINGS // Отключаем паранойю MSVC на старые функции времени
+#define _CRT_SECURE_NO_WARNINGS
 #include "logger.h"
 #include <iostream>
 #include <fstream>
@@ -9,7 +9,6 @@
 
 namespace fs = std::filesystem;
 
-// Глобальная переменная, скрытая внутри этого файла
 static std::ofstream logFile;
 
 void Logger::Init() {
@@ -18,7 +17,7 @@ void Logger::Init() {
         fs::create_directory("logs");
     }
     
-    // Открываем файл. ios::trunc означает, что старое содержимое будет удалено
+    // Открываем файл
     logFile.open("logs/app.log", std::ios::out | std::ios::trunc);
     
     if (!logFile.is_open()) {
@@ -47,15 +46,16 @@ void Logger::Log(LogLevel level, const std::string& message) {
     // Собираем итоговое сообщение
     std::string fullMessage = timeStr + levelStr + message;
 
-    // Выводим в консоль
+    std::string clearLine = "\r                                                                                \r";
+
     if (level == LogLevel::ERROR) {
-        std::cerr << fullMessage << std::endl;
+        std::cerr << clearLine << fullMessage << "\n> ";
+        std::cerr.flush();
     } else {
-        std::cout << fullMessage << std::endl;
+        std::cout << clearLine << fullMessage << "\n> ";
+        std::cout.flush();
     }
 
-    // Записываем в файл и сразу сбрасываем буфер (flush),
-    // чтобы при краше программы логи не потерялись
     if (logFile.is_open()) {
         logFile << fullMessage << std::endl;
         logFile.flush(); 

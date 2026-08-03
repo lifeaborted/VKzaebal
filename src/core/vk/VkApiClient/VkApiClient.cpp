@@ -197,7 +197,7 @@ void VkApiClient::OnReplyFinished(QNetworkReply* reply) {
 }
 
 void VkApiClient::FetchAllUserAudio(int offset, int count) {
-    Logger::Log(LogLevel::INFO, "VkApiClient: Fetching tracks chunk (offset: " + std::to_string(offset) + ", count: " + std::to_string(count) + ")...");
+    //Logger::Log(LogLevel::INFO, "VkApiClient: Fetching tracks chunk (offset: " + std::to_string(offset) + ", count: " + std::to_string(count) + ")...");
 
     // Формируем запрос
     QUrl url("https://api.vk.com/method/audio.get");
@@ -264,8 +264,7 @@ void VkApiClient::FetchAllUserAudio(int offset, int count) {
         if (items.size() == count) {
             FetchAllUserAudio(offset + count, count);
         } else {
-            Logger::Log(LogLevel::INFO, "VkApiClient: Finished fetching all tracks.");
-            std::cout << "\n=== ВСЕ ДОСТУПНЫЕ ТРЕКИ УСПЕШНО ЗАГРУЖЕНЫ ===" << std::endl;
+            Logger::Log(LogLevel::INFO, "=== ВСЕ ДОСТУПНЫЕ ТРЕКИ УСПЕШНО ЗАГРУЖЕНЫ ===");
         }
     });
 }

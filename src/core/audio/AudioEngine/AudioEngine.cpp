@@ -15,17 +15,17 @@ AudioEngine::~AudioEngine() {
 }
 
 bool AudioEngine::Init() {
+    BASS_SetConfig(BASS_CONFIG_NET_TIMEOUT, 15000);
+    BASS_SetConfig(BASS_CONFIG_NET_READTIMEOUT, 15000);
+    BASS_SetConfig(BASS_CONFIG_NET_PLAYLIST, 0);
+    BASS_SetConfig(BASS_CONFIG_NET_BUFFER, 20000); // 15 секунд сетевого буфера
+    BASS_SetConfig(BASS_CONFIG_NET_PREBUF, 50);    // Стартовать воспроизведение только после заполнения буфера на 50%
+    BASS_SetConfigPtr(BASS_CONFIG_NET_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+
     if (!BASS_Init(-1, 44100, 0, 0, nullptr)) {
         Logger::Log(LogLevel::ERROR, "AudioEngine: Failed to initialize BASS. Code: " + std::to_string(BASS_ErrorGetCode()));
         return false;
     }
-
-    BASS_SetConfig(BASS_CONFIG_NET_TIMEOUT, 15000);
-    BASS_SetConfig(BASS_CONFIG_NET_READTIMEOUT, 15000);
-    BASS_SetConfig(BASS_CONFIG_NET_PLAYLIST, 0);
-    BASS_SetConfig(BASS_CONFIG_NET_BUFFER, 15000); // 15 секунд сетевого буфера
-    BASS_SetConfig(BASS_CONFIG_NET_PREBUF, 50);    // Стартовать воспроизведение только после заполнения буфера на 50%
-    BASS_SetConfigPtr(BASS_CONFIG_NET_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
     HPLUGIN hlsPlugin = BASS_PluginLoad("basshls.dll", 0);
 
@@ -45,7 +45,7 @@ bool AudioEngine::PlayStream(const std::string& url) {
         m_currentStream = 0;
     }
 
-    m_currentStream = BASS_StreamCreateURL(url.c_str(), 0, BASS_STREAM_AUTOFREE, nullptr, nullptr);
+    m_currentStream = BASS_StreamCreateURL(url.c_str(), 0, 0, nullptr, nullptr);
     if (m_currentStream != 0) {
         BASS_ChannelSetAttribute(m_currentStream, BASS_ATTRIB_VOL, m_volume); // Применяется актуальная громкость
         BASS_ChannelSetSync(m_currentStream, BASS_SYNC_END, 0, &AudioEngine::BassTrackEndCallback, this);
@@ -99,4 +99,18 @@ void CALLBACK AudioEngine::BassTrackEndCallback(HSYNC handle, DWORD channel, DWO
             engine->OnTrackFinished();
         }, Qt::QueuedConnection);
     }
+}
+
+double AudioEngine::GetPositionSeconds() const {
+    if (m_currentStream == 0) return 0.0;
+    QWORD pos = BASS_ChannelGetPosition(m_currentStream, BASS_POS_BYTE);
+    if (pos == (QWORD)-1) return 0.0; // Защита от ошибки потока
+    return BASS_ChannelBytes2Seconds(m_currentStream, pos);
+}
+
+double AudioEngine::GetLengthSeconds() const {
+    if (m_currentStream == 0) return 0.0;
+    QWORD len = BASS_ChannelGetLength(m_currentStream, BASS_POS_BYTE);
+    if (len == (QWORD)-1) return 0.0; 
+    return BASS_ChannelBytes2Seconds(m_currentStream, len);
 }

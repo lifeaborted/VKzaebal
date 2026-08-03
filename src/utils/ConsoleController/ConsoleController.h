@@ -30,6 +30,7 @@ public:
 
 private:
     void InputLoop();
+    void UiLoop();
 
     AudioEngine& m_audio;
     PlaylistManager& m_playlist;
@@ -39,4 +40,5 @@ private:
     std::atomic<ConsoleState> m_currentState;
     std::atomic<bool> m_isRunning;
     std::thread m_inputThread;
+    std::thread m_uiThread;
 };
