@@ -21,7 +21,6 @@ public:
     // Запрос списка аудиозаписей пользователя
     void FetchUserAudio(long long ownerId = 0, int count = 100);
     void FetchAllUserAudio(int offset = 0, int count = 200); // загрузчик треков
-    std::string GetLyrics(const std::string& lyricsId);
 
     signals:
         void AudioFetched(const std::vector<Track>& tracks);

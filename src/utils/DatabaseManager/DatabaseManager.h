@@ -20,11 +20,13 @@ public:
     // --- Треки и очередь ---
     void SaveTracks(const std::vector<Track>& tracks);
     void SaveQueue(const std::vector<Track>& currentQueue, bool isShuffle);
-    void UpdateTrackLyrics(const std::string& trackId, const std::string& lyrics);
-    
+
     // Вывод в TXT прямо из БД
     void ExportQueueToTxt(const QString& filename, bool isShuffle) const;
     std::vector<Track> LoadTracks();
+
+    // Обновление локального кэша текста
+    void UpdateTrackLyrics(const std::string& trackId, const std::string& lyrics);
 
 private:
     QSqlDatabase m_db;

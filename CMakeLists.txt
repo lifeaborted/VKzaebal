@@ -40,6 +40,8 @@ set(PROJECT_SOURCES
         src/utils/TrackDownloader/TrackDownloader.h
         src/core/network/NetworkStreamer.cpp
         src/core/network/NetworkStreamer.h
+        src/core/lyrics/LyricsFetcher.cpp
+        src/core/lyrics/LyricsFetcher.h
 )
 
 # Создаем исполняемый файл

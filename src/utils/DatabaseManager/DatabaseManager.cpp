@@ -29,6 +29,7 @@ bool DatabaseManager::Init() {
 void DatabaseManager::CreateTables() {
     QSqlQuery query;
     query.exec("CREATE TABLE IF NOT EXISTS Settings (key TEXT PRIMARY KEY, value TEXT)");
+
     query.exec("CREATE TABLE IF NOT EXISTS Tracks ("
                "vk_id TEXT PRIMARY KEY, "
                "artist TEXT, "
@@ -73,8 +74,6 @@ void DatabaseManager::ClearSetting(const QString& key) {
     query.exec();
 }
 
-
-// Генерация TXT файла джоином двух таблиц прямо в SQLite
 void DatabaseManager::ExportQueueToTxt(const QString& filename, bool isShuffle) const {
     QSqlQuery query;
     query.prepare("SELECT q.position, t.artist, t.title, t.duration "
@@ -129,17 +128,14 @@ void DatabaseManager::SaveTracks(const std::vector<Track>& tracks) {
     m_db.commit();
 }
 
-// Запись очереди в бд
 void DatabaseManager::SaveQueue(const std::vector<Track>& currentQueue, bool isShuffle) {
     QSqlQuery query;
     m_db.transaction();
 
-    // Очищаем старую очередь для выбранного режима
     query.prepare("DELETE FROM PlayQueue WHERE is_shuffle = :is_shuffle");
     query.bindValue(":is_shuffle", isShuffle ? 1 : 0);
     query.exec();
 
-    // Записываем новую очередь
     query.prepare("INSERT INTO PlayQueue (position, vk_id, is_shuffle) VALUES (:pos, :id, :shuffle)");
     for (size_t i = 0; i < currentQueue.size(); ++i) {
         query.bindValue(":pos", static_cast<int>(i));

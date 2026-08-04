@@ -1,3 +1,15 @@
+#include <QDir>
+#include <QFile>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QFileInfo>
+#include <QRegularExpression>
+#include <iostream>
+#include <string>
+#include <cctype>
+#include <QCoreApplication>
+#include <QMetaObject>
+
 #include "ConsoleController.h"
 #include "core/audio/AudioEngine/AudioEngine.h"
 #include "core/playlist/PlaylistManager.h"
@@ -5,15 +17,27 @@
 #include "utils/DatabaseManager/DatabaseManager.h"
 #include "utils/logger/logger.h"
 
-#include <iostream>
-#include <string>
-#include <cctype>
-#include <QCoreApplication>
-#include <QMetaObject>
 
-ConsoleController::ConsoleController(AudioEngine& audio, PlaylistManager& playlist, VkAuthManager& authManager, DatabaseManager& dbManager, VkApiClient& vkClient, TrackDownloader& downloader, QObject* parent)
-    : QObject(parent), m_audio(audio), m_playlist(playlist), m_authManager(authManager), m_dbManager(dbManager), m_vkClient(vkClient), m_downloader(downloader),
-      m_currentState(ConsoleState::COMMAND_MODE), m_isRunning(false) {}
+ConsoleController::ConsoleController(
+    AudioEngine& audio,
+    PlaylistManager& playlist,
+    VkAuthManager& authManager,
+    DatabaseManager& dbManager,
+    VkApiClient& vkClient,
+    TrackDownloader& downloader,
+    LyricsFetcher& lyricsFetcher,
+    QObject* parent
+    ):
+        QObject(parent),
+        m_audio(audio),
+        m_playlist(playlist),
+        m_authManager(authManager),
+        m_dbManager(dbManager),
+        m_vkClient(vkClient),
+        m_downloader(downloader),
+        m_lyricsFetcher(lyricsFetcher),
+        m_currentState(ConsoleState::COMMAND_MODE),
+        m_isRunning(false) {}
 
 ConsoleController::~ConsoleController() {
     Stop();
@@ -278,42 +302,63 @@ if (cmdType == "dl" || cmdType == "rm") {
                 continue;
             }
 
-            // --- КОМАНДА: Текст песни (ly) ---
+// --- КОМАНДА: Текст песни (ly) ---
             if (lowerInput == "ly" || lowerInput == "lyrics") {
                 Track currentTrack = m_playlist.GetCurrentTrack();
 
-                if (currentTrack.lyrics_id.empty() && currentTrack.lyrics.empty()) {
+                if (currentTrack.lyrics_id.empty() || currentTrack.lyrics_id == "0") {
                     std::cout << clearLine << "[Текст] У этого трека нет текста в базе ВК.\n> ";
                     std::cout.flush();
                     continue;
                 }
 
+                // Внутренняя лямбда для сохранения и открытия файла
+                auto showLyricsFile = [this, currentTrack, clearLine](const std::string& text) {
+                    if (text.empty()) {
+                        std::cout << clearLine << "[Ошибка] Не удалось загрузить текст (См. logs/app.log).\n> ";
+                        std::cout.flush();
+                        return;
+                    }
+
+                    QDir().mkpath("lyrics");
+
+                    // Вырезаем запрещенные символы для файловой системы Windows
+                    QString safeArtist = QString::fromStdString(currentTrack.artist).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+                    QString safeTitle = QString::fromStdString(currentTrack.title).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+                    QString filePath = "lyrics/" + safeArtist + " - " + safeTitle + ".txt";
+
+                    QFile file(filePath);
+                    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                        // Записываем чистый UTF-8
+                        file.write(QByteArray::fromStdString(text));
+                        file.close();
+                    }
+
+                    // Открываем текстовый файл в системном редакторе (Блокнот)
+                    QFileInfo fileInfo(filePath);
+                    QDesktopServices::openUrl(QUrl::fromLocalFile(fileInfo.absoluteFilePath()));
+
+                    std::cout << clearLine << "[Текст] Открыт файл: " << filePath.toStdString() << "\n> ";
+                    std::cout.flush();
+                };
+
                 std::string text = currentTrack.lyrics;
 
-                // Если текста нет в локальном кэше, тянем из сети
                 if (text.empty()) {
-                    std::cout << clearLine << "[Текст] Загрузка текста из сети...\n";
+                    std::cout << clearLine << "[Текст] Загрузка текста из сети...\n> ";
                     std::cout.flush();
 
-                    text = m_vkClient.GetLyrics(currentTrack.lyrics_id);
-                    if (!text.empty()) {
-                        QMetaObject::invokeMethod(QCoreApplication::instance(), [&, currentTrack, text]() {
-                            m_dbManager.UpdateTrackLyrics(currentTrack.id, text);
-                        }, Qt::QueuedConnection);
-                    }
-                }
-
-                if (!text.empty()) {
-                    std::string s(50, '-');
-                    std::cout << clearLine << "\n" << s << "\n"
-                              << " " << currentTrack.artist << " - " << currentTrack.title << "\n"
-                              << s << "\n\n"
-                              << text << "\n\n"
-                              << s << "\n> ";
+                    QMetaObject::invokeMethod(QCoreApplication::instance(), [this, currentTrack, showLyricsFile]() {
+                    m_lyricsFetcher.FetchLyrics(currentTrack.artist, currentTrack.title, [this, currentTrack, showLyricsFile](const std::string& fetchedText) {
+                        if (!fetchedText.empty()) {
+                            m_dbManager.UpdateTrackLyrics(currentTrack.id, fetchedText);
+                        }
+                        showLyricsFile(fetchedText);
+                    });
+                }, Qt::QueuedConnection);
                 } else {
-                    std::cout << clearLine << "[Ошибка] Не удалось загрузить текст.\n> ";
+                    showLyricsFile(text);
                 }
-                std::cout.flush();
                 continue;
             }
 

@@ -19,6 +19,8 @@
 #include "utils/logger/logger.h"
 #include "utils/DatabaseManager/DatabaseManager.h"
 #include "utils/TrackDownloader/TrackDownloader.h"
+#include "core/lyrics/LyricsFetcher.h"
+
 
 int main(int argc, char *argv[]) {
 #ifdef _WIN32
@@ -47,8 +49,8 @@ int main(int argc, char *argv[]) {
     VkApiClient vkClient;
     VkAuthManager authManager;
     TrackDownloader downloader;
+    LyricsFetcher lyricsFetcher;
 
-// Переименовали переменную для ясности
     bool crossfadeEnabled = settings.value("Audio/CrossfadePlayback", false).toBool();
     Track preloadedTrack;
     std::string cachedNextUrl = "";
@@ -85,7 +87,7 @@ float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
         }
     };
 
-    ConsoleController console(audio, playlist, authManager, dbManager, vkClient, downloader);
+    ConsoleController console(audio, playlist, authManager, dbManager, vkClient, downloader, lyricsFetcher);
     QObject::connect(&console, &ConsoleController::QuitRequested, &app, &QCoreApplication::quit);
 
     console.OnGaplessModeChanged = [&](bool isCrossfade) {
