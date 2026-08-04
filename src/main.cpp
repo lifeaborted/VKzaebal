@@ -18,6 +18,7 @@
 #include "utils/ConsoleController/ConsoleController.h"
 #include "utils/logger/logger.h"
 #include "utils/DatabaseManager/DatabaseManager.h"
+#include "utils/TrackDownloader/TrackDownloader.h"
 
 int main(int argc, char *argv[]) {
 #ifdef _WIN32
@@ -42,9 +43,10 @@ int main(int argc, char *argv[]) {
     AudioEngine audio;
     if (!audio.Init()) return -1;
 
-PlaylistManager playlist;
+    PlaylistManager playlist;
     VkApiClient vkClient;
     VkAuthManager authManager;
+    TrackDownloader downloader;
 
 // Переименовали переменную для ясности
     bool crossfadeEnabled = settings.value("Audio/CrossfadePlayback", false).toBool();
@@ -83,7 +85,7 @@ float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
         }
     };
 
-    ConsoleController console(audio, playlist, authManager, dbManager);
+    ConsoleController console(audio, playlist, authManager, dbManager, vkClient, downloader);
     QObject::connect(&console, &ConsoleController::QuitRequested, &app, &QCoreApplication::quit);
 
     console.OnGaplessModeChanged = [&](bool isCrossfade) {
@@ -119,7 +121,7 @@ float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
         int currentGen = (attempt == 1) ? ++playbackGeneration : playbackGeneration.load();
 
         if (attempt == 1 && !cachedNextUrl.empty() && preloadedTrack.id == track.id) {
-            if (audio.PlayStream(cachedNextUrl, track.duration, crossfadeEnabled)) {
+            if (audio.PlayStream(cachedNextUrl, track.duration, crossfadeEnabled, track.id)) {
                 cachedNextUrl = "";
                 if (savedPosition > 0.0) {
                     audio.SetPositionSeconds(savedPosition);
@@ -145,7 +147,7 @@ float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
                 return;
             }
 
-            if (!freshUrl.empty() && audio.PlayStream(freshUrl, track.duration, crossfadeEnabled)) {
+            if (!freshUrl.empty() && audio.PlayStream(freshUrl, track.duration, crossfadeEnabled, track.id)) {
                 if (savedPosition > 0.0) {
                     audio.SetPositionSeconds(savedPosition);
                     savedPosition = 0.0;

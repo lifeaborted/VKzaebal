@@ -3,6 +3,7 @@
 #include "core/playlist/PlaylistManager.h"
 #include "core/vk/VkAuthManager/VkAuthManager.h"
 #include "utils/DatabaseManager/DatabaseManager.h"
+#include "utils/logger/logger.h"
 
 #include <iostream>
 #include <string>
@@ -10,8 +11,8 @@
 #include <QCoreApplication>
 #include <QMetaObject>
 
-ConsoleController::ConsoleController(AudioEngine& audio, PlaylistManager& playlist, VkAuthManager& authManager, DatabaseManager& dbManager, QObject* parent)
-    : QObject(parent), m_audio(audio), m_playlist(playlist), m_authManager(authManager), m_dbManager(dbManager),
+ConsoleController::ConsoleController(AudioEngine& audio, PlaylistManager& playlist, VkAuthManager& authManager, DatabaseManager& dbManager, VkApiClient& vkClient, TrackDownloader& downloader, QObject* parent)
+    : QObject(parent), m_audio(audio), m_playlist(playlist), m_authManager(authManager), m_dbManager(dbManager), m_vkClient(vkClient), m_downloader(downloader),
       m_currentState(ConsoleState::COMMAND_MODE), m_isRunning(false) {}
 
 ConsoleController::~ConsoleController() {
@@ -63,6 +64,61 @@ void ConsoleController::InputLoop() {
 
             std::string lowerInput = input;
             for (char& c : lowerInput) c = std::tolower(c);
+
+            std::string cmdType = lowerInput.substr(0, 2);
+if (cmdType == "dl" || cmdType == "rm") {
+    Track targetTrack;
+    bool isValid = false;
+
+    if (lowerInput == cmdType) {
+        targetTrack = m_playlist.GetCurrentTrack();
+        isValid = true;
+    } else if (lowerInput.length() > 3 && lowerInput[2] == ' ') {
+        try {
+            int idx = std::stoi(input.substr(3)) - 1; // Используем input для парсинга числа
+            std::vector<Track> queue = m_playlist.GetQueueTracks(); // Получаем текущий порядок (с учетом шаффла)[cite: 2]
+            if (idx >= 0 && idx < queue.size()) {
+                targetTrack = queue[idx];
+                isValid = true;
+            }
+        } catch(...) {}
+    }
+
+    if (isValid && !targetTrack.id.empty()) {
+        QString path = "downloads/" + QString::fromStdString(targetTrack.id) + ".wav";
+
+        if (cmdType == "dl") {
+            if (QFile::exists(path)) {
+                std::cout << clearLine << "[Загрузка] Трек уже скачан.\n> ";
+                std::cout.flush();
+            } else {
+                std::cout << clearLine << "[Загрузка] Получение ссылки для " << targetTrack.title << "...\n> ";
+                std::cout.flush();
+
+                QMetaObject::invokeMethod(QCoreApplication::instance(), [&, targetTrack]() {
+                    m_vkClient.FetchTrackUrl(targetTrack.id, [this, targetTrack](const std::string& url, bool err) {
+                        if (!err && !url.empty()) {
+                            m_downloader.Download(targetTrack, url);
+                        } else {
+                            Logger::Log(LogLevel::ERROR, "Failed to get URL for download.");
+                        }
+                    });
+                }, Qt::QueuedConnection);
+            }
+        } else if (cmdType == "rm") {
+            if (QFile::exists(path) || QFile::exists(path)) {
+                QFile::remove(path);
+                QFile::remove(path);
+                std::cout << clearLine << "[Кэш] Удален: " << targetTrack.artist << " - " << targetTrack.title << "\n> ";
+                std::cout.flush();
+            } else {
+                std::cout << clearLine << "[Кэш] Трек не был скачан.\n> ";
+                std::cout.flush();
+            }
+        }
+    }
+    continue;
+}
 
             // --- КОМАНДА: Установка громкости (v <num>) ---
             if (lowerInput.length() >= 2 && lowerInput[0] == 'v' && lowerInput[1] == ' ') {
@@ -197,7 +253,10 @@ void ConsoleController::InputLoop() {
                               << " [J <num>] Jump to track\n [cv] Current volume\n"
                               << " [rs] Reset Session (Back to track 1, standard order)\n"
                               << " [mode <0/1>] 0 - Standard, 1 - Gapless transition\n"
-                              << " [tl] Export tracklist to TXT\n [Q] Quit\n"
+                              << " [tl] Export tracklist to TXT\n"
+                              << " [dl] / [dl <num>] Download track for offline playback\n"
+                              << " [rm] / [rm <num>] Delete downloaded track from local cache\n"
+                              << " [Q] Quit\n"
                               <<s
                               <<"\n\n> ";
                     std::cout.flush();
@@ -270,7 +329,16 @@ void ConsoleController::UiLoop() {
                     Track currentTrack = m_playlist.GetCurrentTrack();
                     std::string trackName = currentTrack.artist + " - " + currentTrack.title + " [" + currentTrack.GetFormattedDuration() + "]";
 
-                    printf("\r\033[1A\033[2K%s\n\r\033[2K%02d:%02d / %02d:%02d %s %d%%          ",
+                    // \033[s  - Сохранить текущую позицию курсора (где юзер вводит текст)
+                    // \033[2A - Подняться на 2 строки вверх
+                    // \r\033[2K - Очистить строку и напечатать название
+                    // \033[u  - Вернуть курсор на сохраненную позицию!
+
+                    printf("\033[s"
+                           "\033[2A"
+                           "\r\033[2K%s\n"
+                           "\r\033[2K%02d:%02d / %02d:%02d %s %d%%"
+                           "\033[u",
                            trackName.c_str(), curMin, curSec, totMin, totSec, bar.c_str(), percent);
                     fflush(stdout);
                 }

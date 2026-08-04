@@ -36,6 +36,10 @@ set(PROJECT_SOURCES
         src/utils/DatabaseManager/DatabaseManager.h
         src/utils/ConsoleController/ConsoleController.cpp
         src/utils/ConsoleController/ConsoleController.h
+        src/utils/TrackDownloader/TrackDownloader.cpp
+        src/utils/TrackDownloader/TrackDownloader.h
+        src/core/network/NetworkStreamer.cpp
+        src/core/network/NetworkStreamer.h
 )
 
 # Создаем исполняемый файл

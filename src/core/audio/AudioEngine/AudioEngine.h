@@ -19,7 +19,7 @@ public:
 
     bool Init();
     // Добавили флаг crossfade
-    bool PlayStream(const std::string& url, int durationSec, bool crossfade);
+    bool PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId = "");
     void Pause();
     void Resume();
     void SetVolume(float volume);

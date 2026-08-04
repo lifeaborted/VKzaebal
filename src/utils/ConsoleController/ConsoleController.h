@@ -4,11 +4,13 @@
 #include <atomic>
 #include <thread>
 #include <functional>
+#include "core/vk/VkApiClient/VkApiClient.h"
+#include "utils/TrackDownloader/TrackDownloader.h"
 
 class AudioEngine;
 class PlaylistManager;
 class VkAuthManager;
-class DatabaseManager; // <--- ДОБАВЛЯЕМ
+class DatabaseManager;
 
 enum class ConsoleState {
     COMMAND_MODE,
@@ -18,7 +20,7 @@ enum class ConsoleState {
 class ConsoleController : public QObject {
     Q_OBJECT
 public:
-    ConsoleController(AudioEngine& audio, PlaylistManager& playlist, VkAuthManager& authManager, DatabaseManager& dbManager, QObject* parent = nullptr);
+    ConsoleController(AudioEngine& audio, PlaylistManager& playlist, VkAuthManager& authManager, DatabaseManager& dbManager, VkApiClient& vkClient, TrackDownloader& downloader, QObject* parent = nullptr);
     ~ConsoleController();
 
     void Start();
@@ -38,6 +40,8 @@ private:
     PlaylistManager& m_playlist;
     VkAuthManager& m_authManager;
     DatabaseManager& m_dbManager;
+    VkApiClient& m_vkClient;
+    TrackDownloader& m_downloader;
 
     std::atomic<ConsoleState> m_currentState;
     std::atomic<bool> m_isRunning;

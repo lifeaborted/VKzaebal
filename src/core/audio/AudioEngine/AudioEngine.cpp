@@ -3,6 +3,10 @@
 #include <QCoreApplication>
 #include <QMetaObject>
 #include <QSettings>
+#include <QFile>
+#include <QString>
+#include <QFileInfo>
+#include <QUrl>
 
 AudioEngine::AudioEngine() {
 }
@@ -35,9 +39,17 @@ bool AudioEngine::Init() {
     BASS_SetConfig(BASS_CONFIG_NET_PREBUF, 50);
     BASS_SetConfigPtr(BASS_CONFIG_NET_AGENT, "VKAndroidApp/5.56.1-12345 (Android 11; SDK 30; x86_64; en; 2274003)");
 
-    if (!BASS_Init(-1, 44100, 0, 0, nullptr)) return false;
+    if (!BASS_Init(-1, 44100, 0, 0, nullptr)) {
+        Logger::Log(LogLevel::ERROR, "AudioEngine: Failed to initialize BASS!");
+        return false;
+    }
+
     m_hlsPlugin = BASS_PluginLoad("basshls.dll", 0);
-    return m_hlsPlugin != 0;
+    if (!m_hlsPlugin) {
+        Logger::Log(LogLevel::WARNING, "AudioEngine: Could not load basshls.dll plugin! Local HLS might fail.");
+    }
+
+    return true;
 }
 
 void CALLBACK AudioEngine::BassTrackNearEndCallback(HSYNC handle, DWORD channel, DWORD data, void* user) {
@@ -59,7 +71,7 @@ void CALLBACK AudioEngine::BassTrackEndCallback(HSYNC handle, DWORD channel, DWO
     }
 }
 
-bool AudioEngine::PlayStream(const std::string& url, int durationSec, bool crossfade) {
+bool AudioEngine::PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId) {
     if (m_activeStream != 0) {
         if (m_syncEnd != 0) BASS_ChannelRemoveSync(m_activeStream, m_syncEnd);
         if (m_syncNearEnd != 0) BASS_ChannelRemoveSync(m_activeStream, m_syncNearEnd);
@@ -89,7 +101,19 @@ bool AudioEngine::PlayStream(const std::string& url, int durationSec, bool cross
         m_syncNearEnd = 0;
     }
 
-    m_activeStream = BASS_StreamCreateURL(url.c_str(), 0, 0, nullptr, nullptr);
+    // --- ЛОГИКА ОФФЛАЙН ВОСПРОИЗВЕДЕНИЯ ---
+    QString localPath = QString::fromStdString("downloads/" + trackId + ".wav"); // <-- Изменение здесь
+
+    // играем с диска
+    if (!trackId.empty() && QFile::exists(localPath)) {
+        Logger::Log(LogLevel::INFO, "AudioEngine: Playing from local downloads -> " + localPath.toStdString());
+        m_activeStream = BASS_StreamCreateFile(FALSE, localPath.toStdString().c_str(), 0, 0, 0);
+    }
+    // Иначе из интернета
+    else {
+        m_activeStream = BASS_StreamCreateURL(url.c_str(), 0, 0, nullptr, nullptr);
+    }
+
     if (m_activeStream != 0) {
         if (crossfade) {
             // Новый трек стартует с 0 громкости и нарастает
