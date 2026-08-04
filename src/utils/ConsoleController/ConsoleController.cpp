@@ -26,13 +26,13 @@ void ConsoleController::Start() {
     if (m_isRunning) return;
     m_isRunning = true;
     m_inputThread = std::thread(&ConsoleController::InputLoop, this);
-    m_uiThread = std::thread(&ConsoleController::UiLoop, this); // Запускаем UI поток
+    m_uiThread = std::thread(&ConsoleController::UiLoop, this);
 }
 
 void ConsoleController::Stop() {
     m_isRunning = false;
     if (m_inputThread.joinable()) m_inputThread.detach();
-    if (m_uiThread.joinable()) m_uiThread.join(); // Гасим UI поток
+    if (m_uiThread.joinable()) m_uiThread.join();
 }
 
 void ConsoleController::InputLoop() {
@@ -61,7 +61,6 @@ void ConsoleController::InputLoop() {
 
         if (m_currentState == ConsoleState::COMMAND_MODE) {
 
-            // 2. Переводим всю строку в нижний регистр для безопасных проверок команд
             std::string lowerInput = input;
             for (char& c : lowerInput) c = std::tolower(c);
 
@@ -85,7 +84,7 @@ void ConsoleController::InputLoop() {
                 continue;
             }
 
-            // --- КОМАНДА: Теку громкость ---
+            // --- КОМАНДА: Текущая громкость ---
             if (lowerInput == "cv") {
                 int vol = static_cast<int>(m_audio.GetVolume() * 100);
                 std::cout << clearLine << "[Громкость] Текущая громкость: " << vol << "%\n> ";
@@ -144,6 +143,20 @@ void ConsoleController::InputLoop() {
                 continue;
             }
 
+            // --- КОМАНДА: Сброс сессии (rs / reset) ---
+            if (lowerInput == "rs" || lowerInput == "reset") {
+                QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() {
+                    m_playlist.SetShuffle(false); // Выключаем шаффл
+                    m_playlist.JumpTo(0);         // Прыгаем на самый первый трек
+                    m_dbManager.SaveQueue(m_playlist.GetQueueTracks(), m_playlist.IsShuffle());
+                    m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
+                }, Qt::QueuedConnection);
+
+                std::cout << clearLine << "[Сессия] Плейлист сброшен: стандартный порядок, 1-й трек.\n> ";
+                std::cout.flush();
+                continue;
+            }
+
             // --- КОМАНДА: Смена режима перехода (mode <0/1>) ---
             if (lowerInput.length() >= 6 && lowerInput.substr(0, 5) == "mode ") {
                 try {
@@ -171,7 +184,7 @@ void ConsoleController::InputLoop() {
             }
 
             // Базовые односимвольные команды
-char command = lowerInput[0];
+            char command = lowerInput[0];
             std::string s(50, '*');
             switch (command) {
                 case 'h':
@@ -181,9 +194,10 @@ char command = lowerInput[0];
                               << " [P] Play/Pause\n [N] Next\n [B] Prev\n"
                               << " [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n"
                               << " [st] Standard Order\n [sh] Shuffle (Reshuffles if already on)\n [R] Repeat Mode\n"
-                              << " [J <num>] Jump to track\n [cv] Current volume\n [Q] Quit\n"
+                              << " [J <num>] Jump to track\n [cv] Current volume\n"
+                              << " [rs] Reset Session (Back to track 1, standard order)\n"
                               << " [mode <0/1>] 0 - Standard, 1 - Gapless transition\n"
-                              << " [tl] Export tracklist to TXT\n"
+                              << " [tl] Export tracklist to TXT\n [Q] Quit\n"
                               <<s
                               <<"\n\n> ";
                     std::cout.flush();
@@ -194,6 +208,16 @@ char command = lowerInput[0];
                 case '+': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { m_audio.SetVolume(m_audio.GetVolume() + 0.1f); }, Qt::QueuedConnection); break;
                 case '-': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { m_audio.SetVolume(m_audio.GetVolume() - 0.1f); }, Qt::QueuedConnection); break;
                 case 'r': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { m_playlist.ToggleRepeat(); }, Qt::QueuedConnection); break;
+                case 'i':
+                    QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() {
+                        Track current = m_playlist.GetCurrentTrack();
+                        std::cout << clearLine << "[Инфо] Артист: " << current.artist << "\n"
+                                  << "[Инфо] Название: " << current.title << "\n"
+                                  << "[Инфо] ID: " << current.id << "\n"
+                                  << "[Инфо] Обложка: " << (current.coverUrl.empty() ? "НЕТ ОБЛОЖКИ" : current.coverUrl) << "\n> ";
+                        std::cout.flush();
+                    }, Qt::QueuedConnection);
+                    break;
                 case 'q':
                     emit QuitRequested();
                     m_isRunning = false;
@@ -243,8 +267,11 @@ void ConsoleController::UiLoop() {
                     }
                     bar += "]";
 
-                    printf("\r%02d:%02d / %02d:%02d %s %d%%          ",
-                           curMin, curSec, totMin, totSec, bar.c_str(), percent);
+                    Track currentTrack = m_playlist.GetCurrentTrack();
+                    std::string trackName = currentTrack.artist + " - " + currentTrack.title + " [" + currentTrack.GetFormattedDuration() + "]";
+
+                    printf("\r\033[1A\033[2K%s\n\r\033[2K%02d:%02d / %02d:%02d %s %d%%          ",
+                           trackName.c_str(), curMin, curSec, totMin, totSec, bar.c_str(), percent);
                     fflush(stdout);
                 }
             }
