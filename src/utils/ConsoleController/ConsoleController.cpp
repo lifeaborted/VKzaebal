@@ -213,7 +213,7 @@ if (cmdType == "dl" || cmdType == "rm") {
                 continue;
             }
 
-            // --- КОМАНДА: Смена режима перехода (mode <0/1>) ---
+            // --- Смена режима перехода (mode <0/1>) ---
             if (lowerInput.length() >= 6 && lowerInput.substr(0, 5) == "mode ") {
                 try {
                     int mode = std::stoi(input.substr(5));
@@ -239,6 +239,45 @@ if (cmdType == "dl" || cmdType == "rm") {
                 continue;
             }
 
+            // --- Поиск по плейлисту (search <query>) ---
+            if (lowerInput.length() > 7 && lowerInput.substr(0, 7) == "search ") {
+                QString query = QString::fromStdString(input.substr(7)).trimmed();
+
+                if (!query.isEmpty()) {
+                    std::vector<Track> queue = m_playlist.GetQueueTracks();
+                    std::cout << clearLine << "[Поиск] Результаты по запросу \"" << query.toStdString() << "\":\n";
+                    std::string s(50, '-');
+                    std::cout << s << "\n";
+
+                    int matchCount = 0;
+                    for (size_t i = 0; i < queue.size(); ++i) {
+                        QString artist = QString::fromStdString(queue[i].artist);
+                        QString title = QString::fromStdString(queue[i].title);
+
+                        if (artist.contains(query, Qt::CaseInsensitive) || title.contains(query, Qt::CaseInsensitive)) {
+                            std::cout << "[" << (i + 1) << "]. " << queue[i].artist << " - " << queue[i].title
+                                      << " [" << queue[i].GetFormattedDuration() << "]\n";
+                            matchCount++;
+
+                            if (matchCount >= 20) {
+                                std::cout << "... Показаны первые 20 совпадений.\n";
+                                break;
+                            }
+                        }
+                    }
+
+                    if (matchCount == 0) {
+                        std::cout << "Ничего не найдено.\n";
+                    }
+                    std::cout << s << "\n> ";
+                    std::cout.flush();
+                } else {
+                    std::cout << clearLine << "[Ошибка] Пустой запрос. Используй: search <название или автор>\n> ";
+                    std::cout.flush();
+                }
+                continue;
+            }
+
             // Базовые односимвольные команды
             char command = lowerInput[0];
             std::string s(50, '*');
@@ -253,6 +292,7 @@ if (cmdType == "dl" || cmdType == "rm") {
                               << " [J <num>] Jump to track\n [cv] Current volume\n"
                               << " [rs] Reset Session (Back to track 1, standard order)\n"
                               << " [mode <0/1>] 0 - Standard, 1 - Gapless transition\n"
+                              << " [search <text>] Search tracks in the loaded playlist\n"
                               << " [tl] Export tracklist to TXT\n"
                               << " [dl] / [dl <num>] Download track for offline playback\n"
                               << " [rm] / [rm <num>] Delete downloaded track from local cache\n"
