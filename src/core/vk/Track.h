@@ -9,6 +9,8 @@ struct Track {
     std::string url;
     int duration = 0; // в секундах
     std::string coverUrl = "";
+    std::string lyrics_id;
+    std::string lyrics;
 
     // Вывод времени (ММ:СС)
     std::string GetFormattedDuration() const {

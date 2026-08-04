@@ -278,6 +278,45 @@ if (cmdType == "dl" || cmdType == "rm") {
                 continue;
             }
 
+            // --- КОМАНДА: Текст песни (ly) ---
+            if (lowerInput == "ly" || lowerInput == "lyrics") {
+                Track currentTrack = m_playlist.GetCurrentTrack();
+
+                if (currentTrack.lyrics_id.empty() && currentTrack.lyrics.empty()) {
+                    std::cout << clearLine << "[Текст] У этого трека нет текста в базе ВК.\n> ";
+                    std::cout.flush();
+                    continue;
+                }
+
+                std::string text = currentTrack.lyrics;
+
+                // Если текста нет в локальном кэше, тянем из сети
+                if (text.empty()) {
+                    std::cout << clearLine << "[Текст] Загрузка текста из сети...\n";
+                    std::cout.flush();
+
+                    text = m_vkClient.GetLyrics(currentTrack.lyrics_id);
+                    if (!text.empty()) {
+                        QMetaObject::invokeMethod(QCoreApplication::instance(), [&, currentTrack, text]() {
+                            m_dbManager.UpdateTrackLyrics(currentTrack.id, text);
+                        }, Qt::QueuedConnection);
+                    }
+                }
+
+                if (!text.empty()) {
+                    std::string s(50, '-');
+                    std::cout << clearLine << "\n" << s << "\n"
+                              << " " << currentTrack.artist << " - " << currentTrack.title << "\n"
+                              << s << "\n\n"
+                              << text << "\n\n"
+                              << s << "\n> ";
+                } else {
+                    std::cout << clearLine << "[Ошибка] Не удалось загрузить текст.\n> ";
+                }
+                std::cout.flush();
+                continue;
+            }
+
             // Базовые односимвольные команды
             char command = lowerInput[0];
             std::string s(50, '*');
@@ -293,6 +332,7 @@ if (cmdType == "dl" || cmdType == "rm") {
                               << " [rs] Reset Session (Back to track 1, standard order)\n"
                               << " [mode <0/1>] 0 - Standard, 1 - Gapless transition\n"
                               << " [search <text>] Search tracks in the loaded playlist\n"
+                              << " [ly] Show lyrics for current track\n"
                               << " [tl] Export tracklist to TXT\n"
                               << " [dl] / [dl <num>] Download track for offline playback\n"
                               << " [rm] / [rm <num>] Delete downloaded track from local cache\n"

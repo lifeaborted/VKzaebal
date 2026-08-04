@@ -29,16 +29,18 @@ bool DatabaseManager::Init() {
 void DatabaseManager::CreateTables() {
     QSqlQuery query;
     query.exec("CREATE TABLE IF NOT EXISTS Settings (key TEXT PRIMARY KEY, value TEXT)");
-    
-    // --- ДОБАВЛЕНО ПОЛЕ cover_url ---
     query.exec("CREATE TABLE IF NOT EXISTS Tracks ("
                "vk_id TEXT PRIMARY KEY, "
                "artist TEXT, "
                "title TEXT, "
                "duration TEXT, "
-               "cover_url TEXT)");
+               "cover_url TEXT, "
+               "lyrics_id TEXT, "
+               "lyrics TEXT)");
 
-    // is_shuffle: 0 - стандартный режим, 1 - шаффл
+    query.exec("ALTER TABLE Tracks ADD COLUMN lyrics_id TEXT");
+    query.exec("ALTER TABLE Tracks ADD COLUMN lyrics TEXT");
+
     query.exec("CREATE TABLE IF NOT EXISTS PlayQueue ("
                "position INTEGER, "
                "vk_id TEXT, "
@@ -111,8 +113,8 @@ void DatabaseManager::SaveTracks(const std::vector<Track>& tracks) {
     QSqlQuery query;
     m_db.transaction();
 
-    // --- ОБНОВЛЕН ЗАПРОС И ДОБАВЛЕН БИНДИНГ ---
-    query.prepare("INSERT OR REPLACE INTO Tracks (vk_id, artist, title, duration, cover_url) VALUES (:id, :artist, :title, :duration, :cover_url)");
+    query.prepare("INSERT OR REPLACE INTO Tracks (vk_id, artist, title, duration, cover_url, lyrics_id, lyrics) "
+                  "VALUES (:id, :artist, :title, :duration, :cover_url, :lyrics_id, :lyrics)");
 
     for (const auto& track : tracks) {
         query.bindValue(":id", QString::fromStdString(track.id));
@@ -120,6 +122,8 @@ void DatabaseManager::SaveTracks(const std::vector<Track>& tracks) {
         query.bindValue(":title", QString::fromStdString(track.title));
         query.bindValue(":duration", QString::fromStdString(track.GetFormattedDuration()));
         query.bindValue(":cover_url", QString::fromStdString(track.coverUrl));
+        query.bindValue(":lyrics_id", QString::fromStdString(track.lyrics_id));
+        query.bindValue(":lyrics", QString::fromStdString(track.lyrics));
         query.exec();
     }
     m_db.commit();
@@ -148,7 +152,7 @@ void DatabaseManager::SaveQueue(const std::vector<Track>& currentQueue, bool isS
 
 std::vector<Track> DatabaseManager::LoadTracks() {
     std::vector<Track> tracks;
-    QSqlQuery query("SELECT vk_id, artist, title, duration, cover_url FROM Tracks");
+    QSqlQuery query("SELECT vk_id, artist, title, duration, cover_url, lyrics_id, lyrics FROM Tracks");
 
     while (query.next()) {
         Track t;
@@ -165,10 +169,22 @@ std::vector<Track> DatabaseManager::LoadTracks() {
         }
 
         t.coverUrl = query.value(4).toString().toStdString();
+        t.lyrics_id = query.value(5).toString().toStdString();
+        t.lyrics = query.value(6).toString().toStdString();
 
         tracks.push_back(t);
     }
 
     Logger::Log(LogLevel::INFO, "DB: Loaded " + std::to_string(tracks.size()) + " tracks from local cache.");
     return tracks;
+}
+
+void DatabaseManager::UpdateTrackLyrics(const std::string& trackId, const std::string& lyrics) {
+    QSqlQuery query;
+    query.prepare("UPDATE Tracks SET lyrics = :lyrics WHERE vk_id = :id");
+    query.bindValue(":lyrics", QString::fromStdString(lyrics));
+    query.bindValue(":id", QString::fromStdString(trackId));
+    if (!query.exec()) {
+        Logger::Log(LogLevel::ERROR, "DB: Failed to update lyrics for track " + trackId);
+    }
 }

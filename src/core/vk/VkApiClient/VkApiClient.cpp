@@ -8,7 +8,8 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QRegularExpression>
-#include  <iostream>
+#include <iostream>
+#include <QEventLoop>
 
 VkApiClient::VkApiClient(QObject* parent)
     : QObject(parent), m_manager(new QNetworkAccessManager(this)) {
@@ -31,7 +32,7 @@ void VkApiClient::ValidateToken(std::function<void(bool)> callback) {
 
     QUrl url("https://api.vk.com/method/users.get");
     QUrlQuery query;
-    query.addQueryItem("v", "5.199");
+    query.addQueryItem("v", QString::fromStdString(m_apiVersion));
     query.addQueryItem("access_token", QString::fromStdString(m_accessToken));
     url.setQuery(query);
 
@@ -74,11 +75,11 @@ void VkApiClient::FetchUserAudio(long long ownerId, int count) {
         query.addQueryItem("owner_id", QString::number(ownerId));
     }
     query.addQueryItem("count", QString::number(count));
-    query.addQueryItem("v", "5.199");
+    query.addQueryItem("v", QString::fromStdString(m_apiVersion));
     query.addQueryItem("access_token", QString::fromStdString(m_accessToken));
 
     url.setQuery(query);
-    QNetworkRequest request(url); //[cite: 4]
+    QNetworkRequest request(url);
 
     request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
@@ -93,7 +94,7 @@ void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(c
     QUrlQuery query;
     query.addQueryItem("audios", QString::fromStdString(trackId));
     query.addQueryItem("access_token", QString::fromStdString(m_accessToken));
-    query.addQueryItem("v", "5.199");
+    query.addQueryItem("v", QString::fromStdString(m_apiVersion));
     url.setQuery(query);
 
     QNetworkRequest request(url);
@@ -104,7 +105,7 @@ void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(c
 
     QObject::connect(reply, &QNetworkReply::finished, this, [this, reply, callback]() {
         std::string freshUrl = "";
-        bool isNetworkError = false; // Флаг ошибки соединения
+        bool isNetworkError = false;
 
         if (reply->error() == QNetworkReply::NoError) {
             QByteArray response_data = reply->readAll();
@@ -129,10 +130,10 @@ void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(c
             }
         } else {
             Logger::Log(LogLevel::ERROR, "Network error while fetching track URL: " + reply->errorString().toStdString());
-            isNetworkError = true; // Записываем, что это именно отвал сети
+            isNetworkError = true;
         }
 
-        callback(freshUrl, isNetworkError); // Передаем оба параметра
+        callback(freshUrl, isNetworkError);
         reply->deleteLater();
     });
 }
@@ -157,7 +158,6 @@ void VkApiClient::OnReplyFinished(QNetworkReply* reply) {
 
     QJsonObject rootObj = jsonDoc.object();
 
-    // Проверка на ошибку от API VK
     if (rootObj.contains("error")) {
         QJsonObject errObj = rootObj["error"].toObject();
         std::string errMsg = errObj["error_msg"].toString().toStdString();
@@ -177,16 +177,35 @@ void VkApiClient::OnReplyFinished(QNetworkReply* reply) {
         int audioId = trackObj["id"].toInt();
         int ownerId = trackObj["owner_id"].toInt();
 
-        // Склеиваем ID в формат "ownerId_audioId"
+        // СТРОГОЕ СООТВЕТСТВИЕ СТРУКТУРЕ Track ИЗ РЕПОЗИТОРИЯ
         t.id = std::to_string(ownerId) + "_" + std::to_string(audioId);
         t.ownerId = std::to_string(ownerId);
-
         t.artist = trackObj["artist"].toString().toStdString();
         t.title = trackObj["title"].toString().toStdString();
         t.url = trackObj["url"].toString().toStdString();
         t.duration = trackObj["duration"].toInt();
+        t.coverUrl = "";
+        t.lyrics_id = trackObj.contains("lyrics_id") ? std::to_string(trackObj["lyrics_id"].toInt()) : "";
+        t.lyrics = "";
 
-        // Если у трека есть валидный ID, добавляем его в плейлист
+        if (trackObj.contains("album") && trackObj["album"].isObject()) {
+            QJsonObject album = trackObj["album"].toObject();
+            if (album.contains("thumb") && album["thumb"].isObject()) {
+                QJsonObject thumb = album["thumb"].toObject();
+                QStringList qualityKeys = {
+                    "photo_1200", "photo_600", "photo_300",
+                    "photo_270", "photo_135", "photo_68", "photo_34"
+                };
+
+                for (const QString& key : qualityKeys) {
+                    if (thumb.contains(key)) {
+                        t.coverUrl = thumb[key].toString().toStdString();
+                        break;
+                    }
+                }
+            }
+        }
+
         if (audioId != 0) {
             tracks.push_back(t);
         }
@@ -197,19 +216,15 @@ void VkApiClient::OnReplyFinished(QNetworkReply* reply) {
 }
 
 void VkApiClient::FetchAllUserAudio(int offset, int count) {
-    //Logger::Log(LogLevel::INFO, "VkApiClient: Fetching tracks chunk (offset: " + std::to_string(offset) + ", count: " + std::to_string(count) + ")...");
-
-    // Формируем запрос
     QUrl url("https://api.vk.com/method/audio.get");
     QUrlQuery query;
     query.addQueryItem("access_token", QString::fromStdString(m_accessToken));
-    query.addQueryItem("v", "5.199");
+    query.addQueryItem("v", QString::fromStdString(m_apiVersion));
     query.addQueryItem("offset", QString::number(offset));
     query.addQueryItem("count", QString::number(count));
     url.setQuery(query);
 
     QNetworkRequest request(url);
-    // User-Agent, чтобы VK не блокировал запросы
     request.setRawHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
     QNetworkReply* reply = m_manager->get(request);
@@ -226,7 +241,6 @@ void VkApiClient::FetchAllUserAudio(int offset, int count) {
         QJsonDocument json = QJsonDocument::fromJson(response_data);
         QJsonObject root = json.object();
 
-        // Проверяем ошибки API
         if (root.contains("error")) {
             QJsonObject errObj = root["error"].toObject();
             int errCode = errObj["error_code"].toInt();
@@ -234,7 +248,6 @@ void VkApiClient::FetchAllUserAudio(int offset, int count) {
 
             Logger::Log(LogLevel::ERROR, "VK API Error [" + std::to_string(errCode) + "]: " + errMsg);
 
-            // Если токен сгорел, инвалиден или сброшен пользователем
             if (errCode == 5) {
                 emit TokenExpired();
             }
@@ -246,50 +259,92 @@ void VkApiClient::FetchAllUserAudio(int offset, int count) {
         QJsonArray items = responseObj["items"].toArray();
 
         for (const QJsonValue& val : items) {
-                    QJsonObject trackJson = val.toObject();
-                    Track track;
-                    track.id = std::to_string(trackJson["owner_id"].toInt()) + "_" + std::to_string(trackJson["id"].toInt());
-                    track.artist = trackJson["artist"].toString().toStdString();
-                    track.title = trackJson["title"].toString().toStdString();
-                    track.duration = trackJson["duration"].toInt();
-                    track.coverUrl = ""; // По умолчанию обложки нет
+            QJsonObject trackJson = val.toObject();
+            Track track;
 
-                    // --- ПУЛЕНЕПРОБИВАЕМЫЙ ПАРСИНГ ОБЛОЖКИ ---
-                    if (trackJson.contains("album") && trackJson["album"].isObject()) {
-                        QJsonObject album = trackJson["album"].toObject();
-                        if (album.contains("thumb") && album["thumb"].isObject()) {
-                            QJsonObject thumb = album["thumb"].toObject();
+            int owner_id = trackJson["owner_id"].toInt();
+            int audio_id = trackJson["id"].toInt();
 
-                            // Идем от самого высокого разрешения к самому низкому
-                            QStringList qualityKeys = {
-                                "photo_1200", "photo_600", "photo_300",
-                                "photo_270", "photo_135", "photo_68", "photo_34"
-                            };
+            // СТРОГОЕ СООТВЕТСТВИЕ СТРУКТУРЕ Track ИЗ РЕПОЗИТОРИЯ
+            track.id = std::to_string(owner_id) + "_" + std::to_string(audio_id);
+            track.ownerId = std::to_string(owner_id);
+            track.artist = trackJson["artist"].toString().toStdString();
+            track.title = trackJson["title"].toString().toStdString();
+            track.url = trackJson["url"].toString().toStdString();
+            track.duration = trackJson["duration"].toInt();
+            track.coverUrl = "";
+            track.lyrics_id = trackJson.contains("lyrics_id") ? std::to_string(trackJson["lyrics_id"].toInt()) : "";
+            track.lyrics = "";
 
-                            for (const QString& key : qualityKeys) {
-                                if (thumb.contains(key)) {
-                                    track.coverUrl = thumb[key].toString().toStdString();
-                                    break; // Нашли самую качественную обложку — выходим из внутреннего цикла
-                                }
-                            }
+            // Парсинг обложек
+            if (trackJson.contains("album") && trackJson["album"].isObject()) {
+                QJsonObject album = trackJson["album"].toObject();
+                if (album.contains("thumb") && album["thumb"].isObject()) {
+                    QJsonObject thumb = album["thumb"].toObject();
+                    QStringList qualityKeys = {
+                        "photo_1200", "photo_600", "photo_300",
+                        "photo_270", "photo_135", "photo_68", "photo_34"
+                    };
+
+                    for (const QString& key : qualityKeys) {
+                        if (thumb.contains(key)) {
+                            track.coverUrl = thumb[key].toString().toStdString();
+                            break;
                         }
                     }
-
-                    // ВАЖНО: Добавляем трек в массив ТОЛЬКО ПОСЛЕ того, как заполнили все поля!
-                    chunkTracks.push_back(track);
                 }
+            }
 
-        // Отправляем скачанный чанк в главное окно
+            if (audio_id != 0) {
+                chunkTracks.push_back(track);
+            }
+        }
+
         if (!chunkTracks.empty()) {
             emit AudioFetched(chunkTracks);
         }
 
-        // пагинация
         if (items.size() == count) {
             FetchAllUserAudio(offset + count, count);
         } else {
-            // Испускаем сигнал, что это был последний чанк
             emit FinishedFetching();
         }
     });
+}
+
+std::string VkApiClient::GetLyrics(const std::string& lyricsId) {
+    if (lyricsId.empty()) return "";
+
+    QUrl url("https://api.vk.com/method/audio.getLyrics");
+    QUrlQuery query;
+    query.addQueryItem("lyrics_id", QString::fromStdString(lyricsId));
+    query.addQueryItem("v", QString::fromStdString(m_apiVersion));
+    query.addQueryItem("access_token", QString::fromStdString(m_accessToken));
+    url.setQuery(query);
+
+    QNetworkRequest request(url);
+    request.setRawHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+
+    QNetworkReply* reply = m_manager->get(request);
+
+    QEventLoop loop;
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    std::string lyricsText = "";
+    if (reply->error() == QNetworkReply::NoError) {
+        QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+        QJsonObject root = doc.object();
+        if (root.contains("response")) {
+            QJsonObject response = root["response"].toObject();
+            if (response.contains("text")) {
+                lyricsText = response["text"].toString().toStdString();
+            }
+        }
+    } else {
+        Logger::Log(LogLevel::ERROR, "VkApiClient: Failed to fetch lyrics. Error: " + reply->errorString().toStdString());
+    }
+
+    reply->deleteLater();
+    return lyricsText;
 }
