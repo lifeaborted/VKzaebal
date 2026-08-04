@@ -14,5 +14,7 @@ public:
     void FetchLyrics(const std::string& artist, const std::string& title, std::function<void(const std::string&)> callback);
 
 private:
+    void SearchLrcLibFallback(const std::string& artist, const std::string& title, std::function<void(const std::string&)> callback);
+
     QNetworkAccessManager* m_manager;
 };

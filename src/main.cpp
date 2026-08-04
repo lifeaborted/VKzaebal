@@ -76,7 +76,7 @@ float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
         if (playlist.HasTracks()) {
             std::cout << "\r                                                                                \r"
                       << "=== ПЛЕЕР ГОТОВ К РАБОТЕ ===\n"
-                      << "Введите 'h' для вывода списка команд\n> ";
+                      << "Введите 'h' для вывода списка команд\n\n> ";
             std::cout.flush();
 
             if (savedTrackIndex >= 0 && savedTrackIndex < playlist.GetAllTracks().size()) {
@@ -116,7 +116,7 @@ float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
         });
     };
 
-    std::atomic<int> playbackGeneration{0};
+std::atomic<int> playbackGeneration{0};
     std::function<void(Track, int)> attemptPlay;
 
     attemptPlay = [&](Track track, int attempt) {
@@ -129,14 +129,13 @@ float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
                     audio.SetPositionSeconds(savedPosition);
                     savedPosition = 0.0;
                 }
-                std::cout << "\r                                                                                \r";
-                std::cout << track.artist << " - " << track.title << " [" << track.GetFormattedDuration() << "]\n> ";
+                std::cout << "\r\033[2K\033[1A\033[2K\r\n> ";
                 std::cout.flush();
                 return;
             }
         } else if (attempt == 1) {
-            std::cout << "\r                                                                                \r";
-            std::cout << "[Загрузка] " << track.artist << " - " << track.title << "...\n> ";
+            std::cout << "\r\033[2K\033[1A\033[2K\r";
+            std::cout << "[Загрузка] " << track.artist << " - " << track.title << "...\n\n> ";
             std::cout.flush();
         }
 
@@ -154,8 +153,7 @@ float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
                     audio.SetPositionSeconds(savedPosition);
                     savedPosition = 0.0;
                 }
-                std::cout << "\r                                                                                \r";
-                std::cout << track.artist << " - " << track.title << " [" << track.GetFormattedDuration() << "]\n> ";
+                std::cout << "\r\033[2K\033[1A\033[2K\r\n> ";
                 std::cout.flush();
                 return;
             }
@@ -196,12 +194,12 @@ float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
             dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
         } else if (hasNewTracks) {
             dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
+            dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
         }
     });
 
     QObject::connect(&vkClient, &VkApiClient::FinishedFetching, [&]() {
         Logger::Log(LogLevel::INFO, "=== ФОНОВАЯ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА ===");
-        dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
     });
 
     // --- 3. ЛОГИКА АВТОРИЗАЦИИ И СТАРТА ---

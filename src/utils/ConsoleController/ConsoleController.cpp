@@ -62,13 +62,22 @@ void ConsoleController::Stop() {
 
 void ConsoleController::InputLoop() {
     std::string rawInput;
-    std::string clearLine = "\r                                                                                \r";
+    std::string clearLine = "\r\033[2K";
 
     while (m_isRunning) {
         std::getline(std::cin, rawInput);
 
+        // Пользователь нажал Enter, терминал съехал на 1 строку.
+        // Идем наверх, стираем старый прогресс бар, спускаемся обратно
+        std::cout << "\033[2A\r\033[2K\033[2B";
+        std::cout.flush();
+
         size_t start = rawInput.find_first_not_of(" \t\r\n");
-        if (start == std::string::npos) continue;
+        if (start == std::string::npos) {
+            std::cout << clearLine << "\n> ";
+            std::cout.flush();
+            continue;
+        }
         std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
 
         if (m_currentState == ConsoleState::WAITING_TOKEN_URL) {
@@ -85,64 +94,63 @@ void ConsoleController::InputLoop() {
         }
 
         if (m_currentState == ConsoleState::COMMAND_MODE) {
-
             std::string lowerInput = input;
             for (char& c : lowerInput) c = std::tolower(c);
 
             std::string cmdType = lowerInput.substr(0, 2);
-if (cmdType == "dl" || cmdType == "rm") {
-    Track targetTrack;
-    bool isValid = false;
+            if (cmdType == "dl" || cmdType == "rm") {
+                Track targetTrack;
+                bool isValid = false;
 
-    if (lowerInput == cmdType) {
-        targetTrack = m_playlist.GetCurrentTrack();
-        isValid = true;
-    } else if (lowerInput.length() > 3 && lowerInput[2] == ' ') {
-        try {
-            int idx = std::stoi(input.substr(3)) - 1; // Используем input для парсинга числа
-            std::vector<Track> queue = m_playlist.GetQueueTracks(); // Получаем текущий порядок (с учетом шаффла)[cite: 2]
-            if (idx >= 0 && idx < queue.size()) {
-                targetTrack = queue[idx];
-                isValid = true;
-            }
-        } catch(...) {}
-    }
-
-    if (isValid && !targetTrack.id.empty()) {
-        QString path = "downloads/" + QString::fromStdString(targetTrack.id) + ".wav";
-
-        if (cmdType == "dl") {
-            if (QFile::exists(path)) {
-                std::cout << clearLine << "[Загрузка] Трек уже скачан.\n> ";
-                std::cout.flush();
-            } else {
-                std::cout << clearLine << "[Загрузка] Получение ссылки для " << targetTrack.title << "...\n> ";
-                std::cout.flush();
-
-                QMetaObject::invokeMethod(QCoreApplication::instance(), [&, targetTrack]() {
-                    m_vkClient.FetchTrackUrl(targetTrack.id, [this, targetTrack](const std::string& url, bool err) {
-                        if (!err && !url.empty()) {
-                            m_downloader.Download(targetTrack, url);
-                        } else {
-                            Logger::Log(LogLevel::ERROR, "Failed to get URL for download.");
+                if (lowerInput == cmdType) {
+                    targetTrack = m_playlist.GetCurrentTrack();
+                    isValid = true;
+                } else if (lowerInput.length() > 3 && lowerInput[2] == ' ') {
+                    try {
+                        int idx = std::stoi(input.substr(3)) - 1;
+                        std::vector<Track> queue = m_playlist.GetQueueTracks();
+                        if (idx >= 0 && idx < queue.size()) {
+                            targetTrack = queue[idx];
+                            isValid = true;
                         }
-                    });
-                }, Qt::QueuedConnection);
+                    } catch(...) {}
+                }
+
+                if (isValid && !targetTrack.id.empty()) {
+                    QString path = "downloads/" + QString::fromStdString(targetTrack.id) + ".wav";
+
+                    if (cmdType == "dl") {
+                        if (QFile::exists(path)) {
+                            std::cout << clearLine << "[Загрузка] Трек уже скачан.\n\n> ";
+                            std::cout.flush();
+                        } else {
+                            std::cout << clearLine << "[Загрузка] Получение ссылки для " << targetTrack.title << "...\n\n> ";
+                            std::cout.flush();
+
+                            QMetaObject::invokeMethod(QCoreApplication::instance(), [&, targetTrack]() {
+                                m_vkClient.FetchTrackUrl(targetTrack.id, [this, targetTrack](const std::string& url, bool err) {
+                                    if (!err && !url.empty()) {
+                                        m_downloader.Download(targetTrack, url);
+                                    } else {
+                                        Logger::Log(LogLevel::ERROR, "Failed to get URL for download.");
+                                    }
+                                });
+                            }, Qt::QueuedConnection);
+                        }
+                    } else if (cmdType == "rm") {
+                        if (QFile::exists(path) || QFile::exists(path)) {
+                            QFile::remove(path);
+                            QFile::remove(path);
+                            std::cout << clearLine << "[Кэш] Удален: " << targetTrack.artist << " - " << targetTrack.title << "\n\n> ";
+                            std::cout.flush();
+                        } else {
+                            std::cout << clearLine << "[Кэш] Трек не был скачан.\n\n> ";
+                            std::cout.flush();
+                        }
+                    }
+                }
+                continue;
             }
-        } else if (cmdType == "rm") {
-            if (QFile::exists(path) || QFile::exists(path)) {
-                QFile::remove(path);
-                QFile::remove(path);
-                std::cout << clearLine << "[Кэш] Удален: " << targetTrack.artist << " - " << targetTrack.title << "\n> ";
-                std::cout.flush();
-            } else {
-                std::cout << clearLine << "[Кэш] Трек не был скачан.\n> ";
-                std::cout.flush();
-            }
-        }
-    }
-    continue;
-}
 
             // --- КОМАНДА: Установка громкости (v <num>) ---
             if (lowerInput.length() >= 2 && lowerInput[0] == 'v' && lowerInput[1] == ' ') {
@@ -155,10 +163,10 @@ if (cmdType == "dl" || cmdType == "rm") {
                         m_audio.SetVolume(vol / 100.0f);
                     }, Qt::QueuedConnection);
 
-                    std::cout << clearLine << "[Громкость] Установлена громкость: " << vol << "%\n> ";
+                    std::cout << clearLine << "[Громкость] Установлена громкость: " << vol << "%\n\n> ";
                     std::cout.flush();
                 } catch (...) {
-                    std::cout << clearLine << "[Ошибка] Неверный формат. Используй: v <число от 0 до 100>\n> ";
+                    std::cout << clearLine << "[Ошибка] Неверный формат. Используй: v <число от 0 до 100>\n\n> ";
                     std::cout.flush();
                 }
                 continue;
@@ -167,7 +175,7 @@ if (cmdType == "dl" || cmdType == "rm") {
             // --- КОМАНДА: Текущая громкость ---
             if (lowerInput == "cv") {
                 int vol = static_cast<int>(m_audio.GetVolume() * 100);
-                std::cout << clearLine << "[Громкость] Текущая громкость: " << vol << "%\n> ";
+                std::cout << clearLine << "[Громкость] Текущая громкость: " << vol << "%\n\n> ";
                 std::cout.flush();
                 continue;
             }
@@ -179,8 +187,10 @@ if (cmdType == "dl" || cmdType == "rm") {
                     QMetaObject::invokeMethod(QCoreApplication::instance(), [&, idx]() {
                         m_playlist.JumpTo(idx - 1);
                     }, Qt::QueuedConnection);
+                    std::cout << clearLine << "[Плейлист] Переход к треку " << idx << "\n\n> ";
+                    std::cout.flush();
                 } catch (...) {
-                    std::cout << clearLine << "[Ошибка] Неверный номер трека.\n> ";
+                    std::cout << clearLine << "[Ошибка] Неверный номер трека.\n\n> ";
                     std::cout.flush();
                 }
                 continue;
@@ -192,7 +202,7 @@ if (cmdType == "dl" || cmdType == "rm") {
                     m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
                 }, Qt::QueuedConnection);
 
-                std::cout << clearLine << "[Инфо] Текущий плейлист успешно экспортирован в playlist.txt\n> ";
+                std::cout << clearLine << "[Инфо] Текущий плейлист успешно экспортирован в playlist.txt\n\n> ";
                 std::cout.flush();
                 continue;
             }
@@ -205,7 +215,7 @@ if (cmdType == "dl" || cmdType == "rm") {
                     m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
                 }, Qt::QueuedConnection);
 
-                std::cout << clearLine << "[Плейлист] Режим: Перемешивание (Shuffle)\n> ";
+                std::cout << clearLine << "[Плейлист] Режим: Перемешивание (Shuffle)\n\n> ";
                 std::cout.flush();
                 continue;
             }
@@ -218,7 +228,7 @@ if (cmdType == "dl" || cmdType == "rm") {
                     m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
                 }, Qt::QueuedConnection);
 
-                std::cout << clearLine << "[Плейлист] Режим: Стандартный порядок\n> ";
+                std::cout << clearLine << "[Плейлист] Режим: Стандартный порядок\n\n> ";
                 std::cout.flush();
                 continue;
             }
@@ -226,13 +236,13 @@ if (cmdType == "dl" || cmdType == "rm") {
             // --- КОМАНДА: Сброс сессии (rs / reset) ---
             if (lowerInput == "rs" || lowerInput == "reset") {
                 QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() {
-                    m_playlist.SetShuffle(false); // Выключаем шаффл
-                    m_playlist.JumpTo(0);         // Прыгаем на самый первый трек
+                    m_playlist.SetShuffle(false);
+                    m_playlist.JumpTo(0);
                     m_dbManager.SaveQueue(m_playlist.GetQueueTracks(), m_playlist.IsShuffle());
                     m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
                 }, Qt::QueuedConnection);
 
-                std::cout << clearLine << "[Сессия] Плейлист сброшен: стандартный порядок, 1-й трек.\n> ";
+                std::cout << clearLine << "[Сессия] Плейлист сброшен: стандартный порядок, 1-й трек.\n\n> ";
                 std::cout.flush();
                 continue;
             }
@@ -250,14 +260,14 @@ if (cmdType == "dl" || cmdType == "rm") {
                             }, Qt::QueuedConnection);
                         }
 
-                        std::cout << clearLine << "[Режим] Установлен " << (isGapless ? "плавный (gapless)" : "стандартный") << " переход.\n> ";
+                        std::cout << clearLine << "[Режим] Установлен " << (isGapless ? "плавный (gapless)" : "стандартный") << " переход.\n\n> ";
                         std::cout.flush();
                     } else {
-                        std::cout << clearLine << "[Ошибка] Используй: mode 0 (стандарт) или mode 1 (плавный)\n> ";
+                        std::cout << clearLine << "[Ошибка] Используй: mode 0 (стандарт) или mode 1 (плавный)\n\n> ";
                         std::cout.flush();
                     }
                 } catch (...) {
-                    std::cout << clearLine << "[Ошибка] Неверный формат. Используй: mode 0 или mode 1\n> ";
+                    std::cout << clearLine << "[Ошибка] Неверный формат. Используй: mode 0 или mode 1\n\n> ";
                     std::cout.flush();
                 }
                 continue;
@@ -293,69 +303,66 @@ if (cmdType == "dl" || cmdType == "rm") {
                     if (matchCount == 0) {
                         std::cout << "Ничего не найдено.\n";
                     }
-                    std::cout << s << "\n> ";
+                    std::cout << s << "\n\n> ";
                     std::cout.flush();
                 } else {
-                    std::cout << clearLine << "[Ошибка] Пустой запрос. Используй: search <название или автор>\n> ";
+                    std::cout << clearLine << "[Ошибка] Пустой запрос. Используй: search <название или автор>\n\n> ";
                     std::cout.flush();
                 }
                 continue;
             }
 
-// --- КОМАНДА: Текст песни (ly) ---
-            if (lowerInput == "ly" || lowerInput == "lyrics") {
+            // --- КОМАНДА: Текст песни (ly / ly new) ---
+            if (lowerInput == "ly" || lowerInput == "lyrics" || lowerInput == "ly new" || lowerInput == "lyrics new") {
+                bool isNewFile = (lowerInput.find("new") != std::string::npos);
                 Track currentTrack = m_playlist.GetCurrentTrack();
 
-                if (currentTrack.lyrics_id.empty() || currentTrack.lyrics_id == "0") {
-                    std::cout << clearLine << "[Текст] У этого трека нет текста в базе ВК.\n> ";
-                    std::cout.flush();
-                    continue;
-                }
-
-                // Внутренняя лямбда для сохранения и открытия файла
-                auto showLyricsFile = [this, currentTrack, clearLine](const std::string& text) {
+                auto showLyricsFile = [this, currentTrack, isNewFile, clearLine](const std::string& text) {
+                    std::cout << "\r\033[2K\033[1A\033[2K\r"; // Зачищаем асинхронные хвосты от Logger
                     if (text.empty()) {
-                        std::cout << clearLine << "[Ошибка] Не удалось загрузить текст (См. logs/app.log).\n> ";
+                        std::cout << "[Ошибка] Не удалось загрузить текст (См. logs/app.log).\n\n> ";
                         std::cout.flush();
                         return;
                     }
 
                     QDir().mkpath("lyrics");
+                    QString filePath;
 
-                    // Вырезаем запрещенные символы для файловой системы Windows
-                    QString safeArtist = QString::fromStdString(currentTrack.artist).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
-                    QString safeTitle = QString::fromStdString(currentTrack.title).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
-                    QString filePath = "lyrics/" + safeArtist + " - " + safeTitle + ".txt";
+                    if (isNewFile) {
+                        QString safeArtist = QString::fromStdString(currentTrack.artist).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+                        QString safeTitle = QString::fromStdString(currentTrack.title).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+                        filePath = "lyrics/" + safeArtist + " - " + safeTitle + ".txt";
+                    } else {
+                        filePath = "lyrics/lyric.txt";
+                    }
 
                     QFile file(filePath);
                     if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-                        // Записываем чистый UTF-8
                         file.write(QByteArray::fromStdString(text));
                         file.close();
                     }
 
-                    // Открываем текстовый файл в системном редакторе (Блокнот)
                     QFileInfo fileInfo(filePath);
                     QDesktopServices::openUrl(QUrl::fromLocalFile(fileInfo.absoluteFilePath()));
 
-                    std::cout << clearLine << "[Текст] Открыт файл: " << filePath.toStdString() << "\n> ";
+                    std::cout << "[Текст] Открыт файл: " << filePath.toStdString() << "\n\n> ";
                     std::cout.flush();
                 };
 
                 std::string text = currentTrack.lyrics;
 
                 if (text.empty()) {
-                    std::cout << clearLine << "[Текст] Загрузка текста из сети...\n> ";
+                    std::cout << clearLine << "[Текст] Поиск текста...\n\n> ";
                     std::cout.flush();
 
                     QMetaObject::invokeMethod(QCoreApplication::instance(), [this, currentTrack, showLyricsFile]() {
-                    m_lyricsFetcher.FetchLyrics(currentTrack.artist, currentTrack.title, [this, currentTrack, showLyricsFile](const std::string& fetchedText) {
-                        if (!fetchedText.empty()) {
-                            m_dbManager.UpdateTrackLyrics(currentTrack.id, fetchedText);
-                        }
-                        showLyricsFile(fetchedText);
-                    });
-                }, Qt::QueuedConnection);
+                        m_lyricsFetcher.FetchLyrics(currentTrack.artist, currentTrack.title, [this, currentTrack, showLyricsFile](const std::string& fetchedText) {
+                            if (!fetchedText.empty()) {
+                                m_dbManager.UpdateTrackLyrics(currentTrack.id, fetchedText);
+                            }
+                            showLyricsFile(fetchedText);
+                        });
+                    }, Qt::QueuedConnection);
                 } else {
                     showLyricsFile(text);
                 }
@@ -398,7 +405,7 @@ if (cmdType == "dl" || cmdType == "rm") {
                         std::cout << clearLine << "[Инфо] Артист: " << current.artist << "\n"
                                   << "[Инфо] Название: " << current.title << "\n"
                                   << "[Инфо] ID: " << current.id << "\n"
-                                  << "[Инфо] Обложка: " << (current.coverUrl.empty() ? "НЕТ ОБЛОЖКИ" : current.coverUrl) << "\n> ";
+                                  << "[Инфо] Обложка: " << (current.coverUrl.empty() ? "НЕТ ОБЛОЖКИ" : current.coverUrl) << "\n\n> ";
                         std::cout.flush();
                     }, Qt::QueuedConnection);
                     break;
@@ -452,17 +459,25 @@ void ConsoleController::UiLoop() {
                     bar += "]";
 
                     Track currentTrack = m_playlist.GetCurrentTrack();
-                    std::string trackName = currentTrack.artist + " - " + currentTrack.title + " [" + currentTrack.GetFormattedDuration() + "]";
+                    std::vector<Track> queue = m_playlist.GetQueueTracks();
+                    int trackIndex = 0;
 
-                    // \033[s  - Сохранить текущую позицию курсора (где юзер вводит текст)
-                    // \033[2A - Подняться на 2 строки вверх
-                    // \r\033[2K - Очистить строку и напечатать название
-                    // \033[u  - Вернуть курсор на сохраненную позицию!
+                    for (size_t i = 0; i < queue.size(); ++i) {
+                        if (queue[i].id == currentTrack.id) {
+                            trackIndex = i + 1;
+                            break;
+                        }
+                    }
 
+                    std::string trackName = std::to_string(trackIndex) + ". " + currentTrack.artist + " - " + currentTrack.title;
+
+                    // \033[s   - Сохранить позицию курсора
+                    // \033[1A  - Подняться на 1 строку вверх (над строкой ввода "> ")
+                    // \r\033[2K - Очистить строку
+                    // \033[u   - Вернуть курсор обратно к вводу
                     printf("\033[s"
-                           "\033[2A"
-                           "\r\033[2K%s\n"
-                           "\r\033[2K%02d:%02d / %02d:%02d %s %d%%"
+                           "\033[1A"
+                           "\r\033[2K%s | %02d:%02d / %02d:%02d %s %d%%"
                            "\033[u",
                            trackName.c_str(), curMin, curSec, totMin, totSec, bar.c_str(), percent);
                     fflush(stdout);
