@@ -4,6 +4,7 @@
 #include <QVariant>
 #include <QFile>
 #include <QTextStream>
+#include <QStringList>
 
 DatabaseManager::DatabaseManager() {
     m_db = QSqlDatabase::addDatabase("QSQLITE");
@@ -143,4 +144,31 @@ void DatabaseManager::SaveQueue(const std::vector<Track>& currentQueue, bool isS
         query.exec();
     }
     m_db.commit();
+}
+
+std::vector<Track> DatabaseManager::LoadTracks() {
+    std::vector<Track> tracks;
+    QSqlQuery query("SELECT vk_id, artist, title, duration, cover_url FROM Tracks");
+
+    while (query.next()) {
+        Track t;
+        t.id = query.value(0).toString().toStdString();
+        t.artist = query.value(1).toString().toStdString();
+        t.title = query.value(2).toString().toStdString();
+
+        QString durationStr = query.value(3).toString();
+        QStringList parts = durationStr.split(':');
+        if (parts.size() == 2) {
+            t.duration = parts[0].toInt() * 60 + parts[1].toInt();
+        } else {
+            t.duration = 0;
+        }
+
+        t.coverUrl = query.value(4).toString().toStdString();
+
+        tracks.push_back(t);
+    }
+
+    Logger::Log(LogLevel::INFO, "DB: Loaded " + std::to_string(tracks.size()) + " tracks from local cache.");
+    return tracks;
 }

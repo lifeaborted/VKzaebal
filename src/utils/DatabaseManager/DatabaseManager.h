@@ -23,6 +23,7 @@ public:
     
     // Вывод в TXT прямо из БД
     void ExportQueueToTxt(const QString& filename, bool isShuffle) const;
+    std::vector<Track> LoadTracks();
 
 private:
     QSqlDatabase m_db;
