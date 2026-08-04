@@ -22,6 +22,7 @@ public:
     void JumpTo(int index);
 
     void ToggleShuffle();
+    void SetShuffle(bool enable);
     void ToggleRepeat();
 
     std::function<void(const Track&)> OnTrackRequested;

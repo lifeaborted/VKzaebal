@@ -35,11 +35,14 @@ public:
 private:
     HSTREAM m_activeStream = 0;   // Текущий играющий трек
     HSTREAM m_fadingStream = 0;   // Трек, который плавно затухает
+    HSYNC m_syncCrossfade = 0;
 
     HPLUGIN m_hlsPlugin = 0;
     HSYNC m_syncEnd = 0;
     HSYNC m_syncNearEnd = 0;
     float m_volume = 1.0f;
+
+    int m_crossfadeDurationMs = 3000;
 
     static void CALLBACK BassTrackEndCallback(HSYNC handle, DWORD channel, DWORD data, void* user);
     static void CALLBACK BassTrackNearEndCallback(HSYNC handle, DWORD channel, DWORD data, void* user);

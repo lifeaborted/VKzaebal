@@ -131,6 +131,14 @@ void PlaylistManager::ToggleShuffle() {
     Logger::Log(LogLevel::INFO, std::string("Shuffle is now ") + (m_isShuffle ? "ON" : "OFF"));
 }
 
+void PlaylistManager::SetShuffle(bool enable) {
+    if (!enable && !m_isShuffle) return;
+
+    m_isShuffle = enable;
+    RebuildQueue(true);
+    Logger::Log(LogLevel::INFO, std::string("Shuffle is now ") + (m_isShuffle ? "ON (Reshuffled)" : "OFF"));
+}
+
 void PlaylistManager::ToggleRepeat() {
     if (m_repeatMode == RepeatMode::All) {
         m_repeatMode = RepeatMode::One;

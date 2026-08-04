@@ -107,6 +107,43 @@ void ConsoleController::InputLoop() {
                 continue;
             }
 
+            // --- КОМАНДА: Экспорт плейлиста (tl) ---
+            if (lowerInput == "tl") {
+                QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() {
+                    m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
+                }, Qt::QueuedConnection);
+
+                std::cout << clearLine << "[Инфо] Текущий плейлист успешно экспортирован в playlist.txt\n> ";
+                std::cout.flush();
+                continue;
+            }
+
+            // --- КОМАНДА: Перемешивание (sh) ---
+            if (lowerInput == "sh") {
+                QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() {
+                    m_playlist.SetShuffle(true);
+                    m_dbManager.SaveQueue(m_playlist.GetQueueTracks(), m_playlist.IsShuffle());
+                    m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
+                }, Qt::QueuedConnection);
+
+                std::cout << clearLine << "[Плейлист] Режим: Перемешивание (Shuffle)\n> ";
+                std::cout.flush();
+                continue;
+            }
+
+            // --- КОМАНДА: Стандартный порядок (st) ---
+            if (lowerInput == "st") {
+                QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() {
+                    m_playlist.SetShuffle(false);
+                    m_dbManager.SaveQueue(m_playlist.GetQueueTracks(), m_playlist.IsShuffle());
+                    m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
+                }, Qt::QueuedConnection);
+
+                std::cout << clearLine << "[Плейлист] Режим: Стандартный порядок\n> ";
+                std::cout.flush();
+                continue;
+            }
+
             // --- КОМАНДА: Смена режима перехода (mode <0/1>) ---
             if (lowerInput.length() >= 6 && lowerInput.substr(0, 5) == "mode ") {
                 try {
@@ -134,7 +171,7 @@ void ConsoleController::InputLoop() {
             }
 
             // Базовые односимвольные команды
-            char command = lowerInput[0];
+char command = lowerInput[0];
             std::string s(50, '*');
             switch (command) {
                 case 'h':
@@ -143,7 +180,7 @@ void ConsoleController::InputLoop() {
                               <<s<<"\n"
                               << " [P] Play/Pause\n [N] Next\n [B] Prev\n"
                               << " [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n"
-                              << " [S] Shuffle\n [R] Repeat Mode\n"
+                              << " [st] Standard Order\n [sh] Shuffle (Reshuffles if already on)\n [R] Repeat Mode\n"
                               << " [J <num>] Jump to track\n [cv] Current volume\n [Q] Quit\n"
                               << " [mode <0/1>] 0 - Standard, 1 - Gapless transition\n"
                               << " [tl] Export tracklist to TXT\n"
@@ -151,26 +188,11 @@ void ConsoleController::InputLoop() {
                               <<"\n\n> ";
                     std::cout.flush();
                     break;
-                case 'tl':
-                    QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() {
-                    m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
-                }, Qt::QueuedConnection);
-
-                    std::cout << clearLine << "[Инфо] Текущий плейлист успешно экспортирован в playlist.txt\n> ";
-                    std::cout.flush();
-                    continue;
                 case 'p': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { if (m_audio.IsPlaying()) m_audio.Pause(); else m_audio.Resume(); }, Qt::QueuedConnection); break;
                 case 'n': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { m_playlist.Next(); }, Qt::QueuedConnection); break;
                 case 'b': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { m_playlist.Previous(); }, Qt::QueuedConnection); break;
                 case '+': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { m_audio.SetVolume(m_audio.GetVolume() + 0.1f); }, Qt::QueuedConnection); break;
                 case '-': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { m_audio.SetVolume(m_audio.GetVolume() - 0.1f); }, Qt::QueuedConnection); break;
-                case 's':
-                    QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() {
-                        m_playlist.ToggleShuffle();
-                        m_dbManager.SaveQueue(m_playlist.GetQueueTracks(), m_playlist.IsShuffle());
-                        m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
-                    }, Qt::QueuedConnection);
-                    break;
                 case 'r': QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() { m_playlist.ToggleRepeat(); }, Qt::QueuedConnection); break;
                 case 'q':
                     emit QuitRequested();

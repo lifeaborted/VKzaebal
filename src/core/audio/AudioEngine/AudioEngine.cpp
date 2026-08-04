@@ -26,6 +26,7 @@ bool AudioEngine::Init() {
     QSettings settings("config.ini", QSettings::IniFormat);
     int netTimeout = settings.value("Audio/NetTimeout", 5000).toInt();
     int netReadTimeout = settings.value("Audio/NetReadTimeout", 5000).toInt();
+    m_crossfadeDurationMs = settings.value("Audio/CrossfadeDurationMs", 3000).toInt();
 
     BASS_SetConfig(BASS_CONFIG_NET_TIMEOUT, netTimeout);
     BASS_SetConfig(BASS_CONFIG_NET_READTIMEOUT, netReadTimeout);
@@ -62,6 +63,7 @@ bool AudioEngine::PlayStream(const std::string& url, int durationSec, bool cross
     if (m_activeStream != 0) {
         if (m_syncEnd != 0) BASS_ChannelRemoveSync(m_activeStream, m_syncEnd);
         if (m_syncNearEnd != 0) BASS_ChannelRemoveSync(m_activeStream, m_syncNearEnd);
+        if (m_syncCrossfade != 0) BASS_ChannelRemoveSync(m_activeStream, m_syncCrossfade);
 
         if (crossfade) {
             // Если предыдущий трек еще затухает, убиваем его
@@ -69,8 +71,8 @@ bool AudioEngine::PlayStream(const std::string& url, int durationSec, bool cross
 
             m_fadingStream = m_activeStream;
 
-            // Плавно глушим старый трек за 3000 мс
-            BASS_ChannelSlideAttribute(m_fadingStream, BASS_ATTRIB_VOL, -1.0f, 3000);
+            // Плавно глушим старый трек за m_crossfadeDurationMs мс
+            BASS_ChannelSlideAttribute(m_fadingStream, BASS_ATTRIB_VOL, -1.0f, m_crossfadeDurationMs);
 
             // Ставим хук: как только громкость упадет до 0, вычищаем трек из памяти
             BASS_ChannelSetSync(m_fadingStream, BASS_SYNC_SLIDE | BASS_SYNC_ONETIME, 0,
@@ -90,9 +92,9 @@ bool AudioEngine::PlayStream(const std::string& url, int durationSec, bool cross
     m_activeStream = BASS_StreamCreateURL(url.c_str(), 0, 0, nullptr, nullptr);
     if (m_activeStream != 0) {
         if (crossfade) {
-            // Новый трек стартует с 0 громкости и нарастает за 3000 мс
+            // Новый трек стартует с 0 громкости и нарастает
             BASS_ChannelSetAttribute(m_activeStream, BASS_ATTRIB_VOL, 0.0f);
-            BASS_ChannelSlideAttribute(m_activeStream, BASS_ATTRIB_VOL, m_volume, 3000);
+            BASS_ChannelSlideAttribute(m_activeStream, BASS_ATTRIB_VOL, m_volume, m_crossfadeDurationMs);
         } else {
             BASS_ChannelSetAttribute(m_activeStream, BASS_ATTRIB_VOL, m_volume);
         }
@@ -101,6 +103,13 @@ bool AudioEngine::PlayStream(const std::string& url, int durationSec, bool cross
 
         QWORD length = BASS_ChannelGetLength(m_activeStream, BASS_POS_BYTE);
         double actualDuration = (length != (QWORD)-1) ? BASS_ChannelBytes2Seconds(m_activeStream, length) : static_cast<double>(durationSec);
+
+        double crossfadeSec = m_crossfadeDurationMs / 1000.0;
+
+        if (crossfade && actualDuration > crossfadeSec) {
+            QWORD crossfadePos = BASS_ChannelSeconds2Bytes(m_activeStream, actualDuration - crossfadeSec);
+            m_syncCrossfade = BASS_ChannelSetSync(m_activeStream, BASS_SYNC_POS | BASS_SYNC_ONETIME, crossfadePos, &AudioEngine::BassTrackEndCallback, this);
+        }
 
         // Хук предзагрузки за 10 сек до конца
         if (actualDuration > 10.0) {
