@@ -29,11 +29,13 @@ void DatabaseManager::CreateTables() {
     QSqlQuery query;
     query.exec("CREATE TABLE IF NOT EXISTS Settings (key TEXT PRIMARY KEY, value TEXT)");
     
+    // --- ДОБАВЛЕНО ПОЛЕ cover_url ---
     query.exec("CREATE TABLE IF NOT EXISTS Tracks ("
                "vk_id TEXT PRIMARY KEY, "
                "artist TEXT, "
                "title TEXT, "
-               "duration TEXT)");
+               "duration TEXT, "
+               "cover_url TEXT)");
 
     // is_shuffle: 0 - стандартный режим, 1 - шаффл
     query.exec("CREATE TABLE IF NOT EXISTS PlayQueue ("
@@ -107,13 +109,16 @@ void DatabaseManager::ExportQueueToTxt(const QString& filename, bool isShuffle) 
 void DatabaseManager::SaveTracks(const std::vector<Track>& tracks) {
     QSqlQuery query;
     m_db.transaction();
-    query.prepare("INSERT OR REPLACE INTO Tracks (vk_id, artist, title, duration) VALUES (:id, :artist, :title, :duration)");
+
+    // --- ОБНОВЛЕН ЗАПРОС И ДОБАВЛЕН БИНДИНГ ---
+    query.prepare("INSERT OR REPLACE INTO Tracks (vk_id, artist, title, duration, cover_url) VALUES (:id, :artist, :title, :duration, :cover_url)");
 
     for (const auto& track : tracks) {
         query.bindValue(":id", QString::fromStdString(track.id));
         query.bindValue(":artist", QString::fromStdString(track.artist));
         query.bindValue(":title", QString::fromStdString(track.title));
         query.bindValue(":duration", QString::fromStdString(track.GetFormattedDuration()));
+        query.bindValue(":cover_url", QString::fromStdString(track.coverUrl));
         query.exec();
     }
     m_db.commit();

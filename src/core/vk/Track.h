@@ -8,6 +8,7 @@ struct Track {
     std::string title;
     std::string url;
     int duration = 0; // в секундах
+    std::string coverUrl = "";
 
     // Вывод времени (ММ:СС)
     std::string GetFormattedDuration() const {

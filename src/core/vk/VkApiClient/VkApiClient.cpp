@@ -246,14 +246,38 @@ void VkApiClient::FetchAllUserAudio(int offset, int count) {
         QJsonArray items = responseObj["items"].toArray();
 
         for (const QJsonValue& val : items) {
-            QJsonObject trackJson = val.toObject();
-            Track track;
-            track.id = std::to_string(trackJson["owner_id"].toInt()) + "_" + std::to_string(trackJson["id"].toInt());
-            track.artist = trackJson["artist"].toString().toStdString();
-            track.title = trackJson["title"].toString().toStdString();
-            track.duration = trackJson["duration"].toInt();
-            chunkTracks.push_back(track);
-        }
+                    QJsonObject trackJson = val.toObject();
+                    Track track;
+                    track.id = std::to_string(trackJson["owner_id"].toInt()) + "_" + std::to_string(trackJson["id"].toInt());
+                    track.artist = trackJson["artist"].toString().toStdString();
+                    track.title = trackJson["title"].toString().toStdString();
+                    track.duration = trackJson["duration"].toInt();
+                    track.coverUrl = ""; // По умолчанию обложки нет
+
+                    // --- ПУЛЕНЕПРОБИВАЕМЫЙ ПАРСИНГ ОБЛОЖКИ ---
+                    if (trackJson.contains("album") && trackJson["album"].isObject()) {
+                        QJsonObject album = trackJson["album"].toObject();
+                        if (album.contains("thumb") && album["thumb"].isObject()) {
+                            QJsonObject thumb = album["thumb"].toObject();
+
+                            // Идем от самого высокого разрешения к самому низкому
+                            QStringList qualityKeys = {
+                                "photo_1200", "photo_600", "photo_300",
+                                "photo_270", "photo_135", "photo_68", "photo_34"
+                            };
+
+                            for (const QString& key : qualityKeys) {
+                                if (thumb.contains(key)) {
+                                    track.coverUrl = thumb[key].toString().toStdString();
+                                    break; // Нашли самую качественную обложку — выходим из внутреннего цикла
+                                }
+                            }
+                        }
+                    }
+
+                    // ВАЖНО: Добавляем трек в массив ТОЛЬКО ПОСЛЕ того, как заполнили все поля!
+                    chunkTracks.push_back(track);
+                }
 
         // Отправляем скачанный чанк в главное окно
         if (!chunkTracks.empty()) {
