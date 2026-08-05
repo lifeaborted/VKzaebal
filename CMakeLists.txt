@@ -41,6 +41,7 @@ set(PROJECT_SOURCES
         src/core/network/NetworkStreamer.h
         src/core/lyrics/LyricsFetcher.cpp
         src/core/lyrics/LyricsFetcher.h
+        src/core/audio/AudioEngine/IAudioEngine.h
 )
 
 # Создаем исполняемый файл

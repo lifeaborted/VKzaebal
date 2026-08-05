@@ -11,14 +11,14 @@
 #include <QMetaObject>
 
 #include "ConsoleController.h"
-#include "core/audio/AudioEngine/AudioEngine.h"
+#include "core/audio/AudioEngine/IAudioEngine.h"
 #include "core/playlist/PlaylistManager.h"
 #include "core/vk/VkAuthManager/VkAuthManager.h"
 #include "utils/DatabaseManager/DatabaseManager.h"
 #include "utils/logger/logger.h"
 
 ConsoleController::ConsoleController(
-    AudioEngine& audio,
+    IAudioEngine& audio,
     PlaylistManager& playlist,
     VkAuthManager& authManager,
     DatabaseManager& dbManager,

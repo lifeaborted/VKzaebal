@@ -1,7 +1,5 @@
 #pragma once
-#include <string>
-#include <functional>
-#include <vector>
+#include "IAudioEngine.h"
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -13,30 +11,26 @@
 #undef ERROR
 #endif
 
-class AudioEngine {
+class AudioEngine : public IAudioEngine {
 public:
     AudioEngine();
-    ~AudioEngine();
+    ~AudioEngine() override;
 
-    bool Init();
-    // Добавили флаг crossfade
-    bool PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId = "");
-    void Pause();
-    void Resume();
-    void SetVolume(float volume);
-    void SetPositionSeconds(double pos);
-    float GetVolume() const;
-    bool IsPlaying() const;
-    double GetPositionSeconds() const;
-    double GetLengthSeconds() const;
-
-    std::function<void()> OnTrackNearEnd;
-    std::function<void()> OnTrackFinished;
-    std::vector<float> GetSpectrumData() const;
+    bool Init() override;
+    bool PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId = "") override;
+    void Pause() override;
+    void Resume() override;
+    void SetVolume(float volume) override;
+    void SetPositionSeconds(double pos) override;
+    float GetVolume() const override;
+    bool IsPlaying() const override;
+    double GetPositionSeconds() const override;
+    double GetLengthSeconds() const override;
+    std::vector<float> GetSpectrumData() const override;
 
 private:
-    HSTREAM m_activeStream = 0;   // Текущий играющий трек
-    HSTREAM m_fadingStream = 0;   // Трек, который плавно затухает
+    HSTREAM m_activeStream = 0;
+    HSTREAM m_fadingStream = 0;
     HSYNC m_syncCrossfade = 0;
 
     HPLUGIN m_hlsPlugin = 0;

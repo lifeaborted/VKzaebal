@@ -12,6 +12,7 @@
 #endif
 
 #include "core/audio/AudioEngine/AudioEngine.h"
+#include "core/audio/AudioEngine/IAudioEngine.h"
 #include "core/playlist/PlaylistManager.h"
 #include "core/vk/VkApiClient/VkApiClient.h"
 #include "core/vk/VkAuthManager/VkAuthManager.h"

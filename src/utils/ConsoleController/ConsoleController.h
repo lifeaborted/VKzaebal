@@ -8,7 +8,7 @@
 #include "utils/TrackDownloader/TrackDownloader.h"
 #include "core/lyrics/LyricsFetcher.h"
 
-class AudioEngine;
+class IAudioEngine;
 class PlaylistManager;
 class VkAuthManager;
 class DatabaseManager;
@@ -22,7 +22,7 @@ class ConsoleController : public QObject {
     Q_OBJECT
 public:
     ConsoleController(
-        AudioEngine& audio,
+        IAudioEngine& audio,
         PlaylistManager& playlist,
         VkAuthManager& authManager,
         DatabaseManager& dbManager,
@@ -47,7 +47,7 @@ private:
     void InputLoop();
     void UiLoop();
 
-    AudioEngine& m_audio;
+    IAudioEngine& m_audio;
     PlaylistManager& m_playlist;
     VkAuthManager& m_authManager;
     DatabaseManager& m_dbManager;
