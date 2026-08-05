@@ -10,8 +10,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-# Указываем путь к Qt
-set(CMAKE_PREFIX_PATH "C:/Qt/6.11.1/msvc2022_64")
+# set(CMAKE_PREFIX_PATH "C:/Qt/6.11.1/msvc2022_64")
 
 # Ищем базовые модули Qt (Gui нужен для QDesktopServices)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Sql)
@@ -60,6 +59,20 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         Qt6::Network
         Qt6::Widgets
         Qt6::Sql
-        ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/bass.lib
-        ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/basshls.lib
 )
+
+# --- Платформозависимая линковка BASS ---
+
+if (WIN32)
+    # Для Windows ищем .lib файлы
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/bass.lib
+            ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/basshls.lib
+    )
+elseif (UNIX AND NOT APPLE)
+    # Для Linux ищем .so файлы (Shared Objects)
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/libbass.so
+            ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/libbasshls.so
+    )
+endif()
