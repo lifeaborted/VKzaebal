@@ -16,10 +16,10 @@ void Logger::Init() {
     if (!fs::exists("logs")) {
         fs::create_directory("logs");
     }
-    
+
     // Открываем файл
     logFile.open("logs/app.log", std::ios::out | std::ios::trunc);
-    
+
     if (!logFile.is_open()) {
         std::cerr << "[ERROR] Failed to open log file at logs/app.log!" << std::endl;
     }
@@ -29,13 +29,12 @@ void Logger::Log(LogLevel level, const std::string& message) {
     // Получаем текущее время
     auto now = std::chrono::system_clock::now();
     auto in_time_t = std::chrono::system_clock::to_time_t(now);
-    
+
     // Форматируем время в строку [HH:MM:SS]
     std::stringstream ssTime;
     ssTime << std::put_time(std::localtime(&in_time_t), "%H:%M:%S");
     std::string timeStr = "[" + ssTime.str() + "] ";
 
-    // Формируем тег уровня логирования
     std::string levelStr;
     switch (level) {
         case LogLevel::INFO:    levelStr = "[INFO] "; break;
@@ -43,22 +42,21 @@ void Logger::Log(LogLevel level, const std::string& message) {
         case LogLevel::ERROR:   levelStr = "[ERROR] "; break;
     }
 
-    // Собираем итоговое сообщение
     std::string fullMessage = timeStr + levelStr + message;
 
-    std::string clearLine = "\r                                                                                \r";
+    std::string clearUi = "\r\033[2K\033[1A\r\033[2K";
 
     if (level == LogLevel::ERROR) {
-        std::cerr << clearLine << fullMessage << "\n> ";
+        std::cerr << clearUi << fullMessage << "\n\n> ";
         std::cerr.flush();
     } else {
-        std::cout << clearLine << fullMessage << "\n> ";
+        std::cout << clearUi << fullMessage << "\n\n> ";
         std::cout.flush();
     }
 
     if (logFile.is_open()) {
         logFile << fullMessage << std::endl;
-        logFile.flush(); 
+        logFile.flush();
     }
 }
 

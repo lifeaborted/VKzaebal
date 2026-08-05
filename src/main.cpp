@@ -116,7 +116,7 @@ float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
         });
     };
 
-std::atomic<int> playbackGeneration{0};
+    std::atomic<int> playbackGeneration{0};
     std::function<void(Track, int)> attemptPlay;
 
     attemptPlay = [&](Track track, int attempt) {
@@ -129,12 +129,14 @@ std::atomic<int> playbackGeneration{0};
                     audio.SetPositionSeconds(savedPosition);
                     savedPosition = 0.0;
                 }
-                std::cout << "\r\033[2K\033[1A\033[2K\r\n> ";
+                // Асинхронное переключение: стираем Prompt (текущую), стираем PB (1 вверх)
+                std::cout << "\r\033[2K\033[1A\r\033[2K\n> ";
                 std::cout.flush();
                 return;
             }
         } else if (attempt == 1) {
-            std::cout << "\r\033[2K\033[1A\033[2K\r";
+            // Очищаем текущий UI и выводим загрузку
+            std::cout << "\r\033[2K\033[1A\r\033[2K";
             std::cout << "[Загрузка] " << track.artist << " - " << track.title << "...\n\n> ";
             std::cout.flush();
         }
@@ -153,7 +155,9 @@ std::atomic<int> playbackGeneration{0};
                     audio.SetPositionSeconds(savedPosition);
                     savedPosition = 0.0;
                 }
-                std::cout << "\r\033[2K\033[1A\033[2K\r\n> ";
+                // Стираем Prompt (текущую), стираем PB (1 вверх), стираем надпись Загрузка (еще 1 вверх)
+                // Спускаемся на 1 строку (\n) и рисуем >, полностью поглощая след от [Загрузка]
+                std::cout << "\r\033[2K\033[1A\r\033[2K\033[1A\r\033[2K\n> ";
                 std::cout.flush();
                 return;
             }
