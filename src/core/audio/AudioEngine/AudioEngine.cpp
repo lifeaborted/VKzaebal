@@ -198,3 +198,11 @@ double AudioEngine::GetLengthSeconds() const {
     QWORD len = BASS_ChannelGetLength(m_activeStream, BASS_POS_BYTE);
     return (len == (QWORD)-1) ? 0.0 : BASS_ChannelBytes2Seconds(m_activeStream, len);
 }
+
+std::vector<float> AudioEngine::GetSpectrumData() const {
+    std::vector<float> fft(128, 0.0f);
+    if (m_activeStream != 0 && BASS_ChannelIsActive(m_activeStream) == BASS_ACTIVE_PLAYING) {
+        BASS_ChannelGetData(m_activeStream, fft.data(), BASS_DATA_FFT256);
+    }
+    return fft;
+}

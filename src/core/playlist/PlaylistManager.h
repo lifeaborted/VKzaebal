@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <functional>
+#include <mutex>
 #include "core/vk/Track.h"
 
 enum class RepeatMode { None, All, One };
@@ -11,10 +12,10 @@ public:
 
     void AddTrack(const Track& track);
     bool HasTracks() const;
-    bool IsShuffle() const { return m_isShuffle; }
+    bool IsShuffle() const;
 
     Track GetCurrentTrack() const;
-    int GetCurrentAbsoluteIndex() const { return m_tracks.empty() ? -1 : m_playQueue[m_queueIndex]; }
+    int GetCurrentAbsoluteIndex() const;
     Track PeekNextTrack() const;
 
     void Next();
@@ -27,15 +28,17 @@ public:
 
     std::function<void(const Track&)> OnTrackRequested;
     std::vector<Track> GetQueueTracks() const;
-    std::vector<Track> GetAllTracks() const { return m_tracks; }
+    std::vector<Track> GetAllTracks() const;
 
 private:
     std::vector<Track> m_tracks;
-    std::vector<int> m_playQueue; // Хранит индексы треков
-    int m_queueIndex = 0;         // Текущая позиция в очереди
+    std::vector<int> m_playQueue;
+    int m_queueIndex = 0;
 
     bool m_isShuffle = false;
     RepeatMode m_repeatMode = RepeatMode::All;
+
+    mutable std::mutex m_mutex; // Защита от одновременного доступа потоков
 
     void RebuildQueue(bool keepCurrentTrack);
 };

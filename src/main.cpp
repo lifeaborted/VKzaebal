@@ -55,40 +55,60 @@ int main(int argc, char *argv[]) {
     Track preloadedTrack;
     std::string cachedNextUrl = "";
 
-float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
+    float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
     int savedTrackIndex = settings.value("Session/CurrentTrackIndex", -1).toInt();
     double savedPosition = settings.value("Session/Position", 0.0).toDouble();
 
     audio.SetVolume(savedVolume);
 
-    // --- ЗАГРУЗКА ИЗ КЭША ---
     std::vector<Track> cachedTracks = dbManager.LoadTracks();
-    for (const auto& t : cachedTracks) {
-        playlist.AddTrack(t);
-    }
-    bool isCacheLoaded = !cachedTracks.empty();
     bool isPlaybackStarted = false;
 
-    auto startPlayback = [&]() {
+    ConsoleController console(audio, playlist, authManager, dbManager, vkClient, downloader, lyricsFetcher);
+    QObject::connect(&console, &ConsoleController::QuitRequested, &app, &QCoreApplication::quit);
+
+    // Умная инициализация плейлиста
+    auto initPlaylistAndStart = [&](bool isOnline) {
         if (isPlaybackStarted) return;
-        isPlaybackStarted = true;
+
+        if (!playlist.HasTracks()) {
+            if (isOnline) {
+                // в онлайнк загружаем всё
+                for (const auto& t : cachedTracks) playlist.AddTrack(t);
+            } else {
+                // в оффлайне только локальные файлы
+                for (const auto& t : cachedTracks) {
+                    QString path = "downloads/" + QString::fromStdString(t.id) + ".wav";
+                    if (QFile::exists(path)) {
+                        playlist.AddTrack(t);
+                    }
+                }
+            }
+        }
 
         if (playlist.HasTracks()) {
-            std::cout << "\r                                                                                \r"
+            std::cout << "\r\033[2K"
                       << "=== ПЛЕЕР ГОТОВ К РАБОТЕ ===\n"
+                      << (isOnline ? "" : "[ОФФЛАЙН] В плейлист загружены только скачанные треки.\n")
                       << "Введите 'h' для вывода списка команд\n\n> ";
             std::cout.flush();
+
+            isPlaybackStarted = true;
 
             if (savedTrackIndex >= 0 && savedTrackIndex < playlist.GetAllTracks().size()) {
                 playlist.JumpTo(savedTrackIndex);
             } else {
                 playlist.OnTrackRequested(playlist.GetCurrentTrack());
             }
+        } else {
+            std::cout << "\n[Оффлайн] Нет скачанных треков. Плеер пуст.\n> ";
+            std::cout.flush();
         }
     };
 
-    ConsoleController console(audio, playlist, authManager, dbManager, vkClient, downloader, lyricsFetcher);
-    QObject::connect(&console, &ConsoleController::QuitRequested, &app, &QCoreApplication::quit);
+    QObject::connect(&console, &ConsoleController::OfflineModeRequested, [&]() {
+        initPlaylistAndStart(false); // Запуск строго в оффлайн режиме
+    });
 
     console.OnGaplessModeChanged = [&](bool isCrossfade) {
         crossfadeEnabled = isCrossfade;
@@ -102,7 +122,6 @@ float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
         playlist.Next();
     };
 
-    // ФОНОВАЯ ЗАГРУЗКА URL
     audio.OnTrackNearEnd = [&]() {
         Track nextTrack = playlist.PeekNextTrack();
         if (nextTrack.id.empty()) return;
@@ -116,47 +135,75 @@ float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
         });
     };
 
+    int skipCount = 0;
     std::atomic<int> playbackGeneration{0};
     std::function<void(Track, int)> attemptPlay;
 
     attemptPlay = [&](Track track, int attempt) {
         int currentGen = (attempt == 1) ? ++playbackGeneration : playbackGeneration.load();
 
-        if (attempt == 1 && !cachedNextUrl.empty() && preloadedTrack.id == track.id) {
+        QString localPath = "downloads/" + QString::fromStdString(track.id) + ".wav";
+        bool isDownloaded = QFile::exists(localPath);
+
+        if (attempt == 1 && !cachedNextUrl.empty() && preloadedTrack.id == track.id && !isDownloaded) {
             if (audio.PlayStream(cachedNextUrl, track.duration, crossfadeEnabled, track.id)) {
                 cachedNextUrl = "";
+                skipCount = 0;
                 if (savedPosition > 0.0) {
                     audio.SetPositionSeconds(savedPosition);
                     savedPosition = 0.0;
                 }
-                // Асинхронное переключение: стираем Prompt (текущую), стираем PB (1 вверх)
                 std::cout << "\r\033[2K\033[1A\r\033[2K\n> ";
                 std::cout.flush();
                 return;
             }
         } else if (attempt == 1) {
-            // Очищаем текущий UI и выводим загрузку
             std::cout << "\r\033[2K\033[1A\r\033[2K";
             std::cout << "[Загрузка] " << track.artist << " - " << track.title << "...\n\n> ";
             std::cout.flush();
         }
 
-        auto executePlay = [track, attempt, currentGen, &audio, &playlist, &vkClient, &attemptPlay, &playbackGeneration, &savedPosition, &crossfadeEnabled](const std::string& freshUrl, bool isNetworkError) {
+        if (isDownloaded) {
+            skipCount = 0;
+            if (audio.PlayStream("", track.duration, crossfadeEnabled, track.id)) {
+                if (savedPosition > 0.0) {
+                    audio.SetPositionSeconds(savedPosition);
+                    savedPosition = 0.0;
+                }
+                std::cout << "\r\033[2K\033[1A\r\033[2K\033[1A\r\033[2K\n> ";
+                std::cout.flush();
+            } else {
+                playlist.Next();
+            }
+            return;
+        }
+
+        auto executePlay = [track, attempt, currentGen, &audio, &playlist, &vkClient, &attemptPlay, &playbackGeneration, &savedPosition, &crossfadeEnabled, &skipCount](const std::string& freshUrl, bool isNetworkError) {
             if (currentGen != playbackGeneration.load()) return;
 
             if (!isNetworkError && freshUrl.empty()) {
-                Logger::Log(LogLevel::WARNING, "Track is restricted. Skipping...");
+                skipCount++;
+                // Если онлайн сессия сломалась (пропал инет) и скипнуто 5 треков подряд - стопаем
+                if (skipCount >= 5) {
+                    Logger::Log(LogLevel::ERROR, "Too many unplayable tracks. Stopping loop.");
+                    skipCount = 0;
+                    std::cout << "\r\033[2K\033[1A\r\033[2K[Внимание] Ошибка сети/токена. Воспроизведение остановлено.\n\n> ";
+                    std::cout.flush();
+                    return;
+                }
+
+                Logger::Log(LogLevel::WARNING, "Track is restricted or token invalid. Skipping...");
                 playlist.Next();
                 return;
             }
+
+            skipCount = 0;
 
             if (!freshUrl.empty() && audio.PlayStream(freshUrl, track.duration, crossfadeEnabled, track.id)) {
                 if (savedPosition > 0.0) {
                     audio.SetPositionSeconds(savedPosition);
                     savedPosition = 0.0;
                 }
-                // Стираем Prompt (текущую), стираем PB (1 вверх), стираем надпись Загрузка (еще 1 вверх)
-                // Спускаемся на 1 строку (\n) и рисуем >, полностью поглощая след от [Загрузка]
                 std::cout << "\r\033[2K\033[1A\r\033[2K\033[1A\r\033[2K\n> ";
                 std::cout.flush();
                 return;
@@ -175,7 +222,6 @@ float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
 
     playlist.OnTrackRequested = [&](Track track) { attemptPlay(track, 1); };
 
-    // --- ЛОГИКА ФОНОВОЙ СИНХРОНИЗАЦИИ ---
     QObject::connect(&vkClient, &VkApiClient::AudioFetched, [&](const std::vector<Track>& tracks) {
         bool hasNewTracks = false;
         auto allTracks = playlist.GetAllTracks();
@@ -194,7 +240,7 @@ float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
         dbManager.SaveTracks(tracks);
 
         if (!isPlaybackStarted) {
-            startPlayback();
+            initPlaylistAndStart(true);
             dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
         } else if (hasNewTracks) {
             dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
@@ -206,19 +252,23 @@ float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
         Logger::Log(LogLevel::INFO, "=== ФОНОВАЯ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА ===");
     });
 
-    // --- 3. ЛОГИКА АВТОРИЗАЦИИ И СТАРТА ---
     QObject::connect(&authManager, &VkAuthManager::TokenReceived, [&](const std::string& token) {
         settings.setValue("vk_token", QString::fromStdString(token));
         vkClient.SetAccessToken(token);
         console.SetState(ConsoleState::COMMAND_MODE);
         std::cout << "\n[УСПЕХ] Авторизация пройдена! Загрузка аудио...\n> ";
+        std::cout.flush();
+
+        initPlaylistAndStart(true);
         vkClient.FetchAllUserAudio(0, 200);
     });
 
     std::function<void()> startAuthFlow = [&]() {
         Logger::Log(LogLevel::INFO, "Main: Starting auth flow...");
         std::cout << "\n=== Авторизация ВКонтакте ===\n";
-        std::cout << "СКОПИРУЙТЕ всю ссылку из адресной строки пустой страницы и вставьте ее сюда:\n> ";
+        std::cout << "СКОПИРУЙТЕ всю ссылку из пустой страницы и вставьте ее сюда\n";
+        std::cout << "(Или введите 'offline' для запуска без интернета):\n> ";
+        std::cout.flush();
 
         QString authUrl = "https://id.vk.ru/auth?return_auth_hash=8f84ec1a42e15d06f3&redirect_uri=https%3A%2F%2Foauth.vk.ru%2Fblank.html&redirect_uri_hash=840d020814e3175427&force_hash=1&app_id=6287487&response_type=token&code_challenge=&code_challenge_method=&scope=408861919&state=";
         QDesktopServices::openUrl(QUrl(authUrl));
@@ -236,44 +286,30 @@ float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
     QString savedToken = settings.value("vk_token", "").toString();
 
     if (savedToken.isEmpty()) {
-        if (isCacheLoaded) {
-            std::cout << "\n[Оффлайн] Токена нет, но есть кэш. Запуск оффлайн-режима...\n";
-            console.SetState(ConsoleState::COMMAND_MODE);
-            startPlayback();
-        } else {
-            startAuthFlow();
-        }
+        startAuthFlow();
     } else {
         vkClient.SetAccessToken(savedToken.toStdString());
         std::cout << "Проверка сохраненного токена...\n";
+        std::cout.flush();
 
-        vkClient.ValidateToken([&, startAuthFlow, startPlayback, isCacheLoaded](bool isValid) {
+        vkClient.ValidateToken([&, startAuthFlow, initPlaylistAndStart](bool isValid) {
             if (isValid) {
                 console.SetState(ConsoleState::COMMAND_MODE);
                 std::cout << "\n[УСПЕХ] Синхронизация свежих треков...\n> ";
-                vkClient.FetchAllUserAudio(0, 200);
+                std::cout.flush();
 
-                if (isCacheLoaded) {
-                    QTimer::singleShot(2500, [&, startPlayback]() {
-                        startPlayback();
-                    });
-                }
+                initPlaylistAndStart(true);
+                vkClient.FetchAllUserAudio(0, 200);
             } else {
-                if (isCacheLoaded) {
-                    std::cout << "\n[ВНИМАНИЕ] Нет сети или токен недействителен. Оффлайн режим.\n";
-                    console.SetState(ConsoleState::COMMAND_MODE);
-                    startPlayback();
-                } else {
-                    std::cout << "\n[ВНИМАНИЕ] Сохраненный токен недействителен.\n";
-                    settings.remove("vk_token");
-                    vkClient.SetAccessToken("");
-                    startAuthFlow();
-                }
+                std::cout << "\n[ВНИМАНИЕ] Нет сети или токен недействителен.\n";
+                std::cout.flush();
+                settings.remove("vk_token");
+                vkClient.SetAccessToken("");
+                startAuthFlow();
             }
         });
     }
 
-    // --- СОХРАНЕНИЕ СЕССИИ ПРИ ВЫХОДЕ ---
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [&]() {
         Logger::Log(LogLevel::INFO, "Main: Saving session state...");
         settings.setValue("Session/Volume", audio.GetVolume());

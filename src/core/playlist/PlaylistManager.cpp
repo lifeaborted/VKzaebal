@@ -4,25 +4,39 @@
 #include <algorithm>
 
 void PlaylistManager::AddTrack(const Track& track) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_tracks.push_back(track);
     m_playQueue.push_back(m_tracks.size() - 1);
 }
 
 bool PlaylistManager::HasTracks() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     return !m_tracks.empty();
 }
 
+bool PlaylistManager::IsShuffle() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_isShuffle;
+}
+
 Track PlaylistManager::GetCurrentTrack() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     if (m_tracks.empty() || m_queueIndex < 0 || m_queueIndex >= m_playQueue.size()) {
-        return Track(); // Возвращаем пустой трек
+        return Track();
     }
     return m_tracks[m_playQueue[m_queueIndex]];
 }
 
+int PlaylistManager::GetCurrentAbsoluteIndex() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_tracks.empty() ? -1 : m_playQueue[m_queueIndex];
+}
+
 Track PlaylistManager::PeekNextTrack() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     if (m_tracks.empty() || m_playQueue.empty()) return Track();
 
-    if (m_repeatMode == RepeatMode::One) return GetCurrentTrack();
+    if (m_repeatMode == RepeatMode::One) return m_tracks[m_playQueue[m_queueIndex]];
 
     int previewIndex = m_queueIndex + 1;
 
@@ -33,14 +47,13 @@ Track PlaylistManager::PeekNextTrack() const {
             return Track();
         }
     }
-
     return m_tracks[m_playQueue[previewIndex]];
 }
 
 void PlaylistManager::RebuildQueue(bool keepCurrentTrack) {
+    // Внимание: Этот метод вызывается ИЗ ДРУГИХ методов, которые УЖЕ залочили мьютекс.
     if (m_tracks.empty()) return;
 
-    // Запоминаем абсолютный индекс текущего трека в массиве m_tracks
     int currentTrackIndex = m_playQueue.empty() ? 0 : m_playQueue[m_queueIndex];
 
     m_playQueue.clear();
@@ -54,7 +67,6 @@ void PlaylistManager::RebuildQueue(bool keepCurrentTrack) {
         std::shuffle(m_playQueue.begin(), m_playQueue.end(), g);
 
         if (keepCurrentTrack) {
-            // Перемещаем текущий играющий трек на нулевую позицию в новой очереди
             auto it = std::find(m_playQueue.begin(), m_playQueue.end(), currentTrackIndex);
             if (it != m_playQueue.end()) {
                 std::iter_swap(m_playQueue.begin(), it);
@@ -71,67 +83,91 @@ void PlaylistManager::RebuildQueue(bool keepCurrentTrack) {
 }
 
 void PlaylistManager::Next() {
-    if (m_tracks.empty()) return;
+    Track nextTrack;
+    bool shouldPlay = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_tracks.empty()) return;
 
-    if (m_repeatMode == RepeatMode::One) {
-        // Остаемся на том же индексе
-    } else {
-        m_queueIndex++;
-        if (m_queueIndex >= m_playQueue.size()) {
-            if (m_repeatMode == RepeatMode::All) {
-                if (m_isShuffle) RebuildQueue(false); // Рероллим шафл по кругу
-                else m_queueIndex = 0;
-            } else {
-                m_queueIndex--; // Стопаримся в конце
-                Logger::Log(LogLevel::INFO, "Playlist reached the end.");
-                return;
+        if (m_repeatMode == RepeatMode::One) {
+            // Остаемся на том же треке
+        } else {
+            m_queueIndex++;
+            if (m_queueIndex >= m_playQueue.size()) {
+                if (m_repeatMode == RepeatMode::All) {
+                    if (m_isShuffle) RebuildQueue(false);
+                    else m_queueIndex = 0;
+                } else {
+                    m_queueIndex--;
+                    Logger::Log(LogLevel::INFO, "Playlist reached the end.");
+                    return;
+                }
             }
         }
-    }
+        nextTrack = m_tracks[m_playQueue[m_queueIndex]];
+        shouldPlay = true;
+    } // Мьютекс разблокирован здесь
 
-    if (OnTrackRequested) {
-        OnTrackRequested(GetCurrentTrack());
+    // Дергаем коллбек ВНЕ блокировки мьютекса
+    if (shouldPlay && OnTrackRequested) {
+        OnTrackRequested(nextTrack);
     }
 }
 
 void PlaylistManager::Previous() {
-    if (m_tracks.empty()) return;
+    Track prevTrack;
+    bool shouldPlay = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_tracks.empty()) return;
 
-    if (m_repeatMode != RepeatMode::One) {
-        m_queueIndex--;
-        if (m_queueIndex < 0) {
-            m_queueIndex = m_repeatMode == RepeatMode::All ? m_playQueue.size() - 1 : 0;
+        if (m_repeatMode != RepeatMode::One) {
+            m_queueIndex--;
+            if (m_queueIndex < 0) {
+                m_queueIndex = m_repeatMode == RepeatMode::All ? m_playQueue.size() - 1 : 0;
+            }
         }
+        prevTrack = m_tracks[m_playQueue[m_queueIndex]];
+        shouldPlay = true;
     }
 
-    if (OnTrackRequested) {
-        OnTrackRequested(GetCurrentTrack());
+    if (shouldPlay && OnTrackRequested) {
+        OnTrackRequested(prevTrack);
     }
 }
 
 void PlaylistManager::JumpTo(int index) {
-    if (index < 0 || index >= m_tracks.size()) {
-        Logger::Log(LogLevel::WARNING, "Invalid track index!");
-        return;
+    Track targetTrack;
+    bool shouldPlay = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (index < 0 || index >= m_tracks.size()) {
+            Logger::Log(LogLevel::WARNING, "Invalid track index!");
+            return;
+        }
+
+        auto it = std::find(m_playQueue.begin(), m_playQueue.end(), index);
+        if (it != m_playQueue.end()) {
+            m_queueIndex = std::distance(m_playQueue.begin(), it);
+            targetTrack = m_tracks[m_playQueue[m_queueIndex]];
+            shouldPlay = true;
+        }
     }
 
-    // Находим этот трек в текущей очереди
-    auto it = std::find(m_playQueue.begin(), m_playQueue.end(), index);
-    if (it != m_playQueue.end()) {
-        m_queueIndex = std::distance(m_playQueue.begin(), it);
-        if (OnTrackRequested) {
-            OnTrackRequested(GetCurrentTrack());
-        }
+    if (shouldPlay && OnTrackRequested) {
+        OnTrackRequested(targetTrack);
     }
 }
 
 void PlaylistManager::ToggleShuffle() {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_isShuffle = !m_isShuffle;
-    RebuildQueue(true); // Перестраиваем очередь, но оставляем текущий трек
+    RebuildQueue(true);
     Logger::Log(LogLevel::INFO, std::string("Shuffle is now ") + (m_isShuffle ? "ON" : "OFF"));
 }
 
 void PlaylistManager::SetShuffle(bool enable) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     if (!enable && !m_isShuffle) return;
 
     m_isShuffle = enable;
@@ -140,6 +176,7 @@ void PlaylistManager::SetShuffle(bool enable) {
 }
 
 void PlaylistManager::ToggleRepeat() {
+    std::lock_guard<std::mutex> lock(m_mutex);
     if (m_repeatMode == RepeatMode::All) {
         m_repeatMode = RepeatMode::One;
         Logger::Log(LogLevel::INFO, "Repeat Mode: ONE TRACK");
@@ -153,9 +190,15 @@ void PlaylistManager::ToggleRepeat() {
 }
 
 std::vector<Track> PlaylistManager::GetQueueTracks() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     std::vector<Track> queue;
     for (int index : m_playQueue) {
         queue.push_back(m_tracks[index]);
     }
     return queue;
+}
+
+std::vector<Track> PlaylistManager::GetAllTracks() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_tracks;
 }

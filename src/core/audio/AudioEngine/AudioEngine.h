@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <functional>
+#include <vector>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -31,6 +32,7 @@ public:
 
     std::function<void()> OnTrackNearEnd;
     std::function<void()> OnTrackFinished;
+    std::vector<float> GetSpectrumData() const;
 
 private:
     HSTREAM m_activeStream = 0;   // Текущий играющий трек

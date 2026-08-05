@@ -41,6 +41,7 @@ public:
 
     signals:
         void QuitRequested();
+        void OfflineModeRequested();
 
 private:
     void InputLoop();

@@ -62,7 +62,6 @@ void ConsoleController::Stop() {
 void ConsoleController::InputLoop() {
     std::string rawInput;
 
-    // Централизованный вывод для команд. Гарантирует очистку UI и отсутствие гонки потоков.
     auto syncPrint = [](const std::string& text) {
         QMetaObject::invokeMethod(QCoreApplication::instance(), [text]() {
             std::cout << "\r\033[2K\033[1A\r\033[2K" << text;
@@ -71,25 +70,31 @@ void ConsoleController::InputLoop() {
     };
 
     while (m_isRunning) {
-        std::getline(std::cin, rawInput);
-
-        // Пользователь нажал Enter, терминал сдвинулся вниз.
-        // Поднимаемся к введенному тексту и стираем его, оставляя прогресс-бар на месте.
-        std::cout << "\033[1A\r\033[2K";
-        std::cout.flush();
-
-        size_t start = rawInput.find_first_not_of(" \t\r\n");
-        if (start == std::string::npos) {
-            // Защита от спама пустым Enter
-            std::cout << "> ";
-            std::cout.flush();
+        if (!std::getline(std::cin, rawInput)) {
+            std::cin.clear();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
-        std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
 
+        // === РЕЖИМ ОЖИДАНИЯ ТОКЕНА ===
         if (m_currentState == ConsoleState::WAITING_TOKEN_URL) {
+            size_t start = rawInput.find_first_not_of(" \t\r\n");
+            if (start == std::string::npos) {
+                std::cout << "> ";
+                std::cout.flush();
+                continue;
+            }
+            std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
+
+            if (input == "offline") {
+                m_currentState = ConsoleState::COMMAND_MODE;
+                emit OfflineModeRequested();
+                continue;
+            }
+
             QString urlStr = QString::fromStdString(input);
-            syncPrint("Обработка ссылки...\n\n> ");
+            std::cout << "Обработка ссылки...\n\n> ";
+            std::cout.flush();
 
             QMetaObject::invokeMethod(&m_authManager, [&, urlStr]() {
                 m_authManager.onUrlIntercepted(urlStr);
@@ -98,6 +103,18 @@ void ConsoleController::InputLoop() {
             m_currentState = ConsoleState::COMMAND_MODE;
             continue;
         }
+
+        // === РЕЖИМ ПЛЕЕРА (COMMAND_MODE) ===
+        std::cout << "\033[1A\r\033[2K";
+        std::cout.flush();
+
+        size_t start = rawInput.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos) {
+            std::cout << "> ";
+            std::cout.flush();
+            continue;
+        }
+        std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
 
         if (m_currentState == ConsoleState::COMMAND_MODE) {
             std::string lowerInput = input;
@@ -394,72 +411,97 @@ void ConsoleController::InputLoop() {
 }
 
 void ConsoleController::UiLoop() {
-    int lastSecond = -1;
+    const char* blocks[] = {" ", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
+    const int numBands = 16; // Количество столбиков
 
     while (m_isRunning) {
+        if (m_currentState == ConsoleState::WAITING_TOKEN_URL) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            continue;
+        }
         if (m_currentState == ConsoleState::COMMAND_MODE && m_audio.IsPlaying()) {
             double current = m_audio.GetPositionSeconds();
             if (current < 0.0) current = 0.0;
-
             int currentSecInt = static_cast<int>(current);
 
-            if (currentSecInt != lastSecond) {
-                lastSecond = currentSecInt;
-
-                double total = m_audio.GetLengthSeconds();
-                if (total <= 0.0) {
-                    total = static_cast<double>(m_playlist.GetCurrentTrack().duration);
-                }
-
-                if (total > 0.0) {
-                    int percent = static_cast<int>((current / total) * 100.0);
-                    if (percent > 100) percent = 100;
-                    if (percent < 0) percent = 0;
-
-                    int curMin = currentSecInt / 60;
-                    int curSec = currentSecInt % 60;
-                    int totMin = static_cast<int>(total) / 60;
-                    int totSec = static_cast<int>(total) % 60;
-
-                    int barLength = 50;
-                    int filled = static_cast<int>((current / total) * barLength);
-                    if (filled > barLength) filled = barLength;
-                    if (filled < 0) filled = 0;
-
-                    std::string bar = "[";
-                    for (int i = 0; i < barLength; ++i) {
-                        if (i < filled) bar += "\xE2\x96\x88";
-                        else bar += "-";
-                    }
-                    bar += "]";
-
-                    Track currentTrack = m_playlist.GetCurrentTrack();
-                    std::vector<Track> queue = m_playlist.GetQueueTracks();
-                    int trackIndex = 0;
-
-                    for (size_t i = 0; i < queue.size(); ++i) {
-                        if (queue[i].id == currentTrack.id) {
-                            trackIndex = i + 1;
-                            break;
-                        }
-                    }
-
-                    std::string trackName = std::to_string(trackIndex) + ". " + currentTrack.artist + " - " + currentTrack.title;
-
-                    QMetaObject::invokeMethod(QCoreApplication::instance(), [trackName, curMin, curSec, totMin, totSec, bar, percent]() {
-                        printf("\033[s"
-                               "\033[1A"
-                               "\r\033[2K%s | %02d:%02d / %02d:%02d %s %d%%"
-                               "\033[u",
-                               trackName.c_str(), curMin, curSec, totMin, totSec, bar.c_str(), percent);
-                        fflush(stdout);
-                    }, Qt::QueuedConnection);
-                }
+            double total = m_audio.GetLengthSeconds();
+            if (total <= 0.0) {
+                total = static_cast<double>(m_playlist.GetCurrentTrack().duration);
             }
-        } else {
-            lastSecond = -1;
-        }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            if (total > 0.0) {
+                int percent = static_cast<int>((current / total) * 100.0);
+                if (percent > 100) percent = 100;
+                if (percent < 0) percent = 0;
+
+                int curMin = currentSecInt / 60;
+                int curSec = currentSecInt % 60;
+                int totMin = static_cast<int>(total) / 60;
+                int totSec = static_cast<int>(total) % 60;
+
+                int barLength = 40;
+                int filled = static_cast<int>((current / total) * barLength);
+                if (filled > barLength) filled = barLength;
+                if (filled < 0) filled = 0;
+
+                std::string bar = "[";
+                for (int i = 0; i < barLength; ++i) {
+                    if (i < filled) bar += "\xE2\x96\x88";
+                    else bar += "-";
+                }
+                bar += "]";
+
+                // === ЛОГИКА ВИЗУАЛИЗАТОРА ===
+                std::vector<float> fft = m_audio.GetSpectrumData();
+                std::string spectrum = " [";
+
+                if (!fft.empty()) {
+                    for (int i = 0; i < numBands; ++i) {
+                        float peak = 0.0f;
+                        // Используем экспоненту, чтобы захватить больше басов и средних частот
+                        int startBin = static_cast<int>(std::pow(2.0, i * 7.0 / numBands));
+                        int endBin = static_cast<int>(std::pow(2.0, (i + 1) * 7.0 / numBands));
+                        if (endBin <= startBin) endBin = startBin + 1;
+                        if (endBin > 128) endBin = 128;
+
+                        for (int b = startBin; b < endBin; ++b) {
+                            if (fft[b] > peak) peak = fft[b];
+                        }
+
+                        int level = static_cast<int>(std::sqrt(peak) * 18.0f);
+                        if (level < 0) level = 0;
+                        if (level > 7) level = 7;
+
+                        spectrum += blocks[level];
+                    }
+                } else {
+                    spectrum += std::string(numBands, ' ');
+                }
+                spectrum += "]";
+
+                Track currentTrack = m_playlist.GetCurrentTrack();
+                std::vector<Track> queue = m_playlist.GetQueueTracks();
+                int trackIndex = 0;
+
+                for (size_t i = 0; i < queue.size(); ++i) {
+                    if (queue[i].id == currentTrack.id) {
+                        trackIndex = i + 1;
+                        break;
+                    }
+                }
+
+                std::string trackName = std::to_string(trackIndex) + ". " + currentTrack.artist + " - " + currentTrack.title;
+
+                QMetaObject::invokeMethod(QCoreApplication::instance(), [trackName, curMin, curSec, totMin, totSec, bar, percent, spectrum]() {
+                    printf("\033[s"
+                           "\033[1A"
+                           "\r\033[2K%s | %02d:%02d / %02d:%02d %s %d%%%s"
+                           "\033[u",
+                           trackName.c_str(), curMin, curSec, totMin, totSec, bar.c_str(), percent, spectrum.c_str());
+                    fflush(stdout);
+                }, Qt::QueuedConnection);
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 }
