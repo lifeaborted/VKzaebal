@@ -18,30 +18,50 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Sql)
 # Указываем путь к исходникам и заголовкам
 set(PROJECT_SOURCES
         src/main.cpp
-        src/utils/logger/logger.h
-        src/utils/logger/Logger.cpp
+
+        # --- Models ---
+        src/models/Track.h
+
+        # --- Core ---
+        # Audio
+        src/core/audio/IAudioEngine.h
+        src/core/audio/bass/BassEngine.h
+        src/core/audio/bass/BassEngine.cpp
+        src/core/audio/miniaudio/miniaudio_impl.cpp
+        src/core/audio/miniaudio/MiniaudioEngine.h
+        src/core/audio/miniaudio/MiniaudioEngine.cpp
+
+        # Playlist
+        src/core/playlist/PlaylistManager.h
+        src/core/playlist/PlaylistManager.cpp
+
+        # VK
+        src/core/vk/api/Client.h
+        src/core/vk/api/Client.cpp
+        src/core/vk/auth/Manager.h
+        src/core/vk/auth/Manager.cpp
+
+        # Lyrics
+        src/core/lyrics/LyricsFetcher.h
+        src/core/lyrics/LyricsFetcher.cpp
+
+        # --- Services ---
+        src/services/network/NetworkStreamer.h
+        src/services/network/NetworkStreamer.cpp
+        src/services/database/DatabaseManager.h
+        src/services/database/DatabaseManager.cpp
+        src/services/downloader/TrackDownloader.h
+        src/services/downloader/TrackDownloader.cpp
+
+        # --- UI ---
+        src/ui/console/ConsoleController.h
+        src/ui/console/ConsoleController.cpp
+
+        # --- Utils ---
         src/utils/buffer/RingBuffer.h
         src/utils/buffer/RingBuffer.cpp
-        src/core/playlist/PlaylistManager.cpp
-        src/core/playlist/PlaylistManager.h
-        src/core/vk/Track.h
-        src/core/vk/VkApiClient/VkApiClient.cpp
-        src/core/vk/VkApiClient/VkApiClient.h
-        src/core/audio/AudioEngine/AudioEngine.cpp
-        src/core/audio/AudioEngine/AudioEngine.h
-        src/core/vk/VkAuthManager/VkAuthManager.cpp
-        src/core/vk/VkAuthManager/VkAuthManager.h
-        src/utils/DatabaseManager/DatabaseManager.cpp
-        src/utils/DatabaseManager/DatabaseManager.h
-        src/utils/ConsoleController/ConsoleController.cpp
-        src/utils/ConsoleController/ConsoleController.h
-        src/utils/TrackDownloader/TrackDownloader.cpp
-        src/utils/TrackDownloader/TrackDownloader.h
-        src/core/network/NetworkStreamer.cpp
-        src/core/network/NetworkStreamer.h
-        src/core/lyrics/LyricsFetcher.cpp
-        src/core/lyrics/LyricsFetcher.h
-        src/core/audio/AudioEngine/IAudioEngine.h
+        src/utils/logger/Logger.h
+        src/utils/logger/Logger.cpp
 )
 
 # Создаем исполняемый файл

@@ -1,5 +1,5 @@
 #include "PlaylistManager.h"
-#include "utils/logger/logger.h"
+#include "utils/logger/Logger.h"
 #include <random>
 #include <algorithm>
 

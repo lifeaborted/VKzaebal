@@ -4,7 +4,7 @@
 #include <QNetworkReply>
 #include <QFile>
 #include <string>
-#include "core/vk/Track.h"
+#include "../../models/Track.h"
 
 class TrackDownloader : public QObject {
     Q_OBJECT

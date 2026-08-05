@@ -1,5 +1,5 @@
 #include "LyricsFetcher.h"
-#include "utils/logger/logger.h"
+#include "utils/logger/Logger.h"
 
 #include <QUrl>
 #include <QUrlQuery>

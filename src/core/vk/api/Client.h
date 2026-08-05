@@ -5,13 +5,13 @@
 #include <vector>
 #include <string>
 #include <functional>
-#include "core/vk/Track.h"
+#include "../../../models/Track.h"
 
-class VkApiClient : public QObject {
+class Client : public QObject {
     Q_OBJECT
 public:
-    explicit VkApiClient(QObject* parent = nullptr);
-    ~VkApiClient();
+    explicit Client(QObject* parent = nullptr);
+    ~Client();
     // Установка токена доступа
     void SetAccessToken(const std::string& token);
     // Валидация токена

@@ -1,5 +1,5 @@
 #include "TrackDownloader.h"
-#include "utils/logger/logger.h"
+#include "utils/logger/Logger.h"
 #include "bass.h"
 #include <QDir>
 #include <QFile>

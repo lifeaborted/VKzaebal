@@ -1,18 +1,18 @@
-#include "VkAuthManager.h"
-#include "utils/logger/logger.h"
+#include "Manager.h"
+#include "utils/logger/Logger.h"
 #include <QFile>
 #include <QTextStream>
 #include <QRegularExpression>
 
 const QString TOKEN_FILE = ".vk_token";
 
-VkAuthManager::VkAuthManager(QObject* parent) : QObject(parent) {
-    Logger::Log(LogLevel::INFO, "VkAuthManager (WebView Auth) created.");
+Manager::Manager(QObject* parent) : QObject(parent) {
+    Logger::Log(LogLevel::INFO, "auth (WebView Auth) created.");
 }
 
-VkAuthManager::~VkAuthManager() {}
+Manager::~Manager() {}
 
-std::string VkAuthManager::GetSavedToken() const {
+std::string Manager::GetSavedToken() const {
     QFile file(TOKEN_FILE);
     if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         QTextStream in(&file);
@@ -21,24 +21,24 @@ std::string VkAuthManager::GetSavedToken() const {
     return "";
 }
 
-void VkAuthManager::SaveToken(const std::string& token) const {
+void Manager::SaveToken(const std::string& token) const {
     QFile file(TOKEN_FILE);
     if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         QTextStream out(&file);
         out << QString::fromStdString(token);
-        Logger::Log(LogLevel::INFO, "VkAuthManager: Token saved to local file.");
+        Logger::Log(LogLevel::INFO, "auth: Token saved to local file.");
     }
 }
 
-void VkAuthManager::ClearSavedToken() const {
+void Manager::ClearSavedToken() const {
     QFile file(TOKEN_FILE);
     if (file.exists()) {
         file.remove();
-        Logger::Log(LogLevel::INFO, "VkAuthManager: Token file removed.");
+        Logger::Log(LogLevel::INFO, "auth: Token file removed.");
     }
 }
 
-void VkAuthManager::onUrlIntercepted(const QString& urlStr) {
+void Manager::onUrlIntercepted(const QString& urlStr) {
     // Ищем токен в адресной строке
     if (urlStr.contains("access_token=")) {
         QRegularExpression re("access_token=([^&]+)");
@@ -46,12 +46,12 @@ void VkAuthManager::onUrlIntercepted(const QString& urlStr) {
 
         if (match.hasMatch()) {
             std::string token = match.captured(1).toStdString();
-            Logger::Log(LogLevel::INFO, "VkAuthManager: Token intercepted from URL! Starts with: " + token.substr(0, 6) + "...");
+            Logger::Log(LogLevel::INFO, "auth: Token intercepted from URL! Starts with: " + token.substr(0, 6) + "...");
 
             emit TokenReceived(token);
         }
     } else if (urlStr.contains("error=")) {
-        Logger::Log(LogLevel::ERROR, "VkAuthManager: Auth failed or denied.");
+        Logger::Log(LogLevel::ERROR, "auth: Auth failed or denied.");
         emit AuthFailed("URL auth error.");
     }
 }

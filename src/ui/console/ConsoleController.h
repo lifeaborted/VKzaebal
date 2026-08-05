@@ -10,7 +10,7 @@
 
 class IAudioEngine;
 class PlaylistManager;
-class VkAuthManager;
+class Manager;
 class DatabaseManager;
 
 enum class ConsoleState {
@@ -24,7 +24,7 @@ public:
     ConsoleController(
         IAudioEngine& audio,
         PlaylistManager& playlist,
-        VkAuthManager& authManager,
+        Manager& authManager,
         DatabaseManager& dbManager,
         VkApiClient& vkClient,
         TrackDownloader& downloader,
@@ -49,7 +49,7 @@ private:
 
     IAudioEngine& m_audio;
     PlaylistManager& m_playlist;
-    VkAuthManager& m_authManager;
+    Manager& m_authManager;
     DatabaseManager& m_dbManager;
     VkApiClient& m_vkClient;
     TrackDownloader& m_downloader;

@@ -1,5 +1,5 @@
-#include "VkApiClient.h"
-#include "utils/logger/logger.h"
+#include "Client.h"
+#include "utils/logger/Logger.h"
 
 #include <QUrl>
 #include <QUrlQuery>
@@ -11,20 +11,20 @@
 #include <iostream>
 #include <QEventLoop>
 
-VkApiClient::VkApiClient(QObject* parent)
+Client::Client(QObject* parent)
     : QObject(parent), m_manager(new QNetworkAccessManager(this)) {
-    Logger::Log(LogLevel::INFO, "VkApiClient created.");
+    Logger::Log(LogLevel::INFO, "api created.");
 }
 
-VkApiClient::~VkApiClient() {
-    Logger::Log(LogLevel::INFO, "VkApiClient destroyed.");
+Client::~Client() {
+    Logger::Log(LogLevel::INFO, "api destroyed.");
 }
 
-void VkApiClient::SetAccessToken(const std::string& token) {
+void Client::SetAccessToken(const std::string& token) {
     m_accessToken = token;
 }
 
-void VkApiClient::ValidateToken(std::function<void(bool)> callback) {
+void Client::ValidateToken(std::function<void(bool)> callback) {
     if (m_accessToken.empty()) {
         callback(false);
         return;
@@ -54,16 +54,16 @@ void VkApiClient::ValidateToken(std::function<void(bool)> callback) {
 
         // Если ВК вернул ошибку, значит токен невалиден
         if (json.object().contains("error")) {
-            Logger::Log(LogLevel::WARNING, "VkApiClient: Token validation failed (API error).");
+            Logger::Log(LogLevel::WARNING, "api: Token validation failed (API error).");
             callback(false);
         } else {
-            Logger::Log(LogLevel::INFO, "VkApiClient: Token is valid.");
+            Logger::Log(LogLevel::INFO, "api: Token is valid.");
             callback(true);
         }
     });
 }
 
-void VkApiClient::FetchUserAudio(long long ownerId, int count) {
+void Client::FetchUserAudio(long long ownerId, int count) {
     if (m_accessToken.empty()) {
         emit ApiError("Access token is missing!");
         return;
@@ -83,13 +83,13 @@ void VkApiClient::FetchUserAudio(long long ownerId, int count) {
 
     request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
-    Logger::Log(LogLevel::INFO, "VkApiClient: Fetching audio...");
+    Logger::Log(LogLevel::INFO, "api: Fetching audio...");
 
     QNetworkReply* reply = m_manager->get(request);
     connect(reply, &QNetworkReply::finished, this, [this, reply]() { OnReplyFinished(reply); });
 }
 
-void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) {
+void Client::FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) {
     QUrl url("https://api.vk.com/method/audio.getById");
     QUrlQuery query;
     query.addQueryItem("audios", QString::fromStdString(trackId));
@@ -138,12 +138,12 @@ void VkApiClient::FetchTrackUrl(const std::string& trackId, std::function<void(c
     });
 }
 
-void VkApiClient::OnReplyFinished(QNetworkReply* reply) {
+void Client::OnReplyFinished(QNetworkReply* reply) {
     reply->deleteLater();
 
     if (reply->error() != QNetworkReply::NoError) {
         std::string err = reply->errorString().toStdString();
-        Logger::Log(LogLevel::ERROR, "VkApiClient Network Error: " + err);
+        Logger::Log(LogLevel::ERROR, "api Network Error: " + err);
         emit ApiError(err);
         return;
     }
@@ -211,11 +211,11 @@ void VkApiClient::OnReplyFinished(QNetworkReply* reply) {
         }
     }
 
-    Logger::Log(LogLevel::INFO, "VkApiClient: Successfully parsed " + std::to_string(tracks.size()) + " tracks.");
+    Logger::Log(LogLevel::INFO, "api: Successfully parsed " + std::to_string(tracks.size()) + " tracks.");
     emit AudioFetched(tracks);
 }
 
-void VkApiClient::FetchAllUserAudio(int offset, int count) {
+void Client::FetchAllUserAudio(int offset, int count) {
     QUrl url("https://api.vk.com/method/audio.get");
     QUrlQuery query;
     query.addQueryItem("access_token", QString::fromStdString(m_accessToken));

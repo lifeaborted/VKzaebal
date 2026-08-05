@@ -3,7 +3,7 @@
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <vector>
-#include "core/vk/Track.h"
+#include "../../models/Track.h"
 
 class DatabaseManager {
 public:

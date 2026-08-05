@@ -1,5 +1,5 @@
-#include "AudioEngine.h"
-#include "utils/logger/logger.h"
+#include "BassEngine.h"
+#include "utils/logger/Logger.h"
 #include <QCoreApplication>
 #include <QMetaObject>
 #include <QSettings>
@@ -8,10 +8,10 @@
 #include <QFileInfo>
 #include <QUrl>
 
-AudioEngine::AudioEngine() {
+BassEngine::BassEngine() {
 }
 
-AudioEngine::~AudioEngine() {
+BassEngine::~BassEngine() {
     if (m_activeStream != 0) {
         if (m_syncEnd != 0) BASS_ChannelRemoveSync(m_activeStream, m_syncEnd);
         BASS_StreamFree(m_activeStream);
@@ -23,10 +23,10 @@ AudioEngine::~AudioEngine() {
         BASS_PluginFree(m_hlsPlugin);
     }
     BASS_Free();
-    Logger::Log(LogLevel::INFO, "AudioEngine: BASS freed.");
+    Logger::Log(LogLevel::INFO, "bass: BASS freed.");
 }
 
-bool AudioEngine::Init() {
+bool BassEngine::Init() {
     QSettings settings("config.ini", QSettings::IniFormat);
     int netTimeout = settings.value("Audio/NetTimeout", 5000).toInt();
     int netReadTimeout = settings.value("Audio/NetReadTimeout", 5000).toInt();
@@ -40,20 +40,20 @@ bool AudioEngine::Init() {
     BASS_SetConfigPtr(BASS_CONFIG_NET_AGENT, "VKAndroidApp/5.56.1-12345 (Android 11; SDK 30; x86_64; en; 2274003)");
 
     if (!BASS_Init(-1, 44100, 0, 0, nullptr)) {
-        Logger::Log(LogLevel::ERROR, "AudioEngine: Failed to initialize BASS!");
+        Logger::Log(LogLevel::ERROR, "bass: Failed to initialize BASS!");
         return false;
     }
 
     m_hlsPlugin = BASS_PluginLoad("basshls.dll", 0);
     if (!m_hlsPlugin) {
-        Logger::Log(LogLevel::WARNING, "AudioEngine: Could not load basshls.dll plugin! Local HLS might fail.");
+        Logger::Log(LogLevel::WARNING, "bass: Could not load basshls.dll plugin! Local HLS might fail.");
     }
 
     return true;
 }
 
-void CALLBACK AudioEngine::BassTrackNearEndCallback(HSYNC handle, DWORD channel, DWORD data, void* user) {
-    AudioEngine* engine = static_cast<AudioEngine*>(user);
+void CALLBACK BassEngine::BassTrackNearEndCallback(HSYNC handle, DWORD channel, DWORD data, void* user) {
+    BassEngine* engine = static_cast<BassEngine*>(user);
     if (engine->OnTrackNearEnd) {
         QMetaObject::invokeMethod(QCoreApplication::instance(), [engine]() {
             engine->OnTrackNearEnd();
@@ -61,9 +61,9 @@ void CALLBACK AudioEngine::BassTrackNearEndCallback(HSYNC handle, DWORD channel,
     }
 }
 
-void CALLBACK AudioEngine::BassTrackEndCallback(HSYNC handle, DWORD channel, DWORD data, void* user) {
-    Logger::Log(LogLevel::INFO, "AudioEngine: --- TRACK COMPLETION EVENT ---");
-    AudioEngine* engine = static_cast<AudioEngine*>(user);
+void CALLBACK BassEngine::BassTrackEndCallback(HSYNC handle, DWORD channel, DWORD data, void* user) {
+    Logger::Log(LogLevel::INFO, "bass: --- TRACK COMPLETION EVENT ---");
+    BassEngine* engine = static_cast<BassEngine*>(user);
     if (engine->OnTrackFinished) {
         QMetaObject::invokeMethod(QCoreApplication::instance(), [engine]() {
             engine->OnTrackFinished();
@@ -71,7 +71,7 @@ void CALLBACK AudioEngine::BassTrackEndCallback(HSYNC handle, DWORD channel, DWO
     }
 }
 
-bool AudioEngine::PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId) {
+bool BassEngine::PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId) {
     if (m_activeStream != 0) {
         if (m_syncEnd != 0) BASS_ChannelRemoveSync(m_activeStream, m_syncEnd);
         if (m_syncNearEnd != 0) BASS_ChannelRemoveSync(m_activeStream, m_syncNearEnd);
@@ -90,7 +90,7 @@ bool AudioEngine::PlayStream(const std::string& url, int durationSec, bool cross
             BASS_ChannelSetSync(m_fadingStream, BASS_SYNC_SLIDE | BASS_SYNC_ONETIME, 0,
                 [](HSYNC handle, DWORD channel, DWORD data, void* user) {
                     BASS_StreamFree(channel);
-                    Logger::Log(LogLevel::INFO, "AudioEngine: Faded track properly freed.");
+                    Logger::Log(LogLevel::INFO, "bass: Faded track properly freed.");
                 }, nullptr);
         } else {
             BASS_StreamFree(m_activeStream);
@@ -106,7 +106,7 @@ bool AudioEngine::PlayStream(const std::string& url, int durationSec, bool cross
 
     // играем с диска
     if (!trackId.empty() && QFile::exists(localPath)) {
-        Logger::Log(LogLevel::INFO, "AudioEngine: Playing from local downloads -> " + localPath.toStdString());
+        Logger::Log(LogLevel::INFO, "bass: Playing from local downloads -> " + localPath.toStdString());
         m_activeStream = BASS_StreamCreateFile(FALSE, localPath.toStdString().c_str(), 0, 0, 0);
     }
     // Иначе из интернета
@@ -123,7 +123,7 @@ bool AudioEngine::PlayStream(const std::string& url, int durationSec, bool cross
             BASS_ChannelSetAttribute(m_activeStream, BASS_ATTRIB_VOL, m_volume);
         }
 
-        m_syncEnd = BASS_ChannelSetSync(m_activeStream, BASS_SYNC_END, 0, &AudioEngine::BassTrackEndCallback, this);
+        m_syncEnd = BASS_ChannelSetSync(m_activeStream, BASS_SYNC_END, 0, &BassEngine::BassTrackEndCallback, this);
 
         QWORD length = BASS_ChannelGetLength(m_activeStream, BASS_POS_BYTE);
         double actualDuration = (length != (QWORD)-1) ? BASS_ChannelBytes2Seconds(m_activeStream, length) : static_cast<double>(durationSec);
@@ -132,24 +132,24 @@ bool AudioEngine::PlayStream(const std::string& url, int durationSec, bool cross
 
         if (crossfade && actualDuration > crossfadeSec) {
             QWORD crossfadePos = BASS_ChannelSeconds2Bytes(m_activeStream, actualDuration - crossfadeSec);
-            m_syncCrossfade = BASS_ChannelSetSync(m_activeStream, BASS_SYNC_POS | BASS_SYNC_ONETIME, crossfadePos, &AudioEngine::BassTrackEndCallback, this);
+            m_syncCrossfade = BASS_ChannelSetSync(m_activeStream, BASS_SYNC_POS | BASS_SYNC_ONETIME, crossfadePos, &BassEngine::BassTrackEndCallback, this);
         }
 
         // Хук предзагрузки за 10 сек до конца
         if (actualDuration > 10.0) {
             QWORD prefetchPos = BASS_ChannelSeconds2Bytes(m_activeStream, actualDuration - 10.0);
-            m_syncNearEnd = BASS_ChannelSetSync(m_activeStream, BASS_SYNC_POS, prefetchPos, &AudioEngine::BassTrackNearEndCallback, this);
+            m_syncNearEnd = BASS_ChannelSetSync(m_activeStream, BASS_SYNC_POS, prefetchPos, &BassEngine::BassTrackNearEndCallback, this);
         }
 
         BASS_ChannelPlay(m_activeStream, FALSE);
         return true;
     }
 
-    Logger::Log(LogLevel::ERROR, "AudioEngine: Failed to create stream! Error: " + std::to_string(BASS_ErrorGetCode()));
+    Logger::Log(LogLevel::ERROR, "bass: Failed to create stream! Error: " + std::to_string(BASS_ErrorGetCode()));
     return false;
 }
 
-void AudioEngine::SetPositionSeconds(double pos) {
+void BassEngine::SetPositionSeconds(double pos) {
     if (m_activeStream != 0) {
         QWORD bytePos = BASS_ChannelSeconds2Bytes(m_activeStream, pos);
         BASS_ChannelSetPosition(m_activeStream, bytePos, BASS_POS_BYTE);
@@ -166,40 +166,40 @@ void AudioEngine::SetPositionSeconds(double pos) {
     }
 }
 
-void AudioEngine::Pause() {
+void BassEngine::Pause() {
     if (m_activeStream != 0) BASS_ChannelPause(m_activeStream);
 }
 
-void AudioEngine::Resume() {
+void BassEngine::Resume() {
     if (m_activeStream != 0) BASS_ChannelPlay(m_activeStream, FALSE);
 }
 
-void AudioEngine::SetVolume(float volume) {
+void BassEngine::SetVolume(float volume) {
     m_volume = volume;
     if (m_volume < 0.0f) m_volume = 0.0f;
     if (m_volume > 1.0f) m_volume = 1.0f;
     if (m_activeStream != 0) BASS_ChannelSetAttribute(m_activeStream, BASS_ATTRIB_VOL, m_volume);
 }
 
-float AudioEngine::GetVolume() const { return m_volume; }
+float BassEngine::GetVolume() const { return m_volume; }
 
-bool AudioEngine::IsPlaying() const {
+bool BassEngine::IsPlaying() const {
     return m_activeStream != 0 && BASS_ChannelIsActive(m_activeStream) == BASS_ACTIVE_PLAYING;
 }
 
-double AudioEngine::GetPositionSeconds() const {
+double BassEngine::GetPositionSeconds() const {
     if (m_activeStream == 0) return 0.0;
     QWORD pos = BASS_ChannelGetPosition(m_activeStream, BASS_POS_BYTE);
     return (pos == (QWORD)-1) ? 0.0 : BASS_ChannelBytes2Seconds(m_activeStream, pos);
 }
 
-double AudioEngine::GetLengthSeconds() const {
+double BassEngine::GetLengthSeconds() const {
     if (m_activeStream == 0) return 0.0;
     QWORD len = BASS_ChannelGetLength(m_activeStream, BASS_POS_BYTE);
     return (len == (QWORD)-1) ? 0.0 : BASS_ChannelBytes2Seconds(m_activeStream, len);
 }
 
-std::vector<float> AudioEngine::GetSpectrumData() const {
+std::vector<float> BassEngine::GetSpectrumData() const {
     std::vector<float> fft(128, 0.0f);
     if (m_activeStream != 0 && BASS_ChannelIsActive(m_activeStream) == BASS_ACTIVE_PLAYING) {
         BASS_ChannelGetData(m_activeStream, fft.data(), BASS_DATA_FFT256);

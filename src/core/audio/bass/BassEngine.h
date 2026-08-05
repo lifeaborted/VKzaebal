@@ -1,5 +1,5 @@
 #pragma once
-#include "IAudioEngine.h"
+#include "../IAudioEngine.h"
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -11,10 +11,10 @@
 #undef ERROR
 #endif
 
-class AudioEngine : public IAudioEngine {
+class BassEngine : public IAudioEngine {
 public:
-    AudioEngine();
-    ~AudioEngine() override;
+    BassEngine();
+    ~BassEngine() override;
 
     bool Init() override;
     bool PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId = "") override;

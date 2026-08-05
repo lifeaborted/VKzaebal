@@ -1,5 +1,5 @@
 #include "NetworkStreamer.h"
-#include "utils/logger/logger.h"
+#include "utils/logger/Logger.h"
 #include <QNetworkRequest>
 #include <QUrl>
 #include <QStringList>
@@ -95,7 +95,7 @@ void NetworkStreamer::DownloadNextChunk() {
     m_reply = m_manager->get(request);
     m_reply->setReadBufferSize(512 * 1024);
 
-    // Переиспользуем твои родные слоты для чтения байтов в AudioEngine
+    // Переиспользуем твои родные слоты для чтения байтов в bass
     connect(m_reply, &QNetworkReply::readyRead, this, &NetworkStreamer::OnReadyRead);
     connect(m_reply, &QNetworkReply::errorOccurred, this, &NetworkStreamer::OnErrorOccurred);
 

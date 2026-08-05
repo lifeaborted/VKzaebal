@@ -12,12 +12,12 @@
 #endif
 
 #include "core/audio/AudioEngine/AudioEngine.h"
-#include "core/audio/AudioEngine/IAudioEngine.h"
+#include "core/audio/IAudioEngine.h"
 #include "core/playlist/PlaylistManager.h"
 #include "core/vk/VkApiClient/VkApiClient.h"
 #include "core/vk/VkAuthManager/VkAuthManager.h"
 #include "utils/ConsoleController/ConsoleController.h"
-#include "utils/logger/logger.h"
+#include "utils/logger/Logger.h"
 #include "utils/DatabaseManager/DatabaseManager.h"
 #include "utils/TrackDownloader/TrackDownloader.h"
 #include "core/lyrics/LyricsFetcher.h"
@@ -48,7 +48,7 @@ int main(int argc, char *argv[]) {
 
     PlaylistManager playlist;
     VkApiClient vkClient;
-    VkAuthManager authManager;
+    Manager authManager;
     TrackDownloader downloader;
     LyricsFetcher lyricsFetcher;
 
@@ -253,7 +253,7 @@ int main(int argc, char *argv[]) {
         Logger::Log(LogLevel::INFO, "=== ФОНОВАЯ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА ===");
     });
 
-    QObject::connect(&authManager, &VkAuthManager::TokenReceived, [&](const std::string& token) {
+    QObject::connect(&authManager, &Manager::TokenReceived, [&](const std::string& token) {
         settings.setValue("vk_token", QString::fromStdString(token));
         vkClient.SetAccessToken(token);
         console.SetState(ConsoleState::COMMAND_MODE);

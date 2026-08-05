@@ -3,11 +3,11 @@
 #include <QString>
 #include <string>
 
-class VkAuthManager : public QObject {
+class Manager : public QObject {
     Q_OBJECT
 public:
-    explicit VkAuthManager(QObject* parent = nullptr);
-    ~VkAuthManager();
+    explicit Manager(QObject* parent = nullptr);
+    ~Manager();
 
     std::string GetSavedToken() const;
     void SaveToken(const std::string& token) const;

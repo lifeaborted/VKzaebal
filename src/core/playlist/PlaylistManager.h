@@ -2,7 +2,7 @@
 #include <vector>
 #include <functional>
 #include <mutex>
-#include "core/vk/Track.h"
+#include "../../models/Track.h"
 
 enum class RepeatMode { None, All, One };
 

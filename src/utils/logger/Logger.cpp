@@ -1,5 +1,5 @@
 #define _CRT_SECURE_NO_WARNINGS
-#include "logger.h"
+#include "Logger.h"
 #include <iostream>
 #include <fstream>
 #include <filesystem>
