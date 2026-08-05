@@ -11,15 +11,15 @@
 #include <windows.h>
 #endif
 
-#include "core/audio/AudioEngine/AudioEngine.h"
+#include "core/audio/bass/BassEngine.h"
 #include "core/audio/IAudioEngine.h"
 #include "core/playlist/PlaylistManager.h"
-#include "core/vk/VkApiClient/VkApiClient.h"
-#include "core/vk/VkAuthManager/VkAuthManager.h"
-#include "utils/ConsoleController/ConsoleController.h"
+#include "core/vk/api/Client.h"
+#include "core/vk/auth/Manager.h"
+#include "ui/console/ConsoleController.h"
 #include "utils/logger/Logger.h"
-#include "utils/DatabaseManager/DatabaseManager.h"
-#include "utils/TrackDownloader/TrackDownloader.h"
+#include "services/database/DatabaseManager.h"
+#include "services/downloader/TrackDownloader.h"
 #include "core/lyrics/LyricsFetcher.h"
 
 
@@ -43,11 +43,11 @@ int main(int argc, char *argv[]) {
     DatabaseManager dbManager;
     if (!dbManager.Init()) return -1;
 
-    AudioEngine audio;
+    BassEngine audio;
     if (!audio.Init()) return -1;
 
     PlaylistManager playlist;
-    VkApiClient vkClient;
+    Client vkClient;
     Manager authManager;
     TrackDownloader downloader;
     LyricsFetcher lyricsFetcher;
@@ -223,7 +223,7 @@ int main(int argc, char *argv[]) {
 
     playlist.OnTrackRequested = [&](Track track) { attemptPlay(track, 1); };
 
-    QObject::connect(&vkClient, &VkApiClient::AudioFetched, [&](const std::vector<Track>& tracks) {
+    QObject::connect(&vkClient, &Client::AudioFetched, [&](const std::vector<Track>& tracks) {
         bool hasNewTracks = false;
         auto allTracks = playlist.GetAllTracks();
 
@@ -249,7 +249,7 @@ int main(int argc, char *argv[]) {
         }
     });
 
-    QObject::connect(&vkClient, &VkApiClient::FinishedFetching, [&]() {
+    QObject::connect(&vkClient, &Client::FinishedFetching, [&]() {
         Logger::Log(LogLevel::INFO, "=== ФОНОВАЯ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА ===");
     });
 
@@ -276,7 +276,7 @@ int main(int argc, char *argv[]) {
         console.SetState(ConsoleState::WAITING_TOKEN_URL);
     };
 
-    QObject::connect(&vkClient, &VkApiClient::TokenExpired, [&]() {
+    QObject::connect(&vkClient, &Client::TokenExpired, [&]() {
         Logger::Log(LogLevel::WARNING, "Main: Token expired.");
         std::cout << "\n[ВНИМАНИЕ] Токен устарел.\n";
         settings.remove("vk_token");

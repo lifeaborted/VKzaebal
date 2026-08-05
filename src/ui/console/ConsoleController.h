@@ -4,8 +4,8 @@
 #include <atomic>
 #include <thread>
 #include <functional>
-#include "core/vk/VkApiClient/VkApiClient.h"
-#include "utils/TrackDownloader/TrackDownloader.h"
+#include "core/vk/api/Client.h"
+#include "services/downloader/TrackDownloader.h"
 #include "core/lyrics/LyricsFetcher.h"
 
 class IAudioEngine;
@@ -26,7 +26,7 @@ public:
         PlaylistManager& playlist,
         Manager& authManager,
         DatabaseManager& dbManager,
-        VkApiClient& vkClient,
+        Client& vkClient,
         TrackDownloader& downloader,
         LyricsFetcher& lyricsFetcher,
         QObject* parent = nullptr
@@ -51,7 +51,7 @@ private:
     PlaylistManager& m_playlist;
     Manager& m_authManager;
     DatabaseManager& m_dbManager;
-    VkApiClient& m_vkClient;
+    Client& m_vkClient;
     TrackDownloader& m_downloader;
     LyricsFetcher& m_lyricsFetcher;
 

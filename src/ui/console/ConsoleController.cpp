@@ -13,8 +13,8 @@
 #include "ConsoleController.h"
 #include "../../core/audio/IAudioEngine.h"
 #include "core/playlist/PlaylistManager.h"
-#include "core/vk/VkAuthManager/VkAuthManager.h"
-#include "utils/DatabaseManager/DatabaseManager.h"
+#include "core/vk/auth/Manager.h"
+#include "services/database/DatabaseManager.h"
 #include "utils/logger/Logger.h"
 
 ConsoleController::ConsoleController(
@@ -22,7 +22,7 @@ ConsoleController::ConsoleController(
     PlaylistManager& playlist,
     Manager& authManager,
     DatabaseManager& dbManager,
-    VkApiClient& vkClient,
+    Client& vkClient,
     TrackDownloader& downloader,
     LyricsFetcher& lyricsFetcher,
     QObject* parent
