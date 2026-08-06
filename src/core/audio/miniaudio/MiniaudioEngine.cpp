@@ -23,27 +23,26 @@ MiniaudioEngine::~MiniaudioEngine() {
     }
 }
 
+float MiniaudioEngine::GetVolume() const { return m_volume; }
+bool MiniaudioEngine::IsPlaying() const { return m_isPlaying; }
+
+void MiniaudioEngine::SetPositionSeconds(double pos) {}
+double MiniaudioEngine::GetPositionSeconds() const { return 0.0; }
+double MiniaudioEngine::GetLengthSeconds() const { return 0.0; }
+std::vector<float> MiniaudioEngine::GetSpectrumData() const { return std::vector<float>(128, 0.0f); }
+
 void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
     MiniaudioEngine* engine = static_cast<MiniaudioEngine*>(pDevice->pUserData);
     if (!engine) return;
 
-    std::lock_guard<std::mutex> lock(engine->m_audioMutex);
+    // Считаем, сколько байт звуковая карта просит прямо сейчас
+    ma_uint32 bytesToRead = frameCount * pDevice->playback.channels * ma_get_bytes_per_sample(pDevice->playback.format);
 
-    if (engine->m_isDecoderInitialized && engine->m_isPlaying) {
-        ma_uint64 framesRead = 0;
-        // Читаем звук из декодера в выходной буфер звуковой карты
-        ma_decoder_read_pcm_frames(&engine->m_decoder, pOutput, frameCount, &framesRead);
+    // Читаем из кольцевого буфера
+    size_t bytesRead = engine->m_pcmBuffer.Read(static_cast<uint8_t*>(pOutput), bytesToRead);
 
-        if (framesRead < frameCount) {
-            ma_uint32 bytesToClear = (frameCount - framesRead) * pDevice->playback.channels * ma_get_bytes_per_sample(pDevice->playback.format);
-            void* pTail = (ma_uint8*)pOutput + (framesRead * pDevice->playback.channels * ma_get_bytes_per_sample(pDevice->playback.format));
-            std::memset(pTail, 0, bytesToClear);
-
-            // TODO: OnTrackFinished()
-        }
-    } else {
-        ma_uint32 bytesToClear = frameCount * pDevice->playback.channels * ma_get_bytes_per_sample(pDevice->playback.format);
-        std::memset(pOutput, 0, bytesToClear);
+    if (bytesRead < bytesToRead) {
+        std::memset(static_cast<uint8_t*>(pOutput) + bytesRead, 0, bytesToRead - bytesRead);
     }
 }
 
@@ -51,7 +50,7 @@ bool MiniaudioEngine::Init() {
     // Инициализация RingBuffer (<a> Гц * <b> каналов * <тип данных>) * <c> сек)
     m_pcmBuffer.Init(44100 * 2 * sizeof(float) * 5);
     ma_device_config deviceConfig = ma_device_config_init(ma_device_type_playback);
-    deviceConfig.playback.format   = ma_format_f32;
+    deviceConfig.playback.format   = ma_format_s16;
     deviceConfig.playback.channels = 2;
     deviceConfig.sampleRate        = 44100;
     deviceConfig.dataCallback      = DataCallback;
@@ -131,10 +130,89 @@ void MiniaudioEngine::SetVolume(float volume) {
     }
 }
 
-float MiniaudioEngine::GetVolume() const { return m_volume; }
-bool MiniaudioEngine::IsPlaying() const { return m_isPlaying; }
+void MiniaudioEngine::PushNetworkData(const uint8_t* data, size_t size) {
+    std::lock_guard<std::mutex> lock(m_networkMutex);
+    m_aacBuffer.insert(m_aacBuffer.end(), data, data + size);
 
-void MiniaudioEngine::SetPositionSeconds(double pos) {}
-double MiniaudioEngine::GetPositionSeconds() const { return 0.0; }
-double MiniaudioEngine::GetLengthSeconds() const { return 0.0; }
-std::vector<float> MiniaudioEngine::GetSpectrumData() const { return std::vector<float>(128, 0.0f); }
+    DecodeAACFrames();
+}
+
+void MiniaudioEngine::DecodeAACFrames() {
+    // вес MPEG-TS пакета
+    while (m_aacBuffer.size() >= 188) {
+
+        // 1. поиск байта 0x47 с шагом 1
+        if (m_aacBuffer[0] != 0x47) {
+            m_aacBuffer.erase(m_aacBuffer.begin());
+            continue;
+        }
+
+        // 2. Читаем битовые флаги заголовка TS
+        uint8_t pusi = (m_aacBuffer[1] & 0x40) >> 6; // Payload Unit Start Indicator
+        uint8_t afc  = (m_aacBuffer[3] & 0x30) >> 4; // Adaptation Field Control
+
+        size_t payloadOffset = 4; // Данные по умолчанию начинаются после 4-го байта
+
+        if (afc == 2 || afc == 3) {
+            uint8_t afLength = m_aacBuffer[4];
+            payloadOffset += 1 + afLength;
+        }
+
+        // 3. Если внутри есть полезная нагрузка
+        if ((afc == 1 || afc == 3) && payloadOffset < 188) {
+            size_t payloadSize = 188 - payloadOffset;
+            const uint8_t* payload = m_aacBuffer.data() + payloadOffset;
+
+            // 4. Если PUSI == 1, значит начинается PES-контейнер
+            if (pusi == 1 && payloadSize >= 9 && payload[0] == 0x00 && payload[1] == 0x00 && payload[2] == 0x01) {
+                uint8_t pesHeaderLen = payload[8]; // Длина заголовка PES
+                size_t pesTotalOffset = 9 + pesHeaderLen;
+
+                if (pesTotalOffset < payloadSize) {
+                    payload += pesTotalOffset;       // Сдвигаем указатель к чистым аудиоданным
+                    payloadSize -= pesTotalOffset;
+                } else {
+                    payloadSize = 0;
+                }
+            }
+
+            // 5. передаем читстый aac в декодер FDK
+            if (payloadSize > 0) {
+                UCHAR* pBuffer = const_cast<UCHAR*>(payload);
+                UINT bufferSize = static_cast<UINT>(payloadSize);
+                UINT bytesValid = bufferSize;
+
+                // Загружаем байты в память кодека
+                aacDecoder_Fill(m_aacDecoder, &pBuffer, &bufferSize, &bytesValid);
+
+                // Декодируем все в чанке
+                while (true) {
+                    // Создаем буфер под сырой PCM
+                    std::vector<int16_t> pcmBuf(4096);
+
+                    AAC_DECODER_ERROR err = aacDecoder_DecodeFrame(m_aacDecoder, pcmBuf.data(), pcmBuf.size(), 0);
+
+                    if (err == AAC_DEC_NOT_ENOUGH_BITS) {
+                        break; // Кодеку не хватает байтов для целого кадра, ждем следующий TS-пакет
+                    }
+                    if (err != AAC_DEC_OK) {
+                        break; // Попался битый кадр, игнорируем
+                    }
+
+                    // узнаем размер декодированного кадра
+                    CStreamInfo* info = aacDecoder_GetStreamInfo(m_aacDecoder);
+                    if (info && info->sampleRate > 0) {
+                        // Считаем размер в байтах: кол-во сэмплов * каналы * размер int16_t
+                        size_t bytesToOutput = info->frameSize * info->numChannels * sizeof(int16_t);
+
+                        // передаем готовый звук в потокобезопасный кольцевой буфер
+                        m_pcmBuffer.Write(reinterpret_cast<uint8_t*>(pcmBuf.data()), bytesToOutput);
+                    }
+                }
+            }
+        }
+
+        // Выкидываем обработанный кусок и идем к следующему
+        m_aacBuffer.erase(m_aacBuffer.begin(), m_aacBuffer.begin() + 188);
+    }
+}
