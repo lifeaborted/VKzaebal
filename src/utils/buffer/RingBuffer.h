@@ -6,6 +6,8 @@
 class RingBuffer {
 public:
     explicit RingBuffer(size_t size);
+    // пустой конструктор
+    RingBuffer();
     
     // передача данных
     size_t Write(const uint8_t* data, size_t sizeToWrite);
@@ -18,6 +20,12 @@ public:
     
     // Узнать, сколько свободного места осталось
     size_t GetAvailableWrite() const;
+
+    // методы инициализации
+    void Init(size_t size);
+
+    // методы очистки
+    void Clear();
 
 private:
     std::vector<uint8_t> m_buffer;

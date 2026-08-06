@@ -59,3 +59,26 @@ size_t RingBuffer::Read(uint8_t* data, size_t sizeToRead) {
 
     return actualRead;
 }
+
+// Пустой конструктор для инициализации
+RingBuffer::RingBuffer()
+    : m_capacity(0), m_readPos(0), m_writePos(0), m_availableBytes(0) {
+}
+
+// Отложенная инициализация
+void RingBuffer::Init(size_t size) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_capacity = size;
+    m_buffer.resize(size);
+    m_readPos = 0;
+    m_writePos = 0;
+    m_availableBytes = 0;
+}
+
+// Очистка буфера
+void RingBuffer::Clear() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_readPos = 0;
+    m_writePos = 0;
+    m_availableBytes = 0;
+}

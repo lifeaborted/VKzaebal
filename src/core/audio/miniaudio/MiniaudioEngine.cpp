@@ -18,6 +18,9 @@ MiniaudioEngine::~MiniaudioEngine() {
     if (m_isDecoderInitialized) {
         ma_decoder_uninit(&m_decoder);
     }
+    if (m_aacDecoder) {
+        aacDecoder_Close(m_aacDecoder);
+    }
 }
 
 void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
@@ -45,12 +48,20 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
 }
 
 bool MiniaudioEngine::Init() {
+    // Инициализация RingBuffer (<a> Гц * <b> каналов * <тип данных>) * <c> сек)
+    m_pcmBuffer.Init(44100 * 2 * sizeof(float) * 5);
     ma_device_config deviceConfig = ma_device_config_init(ma_device_type_playback);
     deviceConfig.playback.format   = ma_format_f32;
     deviceConfig.playback.channels = 2;
     deviceConfig.sampleRate        = 44100;
     deviceConfig.dataCallback      = DataCallback;
     deviceConfig.pUserData         = this;
+
+    m_aacDecoder = aacDecoder_Open(TT_MP4_ADTS, 1);
+    if (!m_aacDecoder) {
+        Logger::Log(LogLevel::ERROR, "Miniaudio: Failed to open FDK-AAC decoder.");
+        return false;
+    }
 
     if (ma_device_init(NULL, &deviceConfig, &m_device) != MA_SUCCESS) {
         Logger::Log(LogLevel::ERROR, "Miniaudio: Failed to init playback device.");

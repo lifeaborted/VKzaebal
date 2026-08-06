@@ -2,6 +2,7 @@
 #include "core/audio/IAudioEngine.h"
 #include "miniaudio.h"
 #include "utils/buffer/RingBuffer.h"
+#include "aacdecoder_lib.h" // <--- Инклуд FDK-AAC
 #include <string>
 #include <atomic>
 #include <vector>
@@ -12,7 +13,6 @@ public:
     MiniaudioEngine();
     ~MiniaudioEngine() override;
 
-    // --- Реализация интерфейса IAudioEngine ---
     bool Init() override;
     bool PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId = "") override;
     void Pause() override;
@@ -26,20 +26,23 @@ public:
     double GetLengthSeconds() const override;
     std::vector<float> GetSpectrumData() const override;
 
+    // Метод, куда NetworkStreamer будет пушить скачанные байты AAC
+    void PushNetworkData(const uint8_t* data, size_t size);
+
 private:
     static void DataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
 
+    // Внутренняя функция для декодирования ADTS пакетов
+    void DecodeAACFrames();
     ma_device m_device;
     bool m_isDeviceInitialized = false;
-
     float m_volume = 1.0f;
     std::atomic<bool> m_isPlaying = false;
-
-    // todo:
-    // - std::thread (поток для скачивания из сети)
-    // - экземпляры RingBuffer для аудиоданных
-
     ma_decoder m_decoder;                // Декодер для чтения файлов
     bool m_isDecoderInitialized = false; // Флаг состояния декодера
     std::mutex m_audioMutex;             // Защита от конфликта потоков
+    HANDLE_AACDECODER m_aacDecoder = nullptr; // Указатель на FDK-AAC декодер
+    RingBuffer m_pcmBuffer;                   // Потокобезопасный буфер для PCM
+    std::vector<uint8_t> m_aacBuffer;         // Временный буфер для сырых скачанных данных
+    std::mutex m_networkMutex;                // Защита буфера скачивания
 };
