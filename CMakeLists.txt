@@ -28,8 +28,8 @@ set(PROJECT_SOURCES
         src/core/audio/bass/BassEngine.h
         src/core/audio/bass/BassEngine.cpp
         src/core/audio/miniaudio/miniaudio_impl.cpp
-        #src/core/audio/miniaudio/MiniaudioEngine.h
-        #src/core/audio/miniaudio/MiniaudioEngine.cpp
+        src/core/audio/miniaudio/MiniaudioEngine.h
+        src/core/audio/miniaudio/MiniaudioEngine.cpp
 
         # Playlist
         src/core/playlist/PlaylistManager.h
@@ -64,6 +64,9 @@ set(PROJECT_SOURCES
         src/utils/logger/Logger.cpp
 )
 
+# --- Подключаем внешние библиотеки ---
+add_subdirectory(libs/fdk-aac)
+
 # Создаем исполняемый файл
 add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
 
@@ -91,6 +94,7 @@ if (WIN32)
             ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/basshls.lib
             ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/bassenc.lib
             ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/bassenc_mp3.lib
+            fdk-aac
     )
 elseif (UNIX AND NOT APPLE)
     # Для Linux ищем .so файлы (Shared Objects)

@@ -21,6 +21,7 @@
 #include "services/database/DatabaseManager.h"
 #include "services/downloader/TrackDownloader.h"
 #include "core/lyrics/LyricsFetcher.h"
+#include "core/audio/miniaudio/MiniaudioEngine.h"
 
 
 int main(int argc, char *argv[]) {
@@ -43,7 +44,8 @@ int main(int argc, char *argv[]) {
     DatabaseManager dbManager;
     if (!dbManager.Init()) return -1;
 
-    BassEngine audio;
+    //BassEngine audio;
+    MiniaudioEngine audio;
     if (!audio.Init()) return -1;
 
     PlaylistManager playlist;
