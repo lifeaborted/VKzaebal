@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(VKAudioPlayer VERSION 0.1 LANGUAGES CXX)
+project(VKAudioPlayer VERSION 0.1 LANGUAGES C CXX)
 
 # Задаем стандарт C++20
 set(CMAKE_CXX_STANDARD 20)
@@ -68,13 +68,16 @@ set(PROJECT_SOURCES
 add_subdirectory(libs/fdk-aac)
 
 # Создаем исполняемый файл
-add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
+add_executable(${PROJECT_NAME}
+        ${PROJECT_SOURCES}
+        libs/tiny-aes/aes.c)
 
 # Привязываем путь к заголовкам
 target_include_directories(${PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass
         ${CMAKE_CURRENT_SOURCE_DIR}/libs/fdk-aac/libAACdec/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/tiny-aes
 )
 
 # Линкуем модули Qt с приложением

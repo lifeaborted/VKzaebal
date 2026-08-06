@@ -3,10 +3,15 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QByteArray>
-#include <QQueue>       // ДОБАВЛЕНО
-#include <QUrl>         // ДОБАВЛЕНО
-#include <QStringList>  // ДОБАВЛЕНО
+#include <QQueue>
+#include <QUrl>
+#include <QStringList>
 #include <string>
+
+// Подключаем C-библиотеку для дешифровки
+extern "C" {
+#include "aes.h"
+}
 
 class NetworkStreamer : public QObject {
     Q_OBJECT
@@ -17,8 +22,8 @@ public:
     void StartDownload(const std::string& url);
     void StopDownload();
 
-    signals:
-        void DataReceived(const QByteArray& data);
+signals:
+    void DataReceived(const QByteArray& data);
     void DownloadFinished();
     void DownloadError(const std::string& errorString);
 
@@ -28,17 +33,26 @@ public slots:
 
 private slots:
     void OnReadyRead();
-    void OnFinished();
+    void OnChunkFinished();
     void OnErrorOccurred(QNetworkReply::NetworkError code);
 
 private:
-    // НОВЫЕ МЕТОДЫ ДЛЯ HLS
     void ParseM3u8(const QString& manifestData, const QUrl& baseUrl);
     void DownloadNextChunk();
+    void DownloadKey();          // Скачивание AES-ключа
+    void DecryptAndPushChunk();  // Расшифровка и передача данных
 
     bool m_isPaused = false;
     QNetworkAccessManager* m_manager;
     QNetworkReply* m_reply;
 
-    QQueue<QUrl> m_chunkQueue; // ДОБАВЛЕНО: Очередь для хранения ссылок на куски аудио
+    QQueue<QUrl> m_chunkQueue;
+
+    // --- ПЕРЕМЕННЫЕ ДЛЯ HLS AES-128 ---
+    bool m_isEncrypted = false;
+    uint64_t m_mediaSequence = 0;
+    QUrl m_keyUrl;
+    QByteArray m_aesKey;
+    QByteArray m_aesIV;
+    QByteArray m_currentChunkData; // Буфер для накопления целого чанка
 };

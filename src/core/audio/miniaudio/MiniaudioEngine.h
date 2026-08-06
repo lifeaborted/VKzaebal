@@ -46,4 +46,5 @@ private:
     RingBuffer m_pcmBuffer;                   // Потокобезопасный буфер для PCM
     std::vector<uint8_t> m_aacBuffer;         // Временный буфер для сырых скачанных данных
     std::mutex m_networkMutex;                // Защита буфера скачивания
+    std::atomic<ma_uint64> m_playbackFrameCount{0};
 };

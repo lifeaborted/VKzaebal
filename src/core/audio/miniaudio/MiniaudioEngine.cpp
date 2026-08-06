@@ -27,13 +27,14 @@ float MiniaudioEngine::GetVolume() const { return m_volume; }
 bool MiniaudioEngine::IsPlaying() const { return m_isPlaying; }
 
 void MiniaudioEngine::SetPositionSeconds(double pos) {}
-double MiniaudioEngine::GetPositionSeconds() const { return 0.0; }
+double MiniaudioEngine::GetPositionSeconds() const { return static_cast<double>(m_playbackFrameCount.load()) / 44100.0; }
 double MiniaudioEngine::GetLengthSeconds() const { return 0.0; }
 std::vector<float> MiniaudioEngine::GetSpectrumData() const { return std::vector<float>(128, 0.0f); }
 
 void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
     MiniaudioEngine* engine = static_cast<MiniaudioEngine*>(pDevice->pUserData);
     if (!engine) return;
+    engine->m_playbackFrameCount += frameCount;
 
     if (engine->m_isDecoderInitialized) {
         // --- 1. локальный файл ---
@@ -244,6 +245,7 @@ void MiniaudioEngine::ClearBuffers() {
     }
 
     m_pcmBuffer.Clear();
+    m_playbackFrameCount = 0;
 
     std::lock_guard<std::mutex> netLock(m_networkMutex);
     m_aacBuffer.clear();
