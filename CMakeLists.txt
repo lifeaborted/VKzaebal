@@ -28,8 +28,8 @@ set(PROJECT_SOURCES
         src/core/audio/bass/BassEngine.h
         src/core/audio/bass/BassEngine.cpp
         src/core/audio/miniaudio/miniaudio_impl.cpp
-        src/core/audio/miniaudio/MiniaudioEngine.h
-        src/core/audio/miniaudio/MiniaudioEngine.cpp
+        #src/core/audio/miniaudio/MiniaudioEngine.h
+        #src/core/audio/miniaudio/MiniaudioEngine.cpp
 
         # Playlist
         src/core/playlist/PlaylistManager.h
@@ -89,6 +89,8 @@ if (WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/bass.lib
             ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/basshls.lib
+            ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/bassenc.lib
+            ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/bassenc_mp3.lib
     )
 elseif (UNIX AND NOT APPLE)
     # Для Linux ищем .so файлы (Shared Objects)

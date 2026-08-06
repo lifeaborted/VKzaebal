@@ -20,4 +20,15 @@ struct Track {
         std::string sec = s < 10 ? "0" + std::to_string(s) : std::to_string(s);
         return min + ":" + sec;
     }
+
+    std::string GetSafeFilename() const {
+        std::string name = artist + " - " + title;
+        const std::string invalidChars = "\\/:*?\"<>|";
+        for (char& c : name) {
+            if (invalidChars.find(c) != std::string::npos) {
+                c = '_';
+            }
+        }
+        return name;
+    }
 };

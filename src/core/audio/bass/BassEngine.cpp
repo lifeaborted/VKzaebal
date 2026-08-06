@@ -84,7 +84,7 @@ bool BassEngine::PlayStream(const std::string& url, int durationSec, bool crossf
             m_fadingStream = m_activeStream;
 
             // Плавно глушим старый трек за m_crossfadeDurationMs мс
-            BASS_ChannelSlideAttribute(m_fadingStream, BASS_ATTRIB_VOL, -1.0f, m_crossfadeDurationMs);
+            BASS_ChannelSlideAttribute(m_fadingStream, BASS_ATTRIB_VOL, 0.0f, m_crossfadeDurationMs);
 
             // Ставим хук: как только громкость упадет до 0, вычищаем трек из памяти
             BASS_ChannelSetSync(m_fadingStream, BASS_SYNC_SLIDE | BASS_SYNC_ONETIME, 0,
@@ -102,7 +102,7 @@ bool BassEngine::PlayStream(const std::string& url, int durationSec, bool crossf
     }
 
     // --- ЛОГИКА ОФФЛАЙН ВОСПРОИЗВЕДЕНИЯ ---
-    QString localPath = QString::fromStdString("downloads/" + trackId + ".wav"); // <-- Изменение здесь
+    QString localPath = QString::fromStdString("downloads/" + trackId + ".mp3");
 
     // играем с диска
     if (!trackId.empty() && QFile::exists(localPath)) {

@@ -9,9 +9,10 @@
 #include <cctype>
 #include <QCoreApplication>
 #include <QMetaObject>
+#include <cmath>
 
 #include "ConsoleController.h"
-#include "../../core/audio/IAudioEngine.h"
+#include "core/audio/IAudioEngine.h"
 #include "core/playlist/PlaylistManager.h"
 #include "core/vk/auth/Manager.h"
 #include "services/database/DatabaseManager.h"
@@ -64,6 +65,7 @@ void ConsoleController::InputLoop() {
 
     auto syncPrint = [](const std::string& text) {
         QMetaObject::invokeMethod(QCoreApplication::instance(), [text]() {
+            std::lock_guard<std::mutex> lock(Logger::GetMutex());
             std::cout << "\r\033[2K\033[1A\r\033[2K" << text;
             std::cout.flush();
         }, Qt::QueuedConnection);
@@ -140,7 +142,7 @@ void ConsoleController::InputLoop() {
                 }
 
                 if (isValid && !targetTrack.id.empty()) {
-                    QString path = "downloads/" + QString::fromStdString(targetTrack.id) + ".wav";
+                    QString path = "downloads/" + QString::fromStdString(targetTrack.GetSafeFilename()) + ".mp3";
 
                     if (cmdType == "dl") {
                         if (QFile::exists(path)) {
@@ -189,7 +191,7 @@ void ConsoleController::InputLoop() {
             }
 
             if (lowerInput == "cv") {
-                int vol = static_cast<int>(m_audio.GetVolume() * 100);
+                int vol = static_cast<int>(std::round(m_audio.GetVolume() * 100));
                 syncPrint("[Громкость] Текущая громкость: " + std::to_string(vol) + "%\n\n> ");
                 continue;
             }
@@ -274,19 +276,50 @@ void ConsoleController::InputLoop() {
             }
 
             if (lowerInput.length() > 7 && lowerInput.substr(0, 7) == "search ") {
-                QString query = QString::fromStdString(input.substr(7)).trimmed();
+                std::string query = input.substr(7);
+                std::string searchArtist = query;
+                std::string searchTitle = query;
+                bool isSplit = false;
 
-                if (!query.isEmpty()) {
+                size_t dashPos = query.find("-");
+                if (dashPos != std::string::npos) {
+                    searchArtist = query.substr(0, dashPos);
+                    searchTitle = query.substr(dashPos + 1);
+
+                    auto trim = [](std::string& s) {
+                        s.erase(0, s.find_first_not_of(" \t"));
+                        s.erase(s.find_last_not_of(" \t") + 1);
+                    };
+                    trim(searchArtist);
+                    trim(searchTitle);
+                    isSplit = true;
+                }
+
+                // Переводим в нижний регистр для независимого от регистра поиска
+                QString qArtist = QString::fromStdString(searchArtist).trimmed();
+                QString qTitle = QString::fromStdString(searchTitle).trimmed();
+                QString qFull = QString::fromStdString(query).trimmed();
+
+                if (!qFull.isEmpty()) {
                     std::vector<Track> queue = m_playlist.GetQueueTracks();
                     std::string s(50, '-');
-                    std::string res = "[Поиск] Результаты по запросу \"" + query.toStdString() + "\":\n" + s + "\n";
+                    std::string res = "[Поиск] Результаты по запросу \"" + qFull.toStdString() + "\":\n" + s + "\n";
 
                     int matchCount = 0;
                     for (size_t i = 0; i < queue.size(); ++i) {
-                        QString artist = QString::fromStdString(queue[i].artist);
-                        QString title = QString::fromStdString(queue[i].title);
+                        QString trackArtist = QString::fromStdString(queue[i].artist);
+                        QString trackTitle = QString::fromStdString(queue[i].title);
 
-                        if (artist.contains(query, Qt::CaseInsensitive) || title.contains(query, Qt::CaseInsensitive)) {
+                        bool match = false;
+                        if (isSplit) {
+                            match = trackArtist.contains(qArtist, Qt::CaseInsensitive) &&
+                                    trackTitle.contains(qTitle, Qt::CaseInsensitive);
+                        } else {
+                            match = trackArtist.contains(qFull, Qt::CaseInsensitive) ||
+                                    trackTitle.contains(qFull, Qt::CaseInsensitive);
+                        }
+
+                        if (match) {
                             res += "[" + std::to_string(i + 1) + "]. " + queue[i].artist + " - " + queue[i].title
                                    + " [" + queue[i].GetFormattedDuration() + "]\n";
                             matchCount++;
@@ -493,6 +526,7 @@ void ConsoleController::UiLoop() {
                 std::string trackName = std::to_string(trackIndex) + ". " + currentTrack.artist + " - " + currentTrack.title;
 
                 QMetaObject::invokeMethod(QCoreApplication::instance(), [trackName, curMin, curSec, totMin, totSec, bar, percent, spectrum]() {
+                    std::lock_guard<std::mutex> lock(Logger::GetMutex());
                     printf("\033[s"
                            "\033[1A"
                            "\r\033[2K%s | %02d:%02d / %02d:%02d %s %d%%%s"

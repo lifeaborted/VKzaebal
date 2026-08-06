@@ -10,6 +10,7 @@
 namespace fs = std::filesystem;
 
 static std::ofstream logFile;
+std::mutex Logger::s_mutex;
 
 void Logger::Init() {
     // Создаем папку logs, если её нет
@@ -26,6 +27,9 @@ void Logger::Init() {
 }
 
 void Logger::Log(LogLevel level, const std::string& message) {
+#ifdef NDEBUG
+    return;
+#endif
     // Получаем текущее время
     auto now = std::chrono::system_clock::now();
     auto in_time_t = std::chrono::system_clock::to_time_t(now);
@@ -43,8 +47,9 @@ void Logger::Log(LogLevel level, const std::string& message) {
     }
 
     std::string fullMessage = timeStr + levelStr + message;
-
     std::string clearUi = "\r\033[2K\033[1A\r\033[2K";
+
+    std::lock_guard<std::mutex> lock(s_mutex);
 
     if (level == LogLevel::ERROR) {
         std::cerr << clearUi << fullMessage << "\n\n> ";

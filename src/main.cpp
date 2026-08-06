@@ -53,6 +53,10 @@ int main(int argc, char *argv[]) {
     LyricsFetcher lyricsFetcher;
 
     bool crossfadeEnabled = settings.value("Audio/CrossfadePlayback", false).toBool();
+    bool isShuffle = settings.value("Session/Shuffle", false).toBool();
+    bool autoPlay = settings.value("Session/AutoPlay", false).toBool();
+
+    playlist.SetShuffle(isShuffle); // Применяем шафл к плейлисту
     Track preloadedTrack;
     std::string cachedNextUrl = "";
 
@@ -79,7 +83,7 @@ int main(int argc, char *argv[]) {
             } else {
                 // в оффлайне только локальные файлы
                 for (const auto& t : cachedTracks) {
-                    QString path = "downloads/" + QString::fromStdString(t.id) + ".wav";
+                    QString path = "downloads/" + QString::fromStdString(t.GetSafeFilename()) + ".mp3";
                     if (QFile::exists(path)) {
                         playlist.AddTrack(t);
                     }
@@ -90,7 +94,9 @@ int main(int argc, char *argv[]) {
         if (playlist.HasTracks()) {
             std::cout << "\r\033[2K"
                       << "=== ПЛЕЕР ГОТОВ К РАБОТЕ ===\n"
-                      << (isOnline ? "" : "[ОФФЛАЙН] В плейлист загружены только скачанные треки.\n")
+                      << "Режим очереди: " << (isShuffle ? "Шафл (Случайный)" : "Стандартный") << "\n"
+                      << "Автостарт: " << (autoPlay ? "ВКЛ" : "ВЫКЛ") << "\n"
+                      << (isOnline ? "" : "[ОФФЛАЙН] Загружены только скачанные треки.\n")
                       << "Введите 'h' для вывода списка команд\n\n> ";
             std::cout.flush();
 
@@ -100,6 +106,11 @@ int main(int argc, char *argv[]) {
                 playlist.JumpTo(savedTrackIndex);
             } else {
                 playlist.OnTrackRequested(playlist.GetCurrentTrack());
+            }
+
+            // Если автоплей выключен - сразу ставим на паузу
+            if (!autoPlay) {
+                audio.Pause();
             }
         } else {
             std::cout << "\n[Оффлайн] Нет скачанных треков. Плеер пуст.\n> ";
@@ -143,11 +154,11 @@ int main(int argc, char *argv[]) {
     attemptPlay = [&](Track track, int attempt) {
         int currentGen = (attempt == 1) ? ++playbackGeneration : playbackGeneration.load();
 
-        QString localPath = "downloads/" + QString::fromStdString(track.id) + ".wav";
+        QString localPath = "downloads/" + QString::fromStdString(track.GetSafeFilename()) + ".mp3";
         bool isDownloaded = QFile::exists(localPath);
 
         if (attempt == 1 && !cachedNextUrl.empty() && preloadedTrack.id == track.id && !isDownloaded) {
-            if (audio.PlayStream(cachedNextUrl, track.duration, crossfadeEnabled, track.id)) {
+            if (audio.PlayStream(cachedNextUrl, track.duration, crossfadeEnabled, track.GetSafeFilename())) {
                 cachedNextUrl = "";
                 skipCount = 0;
                 if (savedPosition > 0.0) {
@@ -166,7 +177,7 @@ int main(int argc, char *argv[]) {
 
         if (isDownloaded) {
             skipCount = 0;
-            if (audio.PlayStream("", track.duration, crossfadeEnabled, track.id)) {
+            if (audio.PlayStream("", track.duration, crossfadeEnabled, track.GetSafeFilename())) {
                 if (savedPosition > 0.0) {
                     audio.SetPositionSeconds(savedPosition);
                     savedPosition = 0.0;
@@ -200,7 +211,7 @@ int main(int argc, char *argv[]) {
 
             skipCount = 0;
 
-            if (!freshUrl.empty() && audio.PlayStream(freshUrl, track.duration, crossfadeEnabled, track.id)) {
+            if (!freshUrl.empty() && audio.PlayStream(freshUrl, track.duration, crossfadeEnabled, track.GetSafeFilename())) {
                 if (savedPosition > 0.0) {
                     audio.SetPositionSeconds(savedPosition);
                     savedPosition = 0.0;
@@ -316,6 +327,7 @@ int main(int argc, char *argv[]) {
         settings.setValue("Session/Volume", audio.GetVolume());
         settings.setValue("Session/CurrentTrackIndex", playlist.GetCurrentAbsoluteIndex());
         settings.setValue("Session/Position", audio.GetPositionSeconds());
+        settings.setValue("Session/Shuffle", playlist.IsShuffle());
         settings.sync();
     });
 
