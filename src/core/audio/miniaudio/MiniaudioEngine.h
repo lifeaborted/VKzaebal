@@ -28,6 +28,7 @@ public:
 
     // Метод, куда NetworkStreamer будет пушить скачанные байты AAC
     void PushNetworkData(const uint8_t* data, size_t size);
+    void ClearBuffers();
 
 private:
     static void DataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);

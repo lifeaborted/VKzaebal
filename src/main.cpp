@@ -22,6 +22,7 @@
 #include "services/downloader/TrackDownloader.h"
 #include "core/lyrics/LyricsFetcher.h"
 #include "core/audio/miniaudio/MiniaudioEngine.h"
+#include "services/network/NetworkStreamer.h"
 
 
 int main(int argc, char *argv[]) {
@@ -53,6 +54,7 @@ int main(int argc, char *argv[]) {
     Manager authManager;
     TrackDownloader downloader;
     LyricsFetcher lyricsFetcher;
+    NetworkStreamer streamer;
 
     bool crossfadeEnabled = settings.value("Audio/CrossfadePlayback", false).toBool();
     bool isShuffle = settings.value("Session/Shuffle", false).toBool();
@@ -70,6 +72,12 @@ int main(int argc, char *argv[]) {
 
     std::vector<Track> cachedTracks = dbManager.LoadTracks();
     bool isPlaybackStarted = false;
+
+    // Связываем скачивание из сети с демуксером в движке
+    QObject::connect(&streamer, &NetworkStreamer::DataReceived, [&](const QByteArray& data) {
+        // Переводим QByteArray в uint8_t байты  и пушим в декодер FDK-AAC
+        audio.PushNetworkData(reinterpret_cast<const uint8_t*>(data.constData()), data.size());
+    });
 
     ConsoleController console(audio, playlist, authManager, dbManager, vkClient, downloader, lyricsFetcher);
     QObject::connect(&console, &ConsoleController::QuitRequested, &app, &QCoreApplication::quit);
@@ -192,7 +200,7 @@ int main(int argc, char *argv[]) {
             return;
         }
 
-        auto executePlay = [track, attempt, currentGen, &audio, &playlist, &vkClient, &attemptPlay, &playbackGeneration, &savedPosition, &crossfadeEnabled, &skipCount](const std::string& freshUrl, bool isNetworkError) {
+        auto executePlay = [track, attempt, currentGen, &audio, &playlist, &vkClient, &attemptPlay, &playbackGeneration, &savedPosition, &crossfadeEnabled, &skipCount, &streamer](const std::string& freshUrl, bool isNetworkError) {
             if (currentGen != playbackGeneration.load()) return;
 
             if (!isNetworkError && freshUrl.empty()) {
@@ -213,7 +221,16 @@ int main(int argc, char *argv[]) {
 
             skipCount = 0;
 
-            if (!freshUrl.empty() && audio.PlayStream(freshUrl, track.duration, crossfadeEnabled, track.GetSafeFilename())) {
+            if (!freshUrl.empty()) {
+                streamer.StopDownload();
+
+                // Очищаем состояние движка перед новым треком
+                audio.ClearBuffers();
+
+                // Запускаем скачивание нового трека
+                streamer.StartDownload(freshUrl);
+                audio.Resume();
+
                 if (savedPosition > 0.0) {
                     audio.SetPositionSeconds(savedPosition);
                     savedPosition = 0.0;

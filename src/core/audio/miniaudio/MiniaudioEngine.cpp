@@ -35,20 +35,33 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
     MiniaudioEngine* engine = static_cast<MiniaudioEngine*>(pDevice->pUserData);
     if (!engine) return;
 
-    // Считаем, сколько байт звуковая карта просит прямо сейчас
-    ma_uint32 bytesToRead = frameCount * pDevice->playback.channels * ma_get_bytes_per_sample(pDevice->playback.format);
+    if (engine->m_isDecoderInitialized) {
+        // --- 1. локальный файл ---
+        ma_uint64 framesRead = 0;
+        ma_decoder_read_pcm_frames(&engine->m_decoder, pOutput, frameCount, &framesRead);
 
-    // Читаем из кольцевого буфера
-    size_t bytesRead = engine->m_pcmBuffer.Read(static_cast<uint8_t*>(pOutput), bytesToRead);
+        if (framesRead < frameCount) {
+            ma_uint32 bytesPerFrame = pDevice->playback.channels * ma_get_bytes_per_sample(pDevice->playback.format);
+            void* pTail = static_cast<uint8_t*>(pOutput) + (framesRead * bytesPerFrame);
+            std::memset(pTail, 0, (frameCount - framesRead) * bytesPerFrame);
+        }
+    } else {
+        // --- 2. сетевой поток ---
+        // Считаем, сколько байт звуковая карта просит прямо сейчас
+        ma_uint32 bytesToRead = frameCount * pDevice->playback.channels * ma_get_bytes_per_sample(pDevice->playback.format);
+        // Читаем из кольцевого буфера
+        size_t bytesRead = engine->m_pcmBuffer.Read(static_cast<uint8_t*>(pOutput), bytesToRead);
 
-    if (bytesRead < bytesToRead) {
-        std::memset(static_cast<uint8_t*>(pOutput) + bytesRead, 0, bytesToRead - bytesRead);
+        if (bytesRead < bytesToRead) {
+            std::memset(static_cast<uint8_t*>(pOutput) + bytesRead, 0, bytesToRead - bytesRead);
+        }
+        engine->DecodeAACFrames();
     }
 }
 
 bool MiniaudioEngine::Init() {
     // Инициализация RingBuffer (<a> Гц * <b> каналов * <тип данных>) * <c> сек)
-    m_pcmBuffer.Init(44100 * 2 * sizeof(float) * 5);
+    m_pcmBuffer.Init(44100 * 2 * sizeof(int16_t) * 5);
     ma_device_config deviceConfig = ma_device_config_init(ma_device_type_playback);
     deviceConfig.playback.format   = ma_format_s16;
     deviceConfig.playback.channels = 2;
@@ -83,7 +96,7 @@ bool MiniaudioEngine::PlayStream(const std::string& url, int durationSec, bool c
     QString localPath = QString::fromStdString("downloads/" + trackId + ".mp3");
 
     if (!trackId.empty() && QFile::exists(localPath)) {
-        ma_decoder_config decoderConfig = ma_decoder_config_init(ma_format_f32, 2, 44100);
+        ma_decoder_config decoderConfig = ma_decoder_config_init(ma_format_s16, 2, 44100);
 
         #ifdef _WIN32
         if (ma_decoder_init_file_w(reinterpret_cast<const wchar_t*>(localPath.utf16()), &decoderConfig, &m_decoder) != MA_SUCCESS) {
@@ -114,7 +127,7 @@ void MiniaudioEngine::Pause() {
 }
 
 void MiniaudioEngine::Resume() {
-    if (m_isDeviceInitialized && !m_isPlaying && m_isDecoderInitialized) {
+    if (m_isDeviceInitialized && !m_isPlaying) {
         m_isPlaying = true;
         ma_device_start(&m_device);
     }
@@ -131,17 +144,22 @@ void MiniaudioEngine::SetVolume(float volume) {
 }
 
 void MiniaudioEngine::PushNetworkData(const uint8_t* data, size_t size) {
-    std::lock_guard<std::mutex> lock(m_networkMutex);
-    m_aacBuffer.insert(m_aacBuffer.end(), data, data + size);
-
+    {
+        std::lock_guard<std::mutex> lock(m_networkMutex);
+        m_aacBuffer.insert(m_aacBuffer.end(), data, data + size);
+    }
+    // Пробуем декодировать то, что пришло
     DecodeAACFrames();
 }
 
 void MiniaudioEngine::DecodeAACFrames() {
-    // вес MPEG-TS пакета
-    while (m_aacBuffer.size() >= 188) {
+    std::lock_guard<std::mutex> lock(m_networkMutex);
 
-        // 1. поиск байта 0x47 с шагом 1
+    while (m_aacBuffer.size() >= 188) {
+        if (m_pcmBuffer.GetAvailableWrite() < 176400) {
+            break; // Оставляем сырые данные в m_aacBuffer до тех пор, пока буфер не освободится
+        }
+
         if (m_aacBuffer[0] != 0x47) {
             m_aacBuffer.erase(m_aacBuffer.begin());
             continue;
@@ -215,4 +233,18 @@ void MiniaudioEngine::DecodeAACFrames() {
         // Выкидываем обработанный кусок и идем к следующему
         m_aacBuffer.erase(m_aacBuffer.begin(), m_aacBuffer.begin() + 188);
     }
+}
+
+void MiniaudioEngine::ClearBuffers() {
+    std::lock_guard<std::mutex> lock(m_audioMutex);
+
+    if (m_isDecoderInitialized) {
+        ma_decoder_uninit(&m_decoder);
+        m_isDecoderInitialized = false;
+    }
+
+    m_pcmBuffer.Clear();
+
+    std::lock_guard<std::mutex> netLock(m_networkMutex);
+    m_aacBuffer.clear();
 }
