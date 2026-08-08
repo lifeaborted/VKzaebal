@@ -8,7 +8,31 @@
 #include <chrono>
 #include <QCoreApplication>
 #include <QSettings>
+#include <complex>
+#include <cmath>
 
+const double PI = 3.14159265358979323846;
+typedef std::complex<double> Complex;
+
+// Быстрое преобразование Фурье (FFT) Кули-Тьюки
+static void SimpleFFT(std::vector<Complex>& a) {
+    size_t n = a.size();
+    if (n <= 1) return;
+    std::vector<Complex> a0(n / 2), a1(n / 2);
+    for (size_t i = 0; i < n / 2; i++) {
+        a0[i] = a[i * 2];
+        a1[i] = a[i * 2 + 1];
+    }
+    SimpleFFT(a0);
+    SimpleFFT(a1);
+    double ang = 2 * PI / n;
+    Complex w(1), wn(cos(ang), sin(ang));
+    for (size_t i = 0; i < n / 2; i++) {
+        a[i] = a0[i] + w * a1[i];
+        a[i + n / 2] = a0[i] - w * a1[i];
+        w *= wn;
+    }
+}
 
 MiniaudioEngine::MiniaudioEngine() {
     m_isDeviceInitialized = false;
@@ -37,7 +61,31 @@ bool MiniaudioEngine::IsPlaying() const { return m_isPlaying; }
 void MiniaudioEngine::SetPositionSeconds(double pos) {}
 double MiniaudioEngine::GetPositionSeconds() const { return static_cast<double>(m_playbackFrameCount.load()) / 44100.0; }
 double MiniaudioEngine::GetLengthSeconds() const { return 0.0; }
-std::vector<float> MiniaudioEngine::GetSpectrumData() const { return std::vector<float>(128, 0.0f); }
+
+std::vector<float> MiniaudioEngine::GetSpectrumData() const {
+    std::vector<float> result(128, 0.0f);
+    if (!m_isPlaying) return result;
+
+    std::vector<Complex> a(256);
+    {
+        std::lock_guard<std::mutex> lock(m_spectrumMutex);
+        for (int i = 0; i < 256; ++i) {
+            // Окно Ханна
+            double multiplier = 0.5 * (1.0 - cos(2 * PI * i / 255.0));
+            a[i] = Complex(m_recentSamples[i] * multiplier, 0);
+        }
+    }
+
+    SimpleFFT(a);
+
+    for (int i = 0; i < 128; ++i) {
+        // Нормализуем амплитуду
+        float mag = static_cast<float>(std::abs(a[i]) / 128.0) * 2.5f;
+        result[i] = mag;
+    }
+
+    return result;
+}
 
 bool MiniaudioEngine::Init() {
     QSettings settings("config.ini", QSettings::IniFormat);
@@ -144,7 +192,27 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
             }
         }
 
-        // 4. Генерируем автоматические события перехода
+        // 4. лоигка для визуализатора (Сбор семплов)
+        {
+            std::lock_guard<std::mutex> specLock(engine->m_spectrumMutex);
+            size_t samplesToCopy = std::min(static_cast<size_t>(frameCount), static_cast<size_t>(256));
+
+            if (samplesToCopy < 256) {
+                std::memmove(engine->m_recentSamples.data(),
+                             engine->m_recentSamples.data() + samplesToCopy,
+                             (256 - samplesToCopy) * sizeof(float));
+            }
+
+            size_t startIdx = 256 - samplesToCopy;
+            size_t pOutStart = frameCount - samplesToCopy;
+            for (size_t i = 0; i < samplesToCopy; ++i) {
+                float left = pOut[(pOutStart + i) * 2] / 32768.0f;
+                float right = pOut[(pOutStart + i) * 2 + 1] / 32768.0f;
+                engine->m_recentSamples[startIdx + i] = (left + right) / 2.0f;
+            }
+        }
+
+        // 5. Генерируем автоматические события перехода
         double currentSec = static_cast<double>(engine->m_playbackFrameCount.load()) / 44100.0;
         double totalSec = static_cast<double>(engine->m_currentDurationSec);
         double crossfadeSec = engine->m_crossfadeDurationMs / 1000.0;

@@ -79,4 +79,8 @@ private:
     mp3dec_t m_mp3Decoder;
     std::vector<uint8_t> m_mp3Buffer;
     AudioStreamFormat m_streamFormat = AudioStreamFormat::Unknown;
+
+    // --- ПЕРЕМЕННЫЕ ВИЗУАЛИЗАТОРА ---
+    mutable std::mutex m_spectrumMutex;
+    std::vector<float> m_recentSamples = std::vector<float>(256, 0.0f);
 };

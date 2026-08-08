@@ -42,6 +42,11 @@ int main(int argc, char *argv[]) {
 
     QSettings settings("config.ini", QSettings::IniFormat);
 
+    if (!settings.contains("Audio/CrossfadeDurationMs")) {
+        settings.setValue("Audio/CrossfadeDurationMs", 3000);
+        settings.sync();
+    }
+
     DatabaseManager dbManager;
     if (!dbManager.Init()) return -1;
 
