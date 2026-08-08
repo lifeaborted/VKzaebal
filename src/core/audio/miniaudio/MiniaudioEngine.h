@@ -30,30 +30,47 @@ public:
 
     // Метод, куда NetworkStreamer будет пушить скачанные байты AAC
     void PushNetworkData(const uint8_t* data, size_t size);
-    void ClearBuffers();
+    void ClearBuffers(bool crossfade = false, int nextDurationSec = 0);
 
     enum class AudioStreamFormat { Unknown, AAC_ADTS, MP3 };
 
 private:
     static void DataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
+    void DecodeAACFrames();   // функция для декодирования ADTS пакетов
+    void InitiateCrossfade(); // Вспомогательный метод кроссфейда
+    void StopFadeOut();       // Вспомогательный метод очистки затухания
 
-    // Внутренняя функция для декодирования ADTS пакетов
-    void DecodeAACFrames();
     ma_device m_device;
     bool m_isDeviceInitialized = false;
     float m_volume = 1.0f;
     std::atomic<bool> m_isPlaying = false;
-    ma_decoder m_decoder;                // Декодер для чтения файлов
-    bool m_isDecoderInitialized = false; // Флаг состояния декодера
-    std::mutex m_audioMutex;             // Защита от конфликта потоков
+    ma_decoder* m_decoder = nullptr;          // Декодер для чтения файлов
+    bool m_isDecoderInitialized = false;      // Флаг состояния декодера
+    std::mutex m_audioMutex;                  // Защита от конфликта потоков
     HANDLE_AACDECODER m_aacDecoder = nullptr; // Указатель на FDK-AAC декодер
     RingBuffer m_pcmBuffer;                   // Потокобезопасный буфер для PCM
     std::vector<uint8_t> m_aacBuffer;         // Временный буфер для сырых скачанных данных
     std::mutex m_networkMutex;                // Защита буфера скачивания
     std::atomic<ma_uint64> m_playbackFrameCount{0};
-    uint16_t m_audioPid = 0x1FFF; // хранение значения PID
+    uint16_t m_audioPid = 0x1FFF;             // хранение значения PID
     int m_dumpedFirstPayload = 0;
     size_t m_id3BytesToSkip = 0;
+
+    // --- ПЕРЕМЕННЫЕ КРОССФЕЙДА И ТАЙМИНГОВ ---
+    int m_crossfadeDurationMs = 3000;
+    int m_currentDurationSec = 0;
+    bool m_nearEndTriggered = false;
+    bool m_finishedTriggered = false;
+
+    bool m_isCrossfading = false;
+    ma_uint32 m_crossfadeFramesTotal = 0;
+    ma_uint32 m_crossfadeFramesRemaining = 0;
+
+    bool m_fadeOutIsLocal = false;
+    ma_decoder* m_fadeOutDecoder = nullptr;
+    std::vector<int16_t> m_fadeOutPcm;
+    size_t m_fadeOutPcmReadPos = 0;
+    // -----------------------------------------
 
     AudioStreamFormat DetectAudioFormat(const uint8_t* data, size_t size);
     void DecodeAacPayload(const uint8_t* payload, size_t payloadSize);

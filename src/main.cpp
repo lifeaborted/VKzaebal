@@ -225,7 +225,7 @@ int main(int argc, char *argv[]) {
                 streamer.StopDownload();
 
                 // Очищаем состояние движка перед новым треком
-                audio.ClearBuffers();
+                audio.ClearBuffers(crossfadeEnabled, track.duration);
 
                 // Запускаем скачивание нового трека
                 streamer.StartDownload(freshUrl);

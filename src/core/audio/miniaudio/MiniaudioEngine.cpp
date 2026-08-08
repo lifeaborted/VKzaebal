@@ -1,11 +1,14 @@
 #include "MiniaudioEngine.h"
 #include "utils/logger/Logger.h"
-#include <cstring>
+#include "minimp3.h"
+
 #include <QFile>
 #include <QString>
 #include <algorithm>
 #include <chrono>
-#include "minimp3.h"
+#include <QCoreApplication>
+#include <QSettings>
+
 
 MiniaudioEngine::MiniaudioEngine() {
     m_isDeviceInitialized = false;
@@ -18,8 +21,10 @@ MiniaudioEngine::~MiniaudioEngine() {
     if (m_isDeviceInitialized) {
         ma_device_uninit(&m_device);
     }
-    if (m_isDecoderInitialized) {
-        ma_decoder_uninit(&m_decoder);
+    StopFadeOut();
+    if (m_decoder) {
+        ma_decoder_uninit(m_decoder);
+        delete m_decoder;
     }
     if (m_aacDecoder) {
         aacDecoder_Close(m_aacDecoder);
@@ -34,46 +39,10 @@ double MiniaudioEngine::GetPositionSeconds() const { return static_cast<double>(
 double MiniaudioEngine::GetLengthSeconds() const { return 0.0; }
 std::vector<float> MiniaudioEngine::GetSpectrumData() const { return std::vector<float>(128, 0.0f); }
 
-void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
-    MiniaudioEngine* engine = static_cast<MiniaudioEngine*>(pDevice->pUserData);
-    if (!engine) return;
-    engine->m_playbackFrameCount += frameCount;
-
-    if (engine->m_isDecoderInitialized) {
-        // --- 1. локальный файл ---
-        ma_uint64 framesRead = 0;
-        ma_decoder_read_pcm_frames(&engine->m_decoder, pOutput, frameCount, &framesRead);
-
-        if (framesRead < frameCount) {
-            ma_uint32 bytesPerFrame = pDevice->playback.channels * ma_get_bytes_per_sample(pDevice->playback.format);
-            void* pTail = static_cast<uint8_t*>(pOutput) + (framesRead * bytesPerFrame);
-            std::memset(pTail, 0, (frameCount - framesRead) * bytesPerFrame);
-        }
-    } else {
-        // --- 2. сетевой поток ---
-        // Считаем, сколько байт звуковая карта просит прямо сейчас
-        ma_uint32 bytesToRead = frameCount * pDevice->playback.channels * ma_get_bytes_per_sample(pDevice->playback.format);
-        // Читаем из кольцевого буфера
-        size_t bytesRead = engine->m_pcmBuffer.Read(static_cast<uint8_t*>(pOutput), bytesToRead);
-
-        if (bytesRead < bytesToRead) {
-            std::memset(static_cast<uint8_t*>(pOutput) + bytesRead, 0, bytesToRead - bytesRead);
-
-            // Логируем не чаще раза в секунду — иначе на каждый device-callback (сотни раз/сек)
-            // лог превращается в стену одинаковых строк.
-            static auto lastLogTime = std::chrono::steady_clock::now();
-            auto now = std::chrono::steady_clock::now();
-            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastLogTime).count() >= 1000) {
-                lastLogTime = now;
-                Logger::Log(LogLevel::INFO, "DataCallback: ring buffer underrun (starving for data)");
-            }
-        }
-        engine->DecodeAACFrames();
-    }
-}
-
 bool MiniaudioEngine::Init() {
-    // Инициализация RingBuffer (<a> Гц * <b> каналов * <тип данных>) * <c> сек)
+    QSettings settings("config.ini", QSettings::IniFormat);
+    m_crossfadeDurationMs = settings.value("Audio/CrossfadeDurationMs", 3000).toInt();
+
     m_pcmBuffer.Init(44100 * 2 * sizeof(int16_t) * 5);
     ma_device_config deviceConfig = ma_device_config_init(ma_device_type_playback);
     deviceConfig.playback.format   = ma_format_s16;
@@ -100,38 +69,163 @@ bool MiniaudioEngine::Init() {
     return true;
 }
 
-bool MiniaudioEngine::PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId) {
-    std::lock_guard<std::mutex> lock(m_audioMutex);
+void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
+    MiniaudioEngine* engine = static_cast<MiniaudioEngine*>(pDevice->pUserData);
+    if (!engine) return;
 
-    if (m_isDecoderInitialized) {
-        ma_decoder_uninit(&m_decoder);
-        m_isDecoderInitialized = false;
-    }
+    {
+        // Мьютекс теперь защищает внутренние массивы от переключения треков
+        std::lock_guard<std::mutex> lock(engine->m_audioMutex);
+        engine->m_playbackFrameCount += frameCount;
 
-    QString localPath = QString::fromStdString("downloads/" + trackId + ".mp3");
+        // 1. Читаем НОВЫЙ трек
+        std::vector<int16_t> mainBuffer(frameCount * 2, 0);
+        ma_uint32 framesRead = 0;
 
-    if (!trackId.empty() && QFile::exists(localPath)) {
-        ma_decoder_config decoderConfig = ma_decoder_config_init(ma_format_s16, 2, 44100);
+        if (engine->m_decoder) {
+            ma_uint64 read = 0;
+            ma_decoder_read_pcm_frames(engine->m_decoder, mainBuffer.data(), frameCount, &read);
+            framesRead = read;
+        } else {
+            ma_uint32 bytesToRead = frameCount * 2 * sizeof(int16_t);
+            size_t bytesRead = engine->m_pcmBuffer.Read(reinterpret_cast<uint8_t*>(mainBuffer.data()), bytesToRead);
+            framesRead = bytesRead / (2 * sizeof(int16_t));
+        }
 
-        #ifdef _WIN32
-        if (ma_decoder_init_file_w(reinterpret_cast<const wchar_t*>(localPath.utf16()), &decoderConfig, &m_decoder) != MA_SUCCESS) {
-        #else
-            if (ma_decoder_init_file(localPath.toStdString().c_str(), &decoderConfig, &m_decoder) != MA_SUCCESS) {
-        #endif
-                Logger::Log(LogLevel::ERROR, "Miniaudio: Failed to init decoder for file: " + localPath.toStdString());
-                return false;
+        // 2. Читаем СТАРЫЙ затухающий трек
+        std::vector<int16_t> fadeOutBuffer(frameCount * 2, 0);
+        ma_uint32 fadeOutFramesRead = 0;
+
+        if (engine->m_isCrossfading) {
+            if (engine->m_fadeOutIsLocal && engine->m_fadeOutDecoder) {
+                ma_uint64 read = 0;
+                ma_decoder_read_pcm_frames(engine->m_fadeOutDecoder, fadeOutBuffer.data(), frameCount, &read);
+                fadeOutFramesRead = read;
+            } else {
+                size_t elementsAvail = engine->m_fadeOutPcm.size() - engine->m_fadeOutPcmReadPos;
+                size_t elementsToRead = frameCount * 2;
+                if (elementsToRead > elementsAvail) elementsToRead = elementsAvail;
+
+                if (elementsToRead > 0) {
+                    std::memcpy(fadeOutBuffer.data(), engine->m_fadeOutPcm.data() + engine->m_fadeOutPcmReadPos, elementsToRead * sizeof(int16_t));
+                    engine->m_fadeOutPcmReadPos += elementsToRead;
+                    fadeOutFramesRead = elementsToRead / 2;
+                }
+            }
+        }
+
+        // 3. Микшируем треки с математическим фейдом
+        int16_t* pOut = static_cast<int16_t*>(pOutput);
+        for (ma_uint32 i = 0; i < frameCount; ++i) {
+            float mainVol = 1.0f;
+            float fadeOutVol = 0.0f;
+
+            if (engine->m_isCrossfading) {
+                if (engine->m_crossfadeFramesRemaining > 0) {
+                    float progress = 1.0f - (static_cast<float>(engine->m_crossfadeFramesRemaining) / engine->m_crossfadeFramesTotal);
+                    mainVol = progress;           // Нарастание нового
+                    fadeOutVol = 1.0f - progress; // Затухание старого
+                    engine->m_crossfadeFramesRemaining--;
+                } else {
+                    engine->StopFadeOut();
+                }
             }
 
-        m_isDecoderInitialized = true;
-        m_isPlaying = true;
+            for (int c = 0; c < 2; ++c) {
+                int idx = i * 2 + c;
+                float s1 = (i < framesRead) ? mainBuffer[idx] * mainVol : 0.0f;
+                float s2 = (i < fadeOutFramesRead) ? fadeOutBuffer[idx] * fadeOutVol : 0.0f;
 
-        ma_device_start(&m_device);
-        Logger::Log(LogLevel::INFO, "Miniaudio: Playing local file -> " + localPath.toStdString());
-        return true;
+                float mixed = s1 + s2;
+                if (mixed > 32767.0f) mixed = 32767.0f;
+                if (mixed < -32768.0f) mixed = -32768.0f;
+
+                pOut[idx] = static_cast<int16_t>(mixed);
+            }
+        }
+
+        // 4. Генерируем автоматические события перехода
+        double currentSec = static_cast<double>(engine->m_playbackFrameCount.load()) / 44100.0;
+        double totalSec = static_cast<double>(engine->m_currentDurationSec);
+        double crossfadeSec = engine->m_crossfadeDurationMs / 1000.0;
+
+        if (totalSec > 0.0) {
+            // Подгрузка следующего трека за 10 сек
+            if (!engine->m_nearEndTriggered && currentSec >= totalSec - 10.0) {
+                engine->m_nearEndTriggered = true;
+                if (engine->OnTrackNearEnd) {
+                    QMetaObject::invokeMethod(QCoreApplication::instance(), [engine]() {
+                        engine->OnTrackNearEnd();
+                    }, Qt::QueuedConnection);
+                }
+            }
+
+            // Переход на следующий трек
+            double endTriggerSec = totalSec;
+            if (engine->m_crossfadeDurationMs > 0) {
+                endTriggerSec = totalSec - crossfadeSec; // Стартуем следующий с учетом кроссфейда
+            }
+
+            if (!engine->m_finishedTriggered && currentSec >= endTriggerSec) {
+                engine->m_finishedTriggered = true;
+                if (engine->OnTrackFinished) {
+                    QMetaObject::invokeMethod(QCoreApplication::instance(), [engine]() {
+                        engine->OnTrackFinished();
+                    }, Qt::QueuedConnection);
+                }
+            }
+        }
     }
 
-    Logger::Log(LogLevel::WARNING, "Miniaudio: Network streams not implemented yet. Skipped.");
-    return false;
+    // Декодируем сеть
+    engine->DecodeAACFrames();
+}
+
+bool MiniaudioEngine::PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId) {
+    QString localPath = QString::fromStdString("downloads/" + trackId + ".mp3");
+
+    // Если файла нет, сразу отдаем управление сети без очистки буферов
+    if (trackId.empty() || !QFile::exists(localPath)) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(m_audioMutex);
+
+    m_currentDurationSec = durationSec;
+    m_nearEndTriggered = false;
+    m_finishedTriggered = false;
+    m_playbackFrameCount = 0;
+
+    if (crossfade && m_crossfadeDurationMs > 0) {
+        InitiateCrossfade();
+    } else {
+        StopFadeOut();
+        if (m_decoder) {
+            ma_decoder_uninit(m_decoder);
+            delete m_decoder;
+            m_decoder = nullptr;
+        }
+        m_pcmBuffer.Clear();
+    }
+
+    ma_decoder_config decoderConfig = ma_decoder_config_init(ma_format_s16, 2, 44100);
+    m_decoder = new ma_decoder;
+
+#ifdef _WIN32
+    if (ma_decoder_init_file_w(reinterpret_cast<const wchar_t*>(localPath.utf16()), &decoderConfig, m_decoder) != MA_SUCCESS) {
+#else
+    if (ma_decoder_init_file(localPath.toStdString().c_str(), &decoderConfig, m_decoder) != MA_SUCCESS) {
+#endif
+        delete m_decoder;
+        m_decoder = nullptr;
+        Logger::Log(LogLevel::ERROR, "Miniaudio: Failed to init decoder for file: " + localPath.toStdString());
+        return false;
+    }
+
+    m_isPlaying = true;
+    ma_device_start(&m_device);
+    Logger::Log(LogLevel::INFO, "Miniaudio: Playing local file -> " + localPath.toStdString());
+    return true;
 }
 
 void MiniaudioEngine::Pause() {
@@ -377,22 +471,68 @@ void MiniaudioEngine::DecodeMp3Payload(const uint8_t* payload, size_t payloadSiz
     }
 }
 
-void MiniaudioEngine::ClearBuffers() {
+void MiniaudioEngine::ClearBuffers(bool crossfade, int nextDurationSec) {
     std::lock_guard<std::mutex> lock(m_audioMutex);
 
-    if (m_isDecoderInitialized) {
-        ma_decoder_uninit(&m_decoder);
-        m_isDecoderInitialized = false;
+    m_currentDurationSec = nextDurationSec;
+    m_nearEndTriggered = false;
+    m_finishedTriggered = false;
+    m_playbackFrameCount = 0;
+
+    if (crossfade && m_crossfadeDurationMs > 0) {
+        InitiateCrossfade();
+    } else {
+        StopFadeOut();
+        if (m_decoder) {
+            ma_decoder_uninit(m_decoder);
+            delete m_decoder;
+            m_decoder = nullptr;
+        }
+        m_pcmBuffer.Clear();
     }
 
-    m_pcmBuffer.Clear();
-    m_playbackFrameCount = 0;
-    m_audioPid = 0x1FFF; // Сбрасываем захват PID'а при переключении трека
+    m_audioPid = 0x1FFF;
     m_id3BytesToSkip = 0;
     m_streamFormat = AudioStreamFormat::Unknown;
     m_mp3Buffer.clear();
-    mp3dec_init(&m_mp3Decoder); // сбрасываем bit reservoir декодера между треками
+    mp3dec_init(&m_mp3Decoder);
 
     std::lock_guard<std::mutex> netLock(m_networkMutex);
     m_aacBuffer.clear();
+}
+
+void MiniaudioEngine::InitiateCrossfade() {
+    StopFadeOut();
+
+    if (m_decoder) {
+        // Трек был локальным
+        m_fadeOutDecoder = m_decoder;
+        m_decoder = nullptr;
+        m_fadeOutIsLocal = true;
+    } else {
+        // Трек был сетевым
+        m_fadeOutIsLocal = false;
+        m_fadeOutPcm.clear();
+        m_fadeOutPcmReadPos = 0;
+        size_t avail = m_pcmBuffer.GetAvailableRead();
+        if (avail > 0) {
+            m_fadeOutPcm.resize(avail / sizeof(int16_t));
+            m_pcmBuffer.Read(reinterpret_cast<uint8_t*>(m_fadeOutPcm.data()), avail);
+        }
+    }
+    m_pcmBuffer.Clear();
+
+    m_crossfadeFramesTotal = (m_crossfadeDurationMs * 44100) / 1000;
+    m_crossfadeFramesRemaining = m_crossfadeFramesTotal;
+    m_isCrossfading = true;
+}
+
+void MiniaudioEngine::StopFadeOut() {
+    if (m_fadeOutDecoder) {
+        ma_decoder_uninit(m_fadeOutDecoder);
+        delete m_fadeOutDecoder;
+        m_fadeOutDecoder = nullptr;
+    }
+    m_fadeOutPcm.clear();
+    m_isCrossfading = false;
 }
