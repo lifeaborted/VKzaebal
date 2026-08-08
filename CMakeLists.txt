@@ -78,6 +78,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass
         ${CMAKE_CURRENT_SOURCE_DIR}/libs/fdk-aac/libAACdec/include
         ${CMAKE_CURRENT_SOURCE_DIR}/libs/tiny-aes
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/minimp3
 )
 
 # Линкуем модули Qt с приложением

@@ -1,12 +1,14 @@
 #pragma once
 #include "core/audio/IAudioEngine.h"
 #include "miniaudio.h"
+#include "minimp3.h"
 #include "utils/buffer/RingBuffer.h"
 #include "aacdecoder_lib.h" // <--- Инклуд FDK-AAC
 #include <string>
 #include <atomic>
 #include <vector>
 #include <mutex>
+
 
 class MiniaudioEngine : public IAudioEngine {
 public:
@@ -30,6 +32,8 @@ public:
     void PushNetworkData(const uint8_t* data, size_t size);
     void ClearBuffers();
 
+    enum class AudioStreamFormat { Unknown, AAC_ADTS, MP3 };
+
 private:
     static void DataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
 
@@ -47,4 +51,15 @@ private:
     std::vector<uint8_t> m_aacBuffer;         // Временный буфер для сырых скачанных данных
     std::mutex m_networkMutex;                // Защита буфера скачивания
     std::atomic<ma_uint64> m_playbackFrameCount{0};
+    uint16_t m_audioPid = 0x1FFF; // хранение значения PID
+    int m_dumpedFirstPayload = 0;
+    size_t m_id3BytesToSkip = 0;
+
+    AudioStreamFormat DetectAudioFormat(const uint8_t* data, size_t size);
+    void DecodeAacPayload(const uint8_t* payload, size_t payloadSize);
+    void DecodeMp3Payload(const uint8_t* payload, size_t payloadSize);
+
+    mp3dec_t m_mp3Decoder;
+    std::vector<uint8_t> m_mp3Buffer;
+    AudioStreamFormat m_streamFormat = AudioStreamFormat::Unknown;
 };
