@@ -104,6 +104,10 @@ int main(int argc, char *argv[]) {
                     }
                 }
             }
+
+            if (isShuffle) {
+                playlist.SetShuffle(true);
+            }
         }
 
         if (playlist.HasTracks()) {

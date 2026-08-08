@@ -159,6 +159,26 @@ void PlaylistManager::JumpTo(int index) {
     }
 }
 
+void PlaylistManager::JumpToQueueIndex(int index) {
+    Track targetTrack;
+    bool shouldPlay = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (index < 0 || index >= m_playQueue.size()) {
+            Logger::Log(LogLevel::WARNING, "Invalid queue index!");
+            return;
+        }
+
+        m_queueIndex = index;
+        targetTrack = m_tracks[m_playQueue[m_queueIndex]];
+        shouldPlay = true;
+    }
+
+    if (shouldPlay && OnTrackRequested) {
+        OnTrackRequested(targetTrack);
+    }
+}
+
 void PlaylistManager::ToggleShuffle() {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_isShuffle = !m_isShuffle;

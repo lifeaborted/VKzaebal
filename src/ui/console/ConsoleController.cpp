@@ -200,7 +200,7 @@ void ConsoleController::InputLoop() {
                 try {
                     int idx = std::stoi(input.substr(2));
                     QMetaObject::invokeMethod(QCoreApplication::instance(), [&, idx]() {
-                        m_playlist.JumpTo(idx - 1);
+                        m_playlist.JumpToQueueIndex(idx - 1);
                     }, Qt::QueuedConnection);
                     syncPrint("[Плейлист] Переход к треку " + std::to_string(idx) + "\n\n> ");
                 } catch (...) {

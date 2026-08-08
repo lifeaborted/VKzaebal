@@ -21,6 +21,7 @@ public:
     void Next();
     void Previous();
     void JumpTo(int index);
+    void JumpToQueueIndex(int queueIndex);
 
     void ToggleShuffle();
     void SetShuffle(bool enable);
