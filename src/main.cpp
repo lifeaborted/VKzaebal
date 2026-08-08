@@ -65,7 +65,7 @@ int main(int argc, char *argv[]) {
     bool isShuffle = settings.value("Session/Shuffle", false).toBool();
     bool autoPlay = settings.value("Session/AutoPlay", false).toBool();
 
-    playlist.SetShuffle(isShuffle); // Применяем шафл к плейлисту
+    //playlist.SetShuffle(isShuffle); // Применяем шафл к плейлисту
     Track preloadedTrack;
     std::string cachedNextUrl = "";
 
@@ -281,8 +281,12 @@ int main(int argc, char *argv[]) {
 
         if (!isPlaybackStarted) {
             initPlaylistAndStart(true);
+            // Сохраняем эталонный порядок навсегда
+            dbManager.SaveQueue(playlist.GetAllTracks(), false);
             dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
         } else if (hasNewTracks) {
+            // Сохраняем эталонный порядок навсегда
+            dbManager.SaveQueue(playlist.GetAllTracks(), false);
             dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
             dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
         }

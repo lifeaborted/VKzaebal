@@ -182,7 +182,7 @@ void PlaylistManager::JumpToQueueIndex(int index) {
 void PlaylistManager::ToggleShuffle() {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_isShuffle = !m_isShuffle;
-    RebuildQueue(true);
+    RebuildQueue(!m_isShuffle);
     Logger::Log(LogLevel::INFO, std::string("Shuffle is now ") + (m_isShuffle ? "ON" : "OFF"));
 }
 
@@ -191,7 +191,7 @@ void PlaylistManager::SetShuffle(bool enable) {
     if (!enable && !m_isShuffle) return;
 
     m_isShuffle = enable;
-    RebuildQueue(true);
+    RebuildQueue(!enable);
     Logger::Log(LogLevel::INFO, std::string("Shuffle is now ") + (m_isShuffle ? "ON (Reshuffled)" : "OFF"));
 }
 

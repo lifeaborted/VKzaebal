@@ -148,7 +148,11 @@ void DatabaseManager::SaveQueue(const std::vector<Track>& currentQueue, bool isS
 
 std::vector<Track> DatabaseManager::LoadTracks() {
     std::vector<Track> tracks;
-    QSqlQuery query("SELECT vk_id, artist, title, duration, cover_url, lyrics_id, lyrics FROM Tracks");
+
+    QSqlQuery query("SELECT t.vk_id, t.artist, t.title, t.duration, t.cover_url, t.lyrics_id, t.lyrics "
+                    "FROM Tracks t "
+                    "LEFT JOIN PlayQueue q ON t.vk_id = q.vk_id AND q.is_shuffle = 0 "
+                    "ORDER BY CASE WHEN q.position IS NOT NULL THEN q.position ELSE 999999 END ASC");
 
     while (query.next()) {
         Track t;

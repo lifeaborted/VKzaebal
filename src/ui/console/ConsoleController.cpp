@@ -221,11 +221,14 @@ void ConsoleController::InputLoop() {
             if (lowerInput == "sh") {
                 QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() {
                     m_playlist.SetShuffle(true);
+
+                    m_playlist.JumpToQueueIndex(0);
+
                     m_dbManager.SaveQueue(m_playlist.GetQueueTracks(), m_playlist.IsShuffle());
                     m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
                 }, Qt::QueuedConnection);
 
-                syncPrint("[Плейлист] Режим: Перемешивание (Shuffle)\n\n> ");
+                syncPrint("[Плейлист] Режим: Перемешивание (Shuffle). Стартуем случайный трек!\n\n> ");
                 continue;
             }
 
