@@ -2,6 +2,10 @@
 #include <string>
 #include <mutex>
 
+#ifdef _WIN32
+#undef ERROR
+#endif
+
 enum class LogLevel { DEBUG, INFO, WARNING, ERROR };
 
 class Logger {

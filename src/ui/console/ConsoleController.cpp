@@ -1,3 +1,7 @@
+﻿#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include <QDir>
 #include <QFile>
 #include <QDesktopServices>
@@ -17,6 +21,7 @@
 #include "core/vk/auth/Manager.h"
 #include "services/database/DatabaseManager.h"
 #include "utils/logger/Logger.h"
+
 
 ConsoleController::ConsoleController(
     IAudioEngine& audio,
@@ -56,6 +61,15 @@ void ConsoleController::Start() {
 
 void ConsoleController::Stop() {
     m_isRunning = false;
+
+#ifdef _WIN32
+    // Насильно отменяем ожидание ввода в std::cin, освобождая ядро
+    HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
+    if (hStdin != INVALID_HANDLE_VALUE) {
+        CancelIoEx(hStdin, NULL);
+    }
+#endif
+
     if (m_inputThread.joinable()) m_inputThread.detach();
     if (m_uiThread.joinable()) m_uiThread.join();
 }
@@ -155,7 +169,7 @@ void ConsoleController::InputLoop() {
                                     if (!err && !url.empty()) {
                                         m_downloader.Download(targetTrack, url);
                                     } else {
-                                        Logger::Log(LogLevel::ERROR, "Failed to get URL for download.");
+                                        Logger::Log(LogLevel::WARNING, "Failed to get URL for download.");
                                     }
                                 });
                             }, Qt::QueuedConnection);

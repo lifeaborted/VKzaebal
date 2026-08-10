@@ -93,13 +93,11 @@ int main(int argc, char *argv[]) {
 
         if (!playlist.HasTracks()) {
             if (isOnline) {
-                // в онлайнк загружаем всё
                 for (const auto& t : cachedTracks) playlist.AddTrack(t);
             } else {
-                // в оффлайне только локальные файлы
                 for (const auto& t : cachedTracks) {
-                    QString path = "downloads/" + QString::fromStdString(t.GetSafeFilename()) + ".mp3";
-                    if (QFile::exists(path)) {
+                    QString baseName = "downloads/" + QString::fromStdString(t.GetSafeFilename());
+                    if (QFile::exists(baseName + ".mp3") || QFile::exists(baseName + ".aac")) {
                         playlist.AddTrack(t);
                     }
                 }
@@ -173,7 +171,11 @@ int main(int argc, char *argv[]) {
     attemptPlay = [&](Track track, int attempt) {
         int currentGen = (attempt == 1) ? ++playbackGeneration : playbackGeneration.load();
 
-        QString localPath = "downloads/" + QString::fromStdString(track.GetSafeFilename()) + ".mp3";
+        QString baseName = "downloads/" + QString::fromStdString(track.GetSafeFilename());
+        QString localPath = baseName + ".mp3";
+        if (!QFile::exists(localPath)) {
+            localPath = baseName + ".aac";
+        }
         bool isDownloaded = QFile::exists(localPath);
 
         if (attempt == 1 && !cachedNextUrl.empty() && preloadedTrack.id == track.id && !isDownloaded) {
@@ -314,7 +316,7 @@ int main(int argc, char *argv[]) {
         std::cout << "(Или введите 'offline' для запуска без интернета):\n> ";
         std::cout.flush();
 
-        QString authUrl = "https://id.vk.ru/auth?return_auth_hash=8f84ec1a42e15d06f3&redirect_uri=https%3A%2F%2Foauth.vk.ru%2Fblank.html&redirect_uri_hash=840d020814e3175427&force_hash=1&app_id=6287487&response_type=token&code_challenge=&code_challenge_method=&scope=408861919&state=";
+        QString authUrl = "https://id.vk.ru/auth?return_auth_hash=f4a373337b4aa44c0b&redirect_uri=https%3A%2F%2Foauth.vk.ru%2Fblank.html&redirect_uri_hash=92e89c95efe255137e&force_hash=1&app_id=6287487&response_type=token&code_challenge=&code_challenge_method=&scope=408861919&state=";
         QDesktopServices::openUrl(QUrl(authUrl));
         console.SetState(ConsoleState::WAITING_TOKEN_URL);
     };
