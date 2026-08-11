@@ -1,5 +1,6 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include "Logger.h"
+#include "utils/path/PathManager.h"
 #include <iostream>
 #include <fstream>
 #include <filesystem>
@@ -13,16 +14,14 @@ static std::ofstream logFile;
 std::mutex Logger::s_mutex;
 
 void Logger::Init() {
-    // Создаем папку logs, если её нет
-    if (!fs::exists("logs")) {
-        fs::create_directory("logs");
-    }
+    PathManager::Init();
+    std::string logPath = PathManager::GetLogFilePath().toStdString();
 
     // Открываем файл
-    logFile.open("logs/app.log", std::ios::out | std::ios::trunc);
+    logFile.open(logPath, std::ios::out | std::ios::trunc);
 
     if (!logFile.is_open()) {
-        std::cerr << "[ERROR] Failed to open log file at logs/app.log!" << std::endl;
+        std::cerr << "[ERROR] Failed to open log file at " << logPath << std::endl;
     }
 }
 

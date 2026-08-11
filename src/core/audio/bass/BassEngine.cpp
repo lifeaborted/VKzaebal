@@ -1,5 +1,7 @@
 #include "BassEngine.h"
 #include "utils/logger/Logger.h"
+#include "utils/path/PathManager.h"
+
 #include <QCoreApplication>
 #include <QMetaObject>
 #include <QSettings>
@@ -102,7 +104,10 @@ bool BassEngine::PlayStream(const std::string& url, int durationSec, bool crossf
     }
 
     // --- ЛОГИКА ОФФЛАЙН ВОСПРОИЗВЕДЕНИЯ ---
-    QString localPath = QString::fromStdString("downloads/" + trackId + ".mp3");
+    QString localPath = PathManager::GetDownloadFilePath(trackId, "mp3");
+    if (!QFile::exists(localPath)) {
+        localPath = PathManager::GetDownloadFilePath(trackId, "aac");
+    }
 
     // играем с диска
     if (!trackId.empty() && QFile::exists(localPath)) {

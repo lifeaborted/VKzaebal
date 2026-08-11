@@ -1,5 +1,6 @@
 #include "TrackDownloader.h"
 #include "utils/logger/Logger.h"
+#include "utils/path/PathManager.h"
 #include "services/network/NetworkStreamer.h"
 #include <QDir>
 #include <QFile>
@@ -86,21 +87,22 @@ namespace {
 }
 
 TrackDownloader::TrackDownloader(QObject* parent) : QObject(parent) {
-    QDir().mkpath("downloads");
+    QDir().mkpath(PathManager::GetDownloadsDir());
 }
 
 void TrackDownloader::Download(const Track& track, const std::string& urlStr) {
-    QString safeName = QString::fromStdString(track.GetSafeFilename());
+    std::string safeName = track.GetSafeFilename();
 
     // Изначально пробуем .mp3, если в процессе поймем, что там AAC — переименуем в .aac
-    QString filePath = "downloads/" + safeName + ".mp3";
+    QString filePath = PathManager::GetDownloadFilePath(safeName, "mp3");
+    QString aacPath = PathManager::GetDownloadFilePath(safeName, "aac");
 
-    if (QFile::exists(filePath) || QFile::exists("downloads/" + safeName + ".aac")) {
-        Logger::Log(LogLevel::INFO, "[Загрузчик] Трек уже скачан: " + safeName.toStdString());
+    if (QFile::exists(filePath) || QFile::exists(aacPath)) {
+        Logger::Log(LogLevel::INFO, "[Загрузчик] Трек уже скачан: " + safeName);
         return;
     }
 
-    Logger::Log(LogLevel::INFO, "[Загрузчик] Старт загрузки (Universal Native): " + safeName.toStdString());
+    Logger::Log(LogLevel::INFO, "[Загрузчик] Старт загрузки (Universal Native): " + safeName);
 
     NetworkStreamer* streamer = new NetworkStreamer(this);
     std::shared_ptr<QFile> file = std::make_shared<QFile>(filePath);
@@ -205,7 +207,7 @@ void TrackDownloader::Download(const Track& track, const std::string& urlStr) {
         QString finalPath = filePath;
         // Если определили AAC, меняем расширение файла на .aac
         if (*isAacFormat) {
-            finalPath = "downloads/" + safeName + ".aac";
+            finalPath = PathManager::GetDownloadFilePath(safeName, "aac");
             QFile::rename(filePath, finalPath);
         }
 

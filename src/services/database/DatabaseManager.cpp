@@ -1,5 +1,6 @@
 #include "DatabaseManager.h"
 #include "utils/logger/Logger.h"
+#include "utils/path/PathManager.h"
 #include <QSqlError>
 #include <QVariant>
 #include <QFile>
@@ -8,7 +9,7 @@
 
 DatabaseManager::DatabaseManager() {
     m_db = QSqlDatabase::addDatabase("QSQLITE");
-    m_db.setDatabaseName("player_data.db");
+    m_db.setDatabaseName(PathManager::GetDbPath());
 }
 
 DatabaseManager::~DatabaseManager() {
@@ -35,12 +36,19 @@ void DatabaseManager::CreateTables() {
                "artist TEXT, "
                "title TEXT, "
                "duration TEXT, "
-               "cover_url TEXT, "
-               "lyrics_id TEXT, "
-               "lyrics TEXT)");
+               "cover_url TEXT)");
 
-    query.exec("ALTER TABLE Tracks ADD COLUMN lyrics_id TEXT");
-    query.exec("ALTER TABLE Tracks ADD COLUMN lyrics TEXT");
+    QSqlQuery checkQuery("PRAGMA table_info(Tracks)");
+    bool hasLyricsId = false;
+    bool hasLyrics = false;
+    while (checkQuery.next()) {
+        QString colName = checkQuery.value(1).toString();
+        if (colName == "lyrics_id") hasLyricsId = true;
+        if (colName == "lyrics") hasLyrics = true;
+    }
+
+    if (!hasLyricsId) query.exec("ALTER TABLE Tracks ADD COLUMN lyrics_id TEXT");
+    if (!hasLyrics) query.exec("ALTER TABLE Tracks ADD COLUMN lyrics TEXT");
 
     query.exec("CREATE TABLE IF NOT EXISTS PlayQueue ("
                "position INTEGER, "
@@ -88,7 +96,8 @@ void DatabaseManager::ExportQueueToTxt(const QString& filename, bool isShuffle) 
         return;
     }
 
-    QFile file(filename);
+    QString exportPath = PathManager::GetPlaylistExportPath(filename);
+    QFile file(exportPath);
     if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         QTextStream out(&file);
         out << "=== ТЕКУЩИЙ ПЛЕЙЛИСТ ===\n";
@@ -104,7 +113,7 @@ void DatabaseManager::ExportQueueToTxt(const QString& filename, bool isShuffle) 
             out << "[" << pos << "]. " << artist << " - " << title << " [" << duration << "]\n";
         }
         file.close();
-        Logger::Log(LogLevel::INFO, "Main: Playlist exported to " + filename.toStdString());
+        Logger::Log(LogLevel::INFO, "Main: Playlist exported to " + exportPath.toStdString());
     }
 }
 

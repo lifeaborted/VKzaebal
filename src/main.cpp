@@ -18,6 +18,7 @@
 #include "core/vk/auth/Manager.h"
 #include "ui/console/ConsoleController.h"
 #include "utils/logger/Logger.h"
+#include "utils/path/PathManager.h"
 #include "services/database/DatabaseManager.h"
 #include "services/downloader/TrackDownloader.h"
 #include "core/lyrics/LyricsFetcher.h"
@@ -37,10 +38,15 @@ int main(int argc, char *argv[]) {
 #endif
 
     QGuiApplication app(argc, argv);
+
+    QCoreApplication::setOrganizationName("VKAudioTeam");
+    QCoreApplication::setApplicationName("VKAudioPlayer");
+
+    PathManager::Init();
     Logger::Init();
     Logger::Log(LogLevel::INFO, "--- VK Audio Player Started ---");
 
-    QSettings settings("config.ini", QSettings::IniFormat);
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
 
     if (!settings.contains("Audio/CrossfadeDurationMs")) {
         settings.setValue("Audio/CrossfadeDurationMs", 3000);
@@ -96,8 +102,9 @@ int main(int argc, char *argv[]) {
                 for (const auto& t : cachedTracks) playlist.AddTrack(t);
             } else {
                 for (const auto& t : cachedTracks) {
-                    QString baseName = "downloads/" + QString::fromStdString(t.GetSafeFilename());
-                    if (QFile::exists(baseName + ".mp3") || QFile::exists(baseName + ".aac")) {
+                    QString mp3Path = PathManager::GetDownloadFilePath(t.GetSafeFilename(), "mp3");
+                    QString aacPath = PathManager::GetDownloadFilePath(t.GetSafeFilename(), "aac");
+                    if (QFile::exists(mp3Path) || QFile::exists(aacPath)) {
                         playlist.AddTrack(t);
                     }
                 }
@@ -171,10 +178,9 @@ int main(int argc, char *argv[]) {
     attemptPlay = [&](Track track, int attempt) {
         int currentGen = (attempt == 1) ? ++playbackGeneration : playbackGeneration.load();
 
-        QString baseName = "downloads/" + QString::fromStdString(track.GetSafeFilename());
-        QString localPath = baseName + ".mp3";
+        QString localPath = PathManager::GetDownloadFilePath(track.GetSafeFilename(), "mp3");
         if (!QFile::exists(localPath)) {
-            localPath = baseName + ".aac";
+            localPath = PathManager::GetDownloadFilePath(track.GetSafeFilename(), "aac");
         }
         bool isDownloaded = QFile::exists(localPath);
 
@@ -265,7 +271,6 @@ int main(int argc, char *argv[]) {
     playlist.OnTrackRequested = [&](Track track) { attemptPlay(track, 1); };
 
     QObject::connect(&vkClient, &Client::AudioFetched, [&](const std::vector<Track>& tracks) {
-        bool hasNewTracks = false;
         auto allTracks = playlist.GetAllTracks();
 
         for (const auto& track : tracks) {
@@ -275,7 +280,6 @@ int main(int argc, char *argv[]) {
             }
             if (!exists) {
                 playlist.AddTrack(track);
-                hasNewTracks = true;
             }
         }
 
@@ -283,19 +287,17 @@ int main(int argc, char *argv[]) {
 
         if (!isPlaybackStarted) {
             initPlaylistAndStart(true);
-            // Сохраняем эталонный порядок навсегда
             dbManager.SaveQueue(playlist.GetAllTracks(), false);
             dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
-        } else if (hasNewTracks) {
-            // Сохраняем эталонный порядок навсегда
-            dbManager.SaveQueue(playlist.GetAllTracks(), false);
-            dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
-            dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
         }
     });
 
     QObject::connect(&vkClient, &Client::FinishedFetching, [&]() {
         Logger::Log(LogLevel::INFO, "=== ФОНОВАЯ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА ===");
+
+        dbManager.SaveQueue(playlist.GetAllTracks(), false);
+        dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
+        dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
     });
 
     QObject::connect(&authManager, &Manager::TokenReceived, [&](const std::string& token) {

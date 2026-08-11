@@ -62,6 +62,8 @@ set(PROJECT_SOURCES
         src/utils/buffer/RingBuffer.cpp
         src/utils/logger/Logger.h
         src/utils/logger/Logger.cpp
+        src/utils/path/PathManager.h
+        src/utils/path/PathManager.cpp
 )
 
 # --- Подключаем внешние библиотеки ---

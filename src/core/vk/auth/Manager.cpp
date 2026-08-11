@@ -1,10 +1,9 @@
 #include "Manager.h"
 #include "utils/logger/Logger.h"
+#include "utils/path/PathManager.h"
 #include <QFile>
-#include <QTextStream>
-#include <QRegularExpression>
 
-const QString TOKEN_FILE = ".vk_token";
+#include <QRegularExpression>
 
 Manager::Manager(QObject* parent) : QObject(parent) {
     Logger::Log(LogLevel::INFO, "auth (WebView Auth) created.");
@@ -13,7 +12,7 @@ Manager::Manager(QObject* parent) : QObject(parent) {
 Manager::~Manager() {}
 
 std::string Manager::GetSavedToken() const {
-    QFile file(TOKEN_FILE);
+    QFile file(PathManager::GetTokenFilePath());
     if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         QTextStream in(&file);
         return in.readLine().trimmed().toStdString();
@@ -22,7 +21,7 @@ std::string Manager::GetSavedToken() const {
 }
 
 void Manager::SaveToken(const std::string& token) const {
-    QFile file(TOKEN_FILE);
+    QFile file(PathManager::GetTokenFilePath());
     if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         QTextStream out(&file);
         out << QString::fromStdString(token);
@@ -31,7 +30,7 @@ void Manager::SaveToken(const std::string& token) const {
 }
 
 void Manager::ClearSavedToken() const {
-    QFile file(TOKEN_FILE);
+    QFile file(PathManager::GetTokenFilePath());
     if (file.exists()) {
         file.remove();
         Logger::Log(LogLevel::INFO, "auth: Token file removed.");

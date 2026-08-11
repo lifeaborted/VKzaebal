@@ -1,6 +1,7 @@
 #include "MiniaudioEngine.h"
 #include "utils/logger/Logger.h"
 #include "minimp3.h"
+#include "utils/path/PathManager.h"
 
 #include <QFile>
 #include <QString>
@@ -250,11 +251,10 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
 }
 
 bool MiniaudioEngine::PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId) {
-    QString baseName = QString::fromStdString("downloads/" + trackId);
-    QString localPath = baseName + ".mp3";
+    QString localPath = PathManager::GetDownloadFilePath(trackId, "mp3");
 
     if (!QFile::exists(localPath)) {
-        localPath = baseName + ".aac";
+        localPath = PathManager::GetDownloadFilePath(trackId, "aac");
     }
 
     if (trackId.empty() || !QFile::exists(localPath)) {

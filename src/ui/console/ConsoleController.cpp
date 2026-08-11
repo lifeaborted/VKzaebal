@@ -21,6 +21,7 @@
 #include "core/vk/auth/Manager.h"
 #include "services/database/DatabaseManager.h"
 #include "utils/logger/Logger.h"
+#include "utils/path/PathManager.h"
 
 
 ConsoleController::ConsoleController(
@@ -54,6 +55,11 @@ void ConsoleController::SetState(ConsoleState state) {
 
 void ConsoleController::Start() {
     if (m_isRunning) return;
+
+    // Прячем курсор (ANSI escape code)
+    std::cout << "\033[?25l";
+    std::cout.flush();
+
     m_isRunning = true;
     m_inputThread = std::thread(&ConsoleController::InputLoop, this);
     m_uiThread = std::thread(&ConsoleController::UiLoop, this);
@@ -62,8 +68,10 @@ void ConsoleController::Start() {
 void ConsoleController::Stop() {
     m_isRunning = false;
 
+    std::cout << "\033[?25h";
+    std::cout.flush();
+
 #ifdef _WIN32
-    // Насильно отменяем ожидание ввода в std::cin, освобождая ядро
     HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
     if (hStdin != INVALID_HANDLE_VALUE) {
         CancelIoEx(hStdin, NULL);
@@ -156,10 +164,11 @@ void ConsoleController::InputLoop() {
                 }
 
                 if (isValid && !targetTrack.id.empty()) {
-                    QString path = "downloads/" + QString::fromStdString(targetTrack.GetSafeFilename()) + ".mp3";
+                    QString pathMp3 = PathManager::GetDownloadFilePath(targetTrack.GetSafeFilename(), "mp3");
+                    QString pathAac = PathManager::GetDownloadFilePath(targetTrack.GetSafeFilename(), "aac");
 
                     if (cmdType == "dl") {
-                        if (QFile::exists(path)) {
+                        if (QFile::exists(pathMp3) || QFile::exists(pathAac)) {
                             syncPrint("[Загрузка] Трек уже скачан.\n\n> ");
                         } else {
                             syncPrint("[Загрузка] Получение ссылки для " + targetTrack.title + "...\n\n> ");
@@ -175,9 +184,9 @@ void ConsoleController::InputLoop() {
                             }, Qt::QueuedConnection);
                         }
                     } else if (cmdType == "rm") {
-                        if (QFile::exists(path) || QFile::exists(path)) {
-                            QFile::remove(path);
-                            QFile::remove(path);
+                        if (QFile::exists(pathMp3) || QFile::exists(pathAac)) {
+                            QFile::remove(pathMp3);
+                            QFile::remove(pathAac);
                             syncPrint("[Кэш] Удален: " + targetTrack.artist + " - " + targetTrack.title + "\n\n> ");
                         } else {
                             syncPrint("[Кэш] Трек не был скачан.\n\n> ");
@@ -369,16 +378,7 @@ void ConsoleController::InputLoop() {
                         return;
                     }
 
-                    QDir().mkpath("lyrics");
-                    QString filePath;
-
-                    if (isNewFile) {
-                        QString safeArtist = QString::fromStdString(currentTrack.artist).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
-                        QString safeTitle = QString::fromStdString(currentTrack.title).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
-                        filePath = "lyrics/" + safeArtist + " - " + safeTitle + ".txt";
-                    } else {
-                        filePath = "lyrics/lyric.txt";
-                    }
+                    QString filePath = PathManager::GetLyricsFilePath(currentTrack.artist, currentTrack.title, isNewFile);
 
                     QFile file(filePath);
                     if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
