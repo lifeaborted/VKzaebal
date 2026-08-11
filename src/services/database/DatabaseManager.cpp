@@ -159,9 +159,10 @@ std::vector<Track> DatabaseManager::LoadTracks() {
     std::vector<Track> tracks;
 
     QSqlQuery query("SELECT t.vk_id, t.artist, t.title, t.duration, t.cover_url, t.lyrics_id, t.lyrics "
-                    "FROM Tracks t "
-                    "LEFT JOIN PlayQueue q ON t.vk_id = q.vk_id AND q.is_shuffle = 0 "
-                    "ORDER BY CASE WHEN q.position IS NOT NULL THEN q.position ELSE 999999 END ASC");
+                    "FROM PlayQueue q "
+                    "JOIN Tracks t ON q.vk_id = t.vk_id "
+                    "WHERE q.is_shuffle = 0 "
+                    "ORDER BY q.position ASC");
 
     while (query.next()) {
         Track t;

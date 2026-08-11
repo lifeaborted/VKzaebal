@@ -2,12 +2,15 @@
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
 #include "services/network/NetworkStreamer.h"
+
 #include <QDir>
 #include <QFile>
 #include <QNetworkRequest>
 #include <QNetworkReply>
 #include <memory>
 #include <algorithm>
+#include <iostream>
+#include <QCoreApplication>
 
 namespace {
     QByteArray makeSyncSafe(uint32_t size) {
@@ -93,9 +96,15 @@ TrackDownloader::TrackDownloader(QObject* parent) : QObject(parent) {
 void TrackDownloader::Download(const Track& track, const std::string& urlStr) {
     std::string safeName = track.GetSafeFilename();
 
-    // Изначально пробуем .mp3, если в процессе поймем, что там AAC — переименуем в .aac
     QString filePath = PathManager::GetDownloadFilePath(safeName, "mp3");
     QString aacPath = PathManager::GetDownloadFilePath(safeName, "aac");
+    auto syncPrint = [](const std::string& text) {
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [text]() {
+            std::lock_guard<std::mutex> lock(Logger::GetMutex());
+            std::cout << "\r\033[2K\033[1A\r\033[2K" << text << "\n\n> ";
+            std::cout.flush();
+        }, Qt::QueuedConnection);
+    };
 
     if (QFile::exists(filePath) || QFile::exists(aacPath)) {
         Logger::Log(LogLevel::INFO, "[Загрузчик] Трек уже скачан: " + safeName);
@@ -200,12 +209,11 @@ void TrackDownloader::Download(const Track& track, const std::string& urlStr) {
         }
     });
 
-    connect(streamer, &NetworkStreamer::DownloadFinished, this, [this, streamer, file, track, filePath, safeName, isAacFormat]() {
+    connect(streamer, &NetworkStreamer::DownloadFinished, this, [this, streamer, file, track, filePath, safeName, isAacFormat, syncPrint]() {
         file->close();
         streamer->deleteLater();
 
         QString finalPath = filePath;
-        // Если определили AAC, меняем расширение файла на .aac
         if (*isAacFormat) {
             finalPath = PathManager::GetDownloadFilePath(safeName, "aac");
             QFile::rename(filePath, finalPath);
@@ -213,21 +221,22 @@ void TrackDownloader::Download(const Track& track, const std::string& urlStr) {
 
         if (track.coverUrl.empty()) {
             InjectID3v2(finalPath, track, QByteArray());
-            Logger::Log(LogLevel::INFO, "[Загрузчик] Успешно сохранен: " + finalPath.toStdString());
+            syncPrint("[Загрузка] " + track.artist + " - " + track.title + " успешно сохранен (без обложки).");
             return;
         }
 
         QNetworkRequest request((QUrl(QString::fromStdString(track.coverUrl))));
         QNetworkReply* reply = m_manager.get(request);
 
-        connect(reply, &QNetworkReply::finished, this, [reply, finalPath, track]() {
+        connect(reply, &QNetworkReply::finished, this, [reply, finalPath, track, syncPrint]() {
             QByteArray coverData;
             if (reply->error() == QNetworkReply::NoError) {
                 coverData = reply->readAll();
             }
             reply->deleteLater();
             InjectID3v2(finalPath, track, coverData);
-            Logger::Log(LogLevel::INFO, "[Загрузчик] Успешно сохранен с обложкой: " + finalPath.toStdString());
+
+            syncPrint("[Загрузка] " + track.artist + " - " + track.title + " успешно сохранен.");
         });
     });
 

@@ -13,10 +13,15 @@ bool PathManager::s_initialized = false;
 void PathManager::Init() {
     if (s_initialized) return;
 
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
     s_appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (s_appDataDir.isEmpty()) {
         s_appDataDir = QDir::currentPath() + "/VKAudioPlayer";
     }
+#else
+    // На десктопе сохраняем портативность: работаем в текущей директории приложения
+    s_appDataDir = QDir::currentPath();
+#endif
 
     QDir appDir(s_appDataDir);
     if (!appDir.exists()) {

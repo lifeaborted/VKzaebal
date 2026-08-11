@@ -45,6 +45,7 @@ int main(int argc, char *argv[]) {
     PathManager::Init();
     Logger::Init();
     Logger::Log(LogLevel::INFO, "--- VK Audio Player Started ---");
+    Logger::Log(LogLevel::INFO, "DB Path: " + PathManager::GetDbPath().toStdString());
 
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
 
@@ -83,6 +84,7 @@ int main(int argc, char *argv[]) {
 
     std::vector<Track> cachedTracks = dbManager.LoadTracks();
     bool isPlaybackStarted = false;
+    int vkSyncIndex = 0;
 
     // Связываем скачивание из сети с демуксером в движке
     QObject::connect(&streamer, &NetworkStreamer::DataReceived, [&](const QByteArray& data) {
@@ -271,6 +273,7 @@ int main(int argc, char *argv[]) {
     playlist.OnTrackRequested = [&](Track track) { attemptPlay(track, 1); };
 
     QObject::connect(&vkClient, &Client::AudioFetched, [&](const std::vector<Track>& tracks) {
+        bool hasNewTracks = false;
         auto allTracks = playlist.GetAllTracks();
 
         for (const auto& track : tracks) {
@@ -279,8 +282,10 @@ int main(int argc, char *argv[]) {
                 if (cached.id == track.id) { exists = true; break; }
             }
             if (!exists) {
-                playlist.AddTrack(track);
+                playlist.InsertTrack(vkSyncIndex, track);
+                hasNewTracks = true;
             }
+            vkSyncIndex++;
         }
 
         dbManager.SaveTracks(tracks);
@@ -308,6 +313,7 @@ int main(int argc, char *argv[]) {
         std::cout.flush();
 
         initPlaylistAndStart(true);
+        vkSyncIndex = 0;
         vkClient.FetchAllUserAudio(0, 200);
     });
 
@@ -347,6 +353,7 @@ int main(int argc, char *argv[]) {
                 std::cout.flush();
 
                 initPlaylistAndStart(true);
+                vkSyncIndex = 0;
                 vkClient.FetchAllUserAudio(0, 200);
             } else {
                 std::cout << "\n[ВНИМАНИЕ] Нет сети или токен недействителен.\n";

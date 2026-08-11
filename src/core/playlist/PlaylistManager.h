@@ -22,6 +22,8 @@ public:
     void Previous();
     void JumpTo(int index);
     void JumpToQueueIndex(int queueIndex);
+    
+    void InsertTrack(int position, const Track& track);
 
     void ToggleShuffle();
     void SetShuffle(bool enable);

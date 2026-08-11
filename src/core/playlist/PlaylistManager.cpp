@@ -222,3 +222,27 @@ std::vector<Track> PlaylistManager::GetAllTracks() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_tracks;
 }
+
+void PlaylistManager::InsertTrack(int position, const Track& track) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (position < 0) position = 0;
+    if (position > m_tracks.size()) position = m_tracks.size();
+
+    m_tracks.insert(m_tracks.begin() + position, track);
+
+    for (int& idx : m_playQueue) {
+        if (idx >= position) {
+            idx++;
+        }
+    }
+
+    if (m_isShuffle) {
+        m_playQueue.push_back(position);
+    } else {
+        m_playQueue.insert(m_playQueue.begin() + position, position);
+
+        if (position <= m_queueIndex) {
+            m_queueIndex++;
+        }
+    }
+}
