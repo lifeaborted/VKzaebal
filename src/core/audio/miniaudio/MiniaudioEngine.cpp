@@ -57,11 +57,43 @@ MiniaudioEngine::~MiniaudioEngine() {
 }
 
 float MiniaudioEngine::GetVolume() const { return m_volume; }
+
 bool MiniaudioEngine::IsPlaying() const { return m_isPlaying; }
 
-void MiniaudioEngine::SetPositionSeconds(double pos) {}
+void MiniaudioEngine::SetPositionSeconds(double pos) {
+    if (m_currentDurationSec <= 0) return;
+
+    if (pos < 0.0) pos = 0.0;
+    if (pos > static_cast<double>(m_currentDurationSec)) pos = static_cast<double>(m_currentDurationSec);
+
+    std::lock_guard<std::mutex> lock(m_audioMutex);
+
+    if (m_decoder) {
+        // Локальный файл: перематываем через нативный декодер miniaudio
+        ma_uint64 targetFrame = static_cast<ma_uint64>(pos * 44100.0);
+
+        if (ma_decoder_seek_to_pcm_frame(m_decoder, targetFrame) == MA_SUCCESS) {
+            m_playbackFrameCount = targetFrame;
+
+            // Сбрасываем триггеры предзагрузки, чтобы они не сработали ложно
+            m_nearEndTriggered = false;
+            m_finishedTriggered = false;
+
+            Logger::Log(LogLevel::INFO, "Miniaudio: Seeked to " + std::to_string(pos) + "s");
+        } else {
+            Logger::Log(LogLevel::WARNING, "Miniaudio: Failed to seek local file.");
+        }
+    } else {
+        // Сетевой поток: блокируем перемотку, чтобы не сломать NetworkStreamer
+        Logger::Log(LogLevel::WARNING, "Miniaudio: Seeking is only supported for fully downloaded tracks.");
+    }
+}
+
 double MiniaudioEngine::GetPositionSeconds() const { return static_cast<double>(m_playbackFrameCount.load()) / 44100.0; }
-double MiniaudioEngine::GetLengthSeconds() const { return 0.0; }
+
+double MiniaudioEngine::GetLengthSeconds() const {
+    return static_cast<double>(m_currentDurationSec);
+}
 
 std::vector<float> MiniaudioEngine::GetSpectrumData() const {
     std::vector<float> result(128, 0.0f);
@@ -251,6 +283,8 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
 }
 
 bool MiniaudioEngine::PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId) {
+    m_currentTrackId = trackId;
+
     QString localPath = PathManager::GetDownloadFilePath(trackId, "mp3");
 
     if (!QFile::exists(localPath)) {

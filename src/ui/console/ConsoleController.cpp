@@ -301,6 +301,21 @@ void ConsoleController::InputLoop() {
                 continue;
             }
 
+            if (lowerInput.length() > 5 && lowerInput.substr(0, 5) == "seek ") {
+                try {
+                    double pos = std::stod(input.substr(5));
+
+                    QMetaObject::invokeMethod(QCoreApplication::instance(), [&, pos]() {
+                        m_audio.SetPositionSeconds(pos);
+                    }, Qt::QueuedConnection);
+
+                    syncPrint("[Перемотка] Переход на " + std::to_string(static_cast<int>(pos)) + " сек.\n\n> ");
+                } catch (...) {
+                    syncPrint("[Ошибка] Неверный формат. Используй: seek <секунды> (например: seek 65)\n\n> ");
+                }
+                continue;
+            }
+
             if (lowerInput.length() > 7 && lowerInput.substr(0, 7) == "search ") {
                 std::string query = input.substr(7);
                 std::string searchArtist = query;

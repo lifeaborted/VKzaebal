@@ -83,4 +83,6 @@ private:
     // --- ПЕРЕМЕННЫЕ ВИЗУАЛИЗАТОРА ---
     mutable std::mutex m_spectrumMutex;
     std::vector<float> m_recentSamples = std::vector<float>(256, 0.0f);
+
+    std::string m_currentTrackId;
 };
