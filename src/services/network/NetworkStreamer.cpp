@@ -71,6 +71,9 @@ void NetworkStreamer::StopDownload() {
     m_chunkQueue.clear();
     if (m_reply) {
         Logger::Log(LogLevel::INFO, "Aborting network stream.");
+        
+        m_reply->disconnect();
+
         m_reply->abort();
         m_reply->deleteLater();
         m_reply = nullptr;

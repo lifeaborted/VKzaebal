@@ -113,7 +113,6 @@ void DatabaseManager::ExportQueueToTxt(const QString& filename, bool isShuffle) 
             out << "[" << pos << "]. " << artist << " - " << title << " [" << duration << "]\n";
         }
         file.close();
-        Logger::Log(LogLevel::INFO, "Main: Playlist exported to " + exportPath.toStdString());
     }
 }
 

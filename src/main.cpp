@@ -290,12 +290,17 @@ int main(int argc, char *argv[]) {
 
         dbManager.SaveTracks(tracks);
 
-        if (!isPlaybackStarted) {
-            initPlaylistAndStart(true);
-            dbManager.SaveQueue(playlist.GetAllTracks(), false);
-            dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
-        }
-    });
+                if (!isPlaybackStarted) {
+                    initPlaylistAndStart(true);
+                    dbManager.SaveQueue(playlist.GetAllTracks(), false);
+                    dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
+                    dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
+                } else if (hasNewTracks) {
+                    dbManager.SaveQueue(playlist.GetAllTracks(), false);
+                    dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
+                    dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
+                }
+            });
 
     QObject::connect(&vkClient, &Client::FinishedFetching, [&]() {
         Logger::Log(LogLevel::INFO, "=== ФОНОВАЯ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА ===");
