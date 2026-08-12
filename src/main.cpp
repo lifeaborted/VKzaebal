@@ -92,6 +92,12 @@ int main(int argc, char *argv[]) {
         audio.PushNetworkData(reinterpret_cast<const uint8_t*>(data.constData()), data.size());
     });
 
+    audio.OnNetworkSeekRequested = [&](double targetSeconds) {
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [&streamer, targetSeconds]() {
+            streamer.SeekTo(targetSeconds);
+        }, Qt::QueuedConnection);
+    };
+
     ConsoleController console(audio, playlist, authManager, dbManager, vkClient, downloader, lyricsFetcher);
     QObject::connect(&console, &ConsoleController::QuitRequested, &app, &QCoreApplication::quit);
 

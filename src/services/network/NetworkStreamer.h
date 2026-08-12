@@ -8,10 +8,22 @@
 #include <QStringList>
 #include <string>
 
-// Подключаем C-библиотеку для дешифровки
 extern "C" {
 #include "aes.h"
 }
+
+enum class StreamType {
+    Unknown,
+    DirectHttp,         // Открытые MP3
+    HlsUnencrypted,     // Обычный m3u8
+    HlsEncrypted,       // Зашифрованный m3u8
+    EncryptedMonolith   // Зашифрованный m3u8, 1 чанк
+};
+
+struct HlsChunk {
+    QUrl url;
+    double durationSec;
+};
 
 class NetworkStreamer : public QObject {
     Q_OBJECT
@@ -21,6 +33,7 @@ public:
 
     void StartDownload(const std::string& url);
     void StopDownload();
+    void SeekTo(double targetSeconds);
 
 signals:
     void DataReceived(const QByteArray& data);
@@ -46,9 +59,16 @@ private:
     QNetworkAccessManager* m_manager;
     QNetworkReply* m_reply;
 
-    QQueue<QUrl> m_chunkQueue;
+    // --- ПЕРЕМЕННЫЕ РОУТИНГА ---
+    StreamType m_streamType = StreamType::Unknown;
+    QUrl m_baseUrl;
+    qint64 m_totalFileSize = 0;
+    int m_trackDurationSec = 0;
 
     // --- ПЕРЕМЕННЫЕ ДЛЯ HLS AES-128 ---
+    QQueue<QUrl> m_chunkQueue;
+    QVector<HlsChunk> m_hlsChunks;
+    uint64_t m_baseMediaSequence = 0;
     bool m_isEncrypted = false;
     uint64_t m_mediaSequence = 0;
     QUrl m_keyUrl;

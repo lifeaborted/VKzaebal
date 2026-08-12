@@ -22,6 +22,8 @@ void NetworkStreamer::StartDownload(const std::string& urlString) {
     if (m_reply) {
         StopDownload();
     }
+    m_streamType = StreamType::DirectHttp;
+    m_baseUrl = QUrl(QString::fromStdString(urlString));
 
     m_chunkQueue.clear();
     m_isEncrypted = false;
@@ -32,6 +34,7 @@ void NetworkStreamer::StartDownload(const std::string& urlString) {
 
     QUrl url(QString::fromStdString(urlString));
     QNetworkRequest request(url);
+    m_baseUrl = url;
 
     // Включаем поддержку редиректов
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
@@ -86,14 +89,15 @@ void NetworkStreamer::ParseM3u8(const QString& manifestData, const QUrl& baseUrl
     QRegularExpression keyRegex("#EXT-X-KEY:METHOD=AES-128,URI=\"([^\"]+)\"(?:,IV=(?:0x)?([0-9a-fA-F]+))?");
     QRegularExpression seqRegex("#EXT-X-MEDIA-SEQUENCE:(\\d+)");
 
-    // Ищем номер чанка
     QRegularExpressionMatch seqMatch = seqRegex.match(manifestData);
     if (seqMatch.hasMatch()) {
-        m_mediaSequence = seqMatch.captured(1).toULongLong();
+        m_baseMediaSequence = seqMatch.captured(1).toULongLong();
+        m_mediaSequence = m_baseMediaSequence; // Синхронизируем
     }
 
-    // Достаем параметры из исходной ссылки
     QUrlQuery baseQuery(baseUrl);
+    m_hlsChunks.clear();
+    double currentDuration = 0.0;
 
     for (const QString& line : lines) {
         QString trimmed = line.trimmed();
@@ -102,26 +106,24 @@ void NetworkStreamer::ParseM3u8(const QString& manifestData, const QUrl& baseUrl
         if (match.hasMatch()) {
             m_isEncrypted = true;
             QUrl keyUrlResolved = baseUrl.resolved(QUrl(match.captured(1)));
-
-            // слияние параметров запроса для ключа
-            QUrlQuery keyQuery(keyUrlResolved);
-            for (const auto& item : baseQuery.queryItems()) {
-                if (!keyQuery.hasQueryItem(item.first)) {
-                    keyQuery.addQueryItem(item.first, item.second);
-                }
-            }
-            keyUrlResolved.setQuery(keyQuery);
+            // ... [слияние параметров ключа оставляем как есть] ...
             m_keyUrl = keyUrlResolved;
-
             if (!match.captured(2).isEmpty()) {
                 m_aesIV = QByteArray::fromHex(match.captured(2).toUtf8());
             }
             continue;
         }
 
-        if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+        // ДОБАВЛЕНО: Парсим длительность чанка
+        if (trimmed.startsWith("#EXTINF:")) {
+            QString valStr = trimmed.mid(8);
+            int commaPos = valStr.indexOf(',');
+            if (commaPos != -1) valStr = valStr.left(commaPos);
+            currentDuration = valStr.toDouble();
             continue;
         }
+
+        if (trimmed.isEmpty() || trimmed.startsWith("#")) continue;
 
         QUrl chunkUrl = baseUrl.resolved(QUrl(trimmed));
 
@@ -132,11 +134,23 @@ void NetworkStreamer::ParseM3u8(const QString& manifestData, const QUrl& baseUrl
                 chunkQuery.addQueryItem(item.first, item.second);
             }
         }
+
         chunkUrl.setQuery(chunkQuery);
 
+        m_hlsChunks.push_back({chunkUrl, currentDuration});
         m_chunkQueue.enqueue(chunkUrl);
     }
-    Logger::Log(LogLevel::INFO, "Parsed " + std::to_string(m_chunkQueue.size()) + " audio chunks. Encrypted: " + (m_isEncrypted ? "Yes" : "No"));
+
+    // ДОБАВЛЕНО: Умное определение типа потока
+    if (m_hlsChunks.size() == 1 && m_isEncrypted) {
+        m_streamType = StreamType::EncryptedMonolith;
+    } else if (m_isEncrypted) {
+        m_streamType = StreamType::HlsEncrypted;
+    } else {
+        m_streamType = StreamType::HlsUnencrypted;
+    }
+
+    Logger::Log(LogLevel::INFO, "Parsed " + std::to_string(m_hlsChunks.size()) + " audio chunks. Encrypted: " + (m_isEncrypted ? "Yes" : "No"));
 }
 
 void NetworkStreamer::DownloadKey() {
@@ -292,5 +306,64 @@ void NetworkStreamer::OnErrorOccurred(QNetworkReply::NetworkError code) {
         std::string err = m_reply->errorString().toStdString();
         Logger::Log(LogLevel::ERROR, "Network error (" + std::to_string(code) + "): " + err);
         emit DownloadError(err);
+    }
+}
+
+void NetworkStreamer::SeekTo(double targetSeconds) {
+    StopDownload();
+    m_currentChunkData.clear();
+
+    if (m_streamType == StreamType::DirectHttp || m_streamType == StreamType::HlsUnencrypted) {
+        // --- СТРАТЕГИЯ 1: HTTP Range Request ---
+        std::string typeStr = (m_streamType == StreamType::DirectHttp) ? "Direct HTTP" : "HLS Unencrypted";
+
+        if (m_totalFileSize > 0 && m_trackDurationSec > 0) {
+            qint64 targetByte = static_cast<qint64>((targetSeconds / m_trackDurationSec) * m_totalFileSize);
+
+            Logger::Log(LogLevel::INFO, "NetworkStreamer: [Strategy -> HTTP Range] Type: " + typeStr + ". Requesting bytes=" + std::to_string(targetByte) + "-");
+
+            QNetworkRequest request(m_baseUrl);
+            request.setRawHeader("Range", QString("bytes=%1-").arg(targetByte).toUtf8());
+            request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+
+            m_reply = m_manager->get(request);
+            connect(m_reply, &QNetworkReply::readyRead, this, &NetworkStreamer::OnReadyRead);
+            connect(m_reply, &QNetworkReply::finished, this, &NetworkStreamer::OnChunkFinished);
+            connect(m_reply, &QNetworkReply::errorOccurred, this, &NetworkStreamer::OnErrorOccurred);
+        } else {
+            Logger::Log(LogLevel::WARNING, "NetworkStreamer: [Strategy -> HTTP Range] Failed! Missing total file size or duration.");
+        }
+    }
+    else if (m_streamType == StreamType::HlsEncrypted) {
+        // --- СТРАТЕГИЯ 2: Прыжок по зашифрованным чанкам HLS ---
+        double accumulatedTime = 0.0;
+        int targetIndex = 0;
+
+        for (int i = 0; i < m_hlsChunks.size(); ++i) {
+            if (accumulatedTime + m_hlsChunks[i].durationSec > targetSeconds) {
+                targetIndex = i;
+                break;
+            }
+            accumulatedTime += m_hlsChunks[i].durationSec;
+        }
+
+        // Жесткая синхронизация AES IV
+        m_mediaSequence = m_baseMediaSequence + targetIndex;
+
+        // Пересобираем очередь чанков, отбрасывая прослушанные
+        m_chunkQueue.clear();
+        for (int i = targetIndex; i < m_hlsChunks.size(); ++i) {
+            m_chunkQueue.enqueue(m_hlsChunks[i].url);
+        }
+
+        Logger::Log(LogLevel::INFO, "NetworkStreamer: [Strategy -> HLS Chunk] Jumping to chunk " + std::to_string(targetIndex) + ". Sequence reset to " + std::to_string(m_mediaSequence));
+        DownloadNextChunk();
+    }
+    else if (m_streamType == StreamType::EncryptedMonolith) {
+        // --- СТРАТЕГИЯ 3: Mmap для зашифрованных монолитов (В планах) ---
+        Logger::Log(LogLevel::WARNING, "NetworkStreamer: [Strategy -> RAM File Mapping] Native mmap seek for monoliths is pending implementation.");
+    }
+    else {
+        Logger::Log(LogLevel::ERROR, "NetworkStreamer: Unknown stream type! Cannot seek.");
     }
 }

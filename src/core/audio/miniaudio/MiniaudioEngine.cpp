@@ -69,23 +69,41 @@ void MiniaudioEngine::SetPositionSeconds(double pos) {
     std::lock_guard<std::mutex> lock(m_audioMutex);
 
     if (m_decoder) {
-        // Локальный файл: перематываем через нативный декодер miniaudio
+        // ЛОКАЛЬНЫЙ ФАЙЛ
         ma_uint64 targetFrame = static_cast<ma_uint64>(pos * 44100.0);
-
         if (ma_decoder_seek_to_pcm_frame(m_decoder, targetFrame) == MA_SUCCESS) {
             m_playbackFrameCount = targetFrame;
-
-            // Сбрасываем триггеры предзагрузки, чтобы они не сработали ложно
             m_nearEndTriggered = false;
             m_finishedTriggered = false;
-
             Logger::Log(LogLevel::INFO, "Miniaudio: Seeked to " + std::to_string(pos) + "s");
-        } else {
-            Logger::Log(LogLevel::WARNING, "Miniaudio: Failed to seek local file.");
         }
     } else {
-        // Сетевой поток: блокируем перемотку, чтобы не сломать NetworkStreamer
-        Logger::Log(LogLevel::WARNING, "Miniaudio: Seeking is only supported for fully downloaded tracks.");
+        // СЕТЕВОЙ ПОТОК
+        m_playbackFrameCount = static_cast<ma_uint64>(pos * 44100.0);
+        m_nearEndTriggered = false;
+        m_finishedTriggered = false;
+
+        m_pcmBuffer.Clear();
+        {
+            std::lock_guard<std::mutex> netLock(m_networkMutex);
+            m_aacBuffer.clear();
+        }
+        m_mp3Buffer.clear(); // Важно для ВК!
+
+        m_audioPid = 0x1FFF;
+        m_id3BytesToSkip = 0;
+        m_streamFormat = AudioStreamFormat::Unknown;
+
+        // Сброс декодеров
+        if (m_aacDecoder) {
+            aacDecoder_Close(m_aacDecoder);
+            m_aacDecoder = aacDecoder_Open(TT_MP4_ADTS, 1);
+        }
+        mp3dec_init(&m_mp3Decoder);
+
+        if (OnNetworkSeekRequested) {
+            OnNetworkSeekRequested(pos);
+        }
     }
 }
 

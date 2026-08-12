@@ -24,4 +24,5 @@ public:
 
     std::function<void()> OnTrackNearEnd;
     std::function<void()> OnTrackFinished;
+    std::function<void(double)> OnNetworkSeekRequested;
 };
