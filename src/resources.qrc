@@ -1,5 +1,5 @@
 <!DOCTYPE RCC><RCC version="1.0">
     <qresource prefix="/">
-        <file>core/vk/VkAuthManager/auth.qml</file>
+        <file>core/vk/auth/auth.qml</file>
     </qresource>
 </RCC>

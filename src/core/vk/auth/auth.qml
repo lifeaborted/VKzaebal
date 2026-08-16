@@ -3,8 +3,8 @@ import QtQuick.Window
 import QtWebView
 
 Window {
-    width: 400
-    height: 600
+    width: 900
+    height: 700
     visible: true
     title: "Авторизация ВКонтакте"
 
@@ -13,6 +13,7 @@ Window {
         url: cppAuthUrl
 
         onUrlChanged: {
+            console.log("[QML] Текущий URL: " + url.toString())
             cppAuthManager.onUrlIntercepted(url.toString())
         }
     }

@@ -1,29 +1,32 @@
-#include <iostream>
-#include <string>
 #include <atomic>
-#include <QGuiApplication>
+#include <iostream>
 #include <QDesktopServices>
-#include <QUrl>
-#include <QTimer>
+#include <QGuiApplication>
+#include <QQmlApplicationEngine>
+#include <QQmlContext>
 #include <QSettings>
+#include <QTimer>
+#include <QUrl>
+#include <string>
+#include <QtWebView>
 
 #ifdef _WIN32
 #include <windows.h>
 #endif
 
-#include "core/audio/bass/BassEngine.h"
 #include "core/audio/IAudioEngine.h"
+#include "core/audio/bass/BassEngine.h"
+#include "core/audio/miniaudio/MiniaudioEngine.h"
+#include "core/lyrics/LyricsFetcher.h"
 #include "core/playlist/PlaylistManager.h"
 #include "core/vk/api/Client.h"
 #include "core/vk/auth/Manager.h"
+#include "services/database/DatabaseManager.h"
+#include "services/downloader/TrackDownloader.h"
+#include "services/network/NetworkStreamer.h"
 #include "ui/console/ConsoleController.h"
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
-#include "services/database/DatabaseManager.h"
-#include "services/downloader/TrackDownloader.h"
-#include "core/lyrics/LyricsFetcher.h"
-#include "core/audio/miniaudio/MiniaudioEngine.h"
-#include "services/network/NetworkStreamer.h"
 
 
 int main(int argc, char *argv[]) {
@@ -38,15 +41,13 @@ int main(int argc, char *argv[]) {
 #endif
 
     QGuiApplication app(argc, argv);
-
+    QtWebView::initialize();
     QCoreApplication::setOrganizationName("VKAudioTeam");
     QCoreApplication::setApplicationName("VKAudioPlayer");
-
     PathManager::Init();
     Logger::Init();
     Logger::Log(LogLevel::INFO, "--- VK Audio Player Started ---");
     Logger::Log(LogLevel::INFO, "DB Path: " + PathManager::GetDbPath().toStdString());
-
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
 
     if (!settings.contains("Audio/CrossfadeDurationMs")) {
@@ -316,7 +317,39 @@ int main(int argc, char *argv[]) {
         dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
     });
 
+    QQmlApplicationEngine* authEngine = nullptr;
+
+    std::function<void()> startAuthFlow = [&]() {
+        Logger::Log(LogLevel::INFO, "Main: Starting auth flow via QML...");
+        console.SetState(ConsoleState::WAITING_TOKEN_URL);
+
+        std::cout << "\n=== Авторизация ВКонтакте ===\n";
+        std::cout << "Откроется окно браузера. Войдите в аккаунт, токен перехватится автоматически.\n> ";
+        std::cout.flush();
+
+        QString authUrl = "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131";
+
+        if (!authEngine) {
+            authEngine = new QQmlApplicationEngine();
+            authEngine->rootContext()->setContextProperty("cppAuthManager", &authManager);
+            authEngine->rootContext()->setContextProperty("cppAuthUrl", authUrl);
+
+            // БЫЛО: authEngine->load(QUrl(QStringLiteral("qrc:/core/vk/VkAuthManager/auth.qml")));
+            authEngine->load(QUrl(QStringLiteral("qrc:/core/vk/auth/auth.qml")));
+
+            if (authEngine->rootObjects().isEmpty()) {
+                Logger::Log(LogLevel::ERROR, "Main: Failed to load auth.qml!");
+            }
+        }
+    };
+
     QObject::connect(&authManager, &Manager::TokenReceived, [&](const std::string& token) {
+            if (authEngine) {
+                authEngine->deleteLater();
+                authEngine = nullptr;
+                Logger::Log(LogLevel::INFO, "Main: QML Engine scheduled for destruction, memory freed.");
+            }
+
             authManager.SaveToken(token);
             vkClient.SetAccessToken(token);
             console.SetState(ConsoleState::COMMAND_MODE);
@@ -324,21 +357,8 @@ int main(int argc, char *argv[]) {
             std::cout.flush();
 
             initPlaylistAndStart(true);
-            vkSyncIndex = 0;
             vkClient.FetchAllUserAudio(0, 200);
         });
-
-    std::function<void()> startAuthFlow = [&]() {
-        Logger::Log(LogLevel::INFO, "Main: Starting auth flow...");
-        std::cout << "\n=== Авторизация ВКонтакте ===\n";
-        std::cout << "СКОПИРУЙТЕ всю ссылку из пустой страницы и вставьте ее сюда\n";
-        std::cout << "(Или введите 'offline' для запуска без интернета):\n> ";
-        std::cout.flush();
-
-        QString authUrl = "https://id.vk.ru/auth?return_auth_hash=f4a373337b4aa44c0b&redirect_uri=https%3A%2F%2Foauth.vk.ru%2Fblank.html&redirect_uri_hash=92e89c95efe255137e&force_hash=1&app_id=6287487&response_type=token&code_challenge=&code_challenge_method=&scope=408861919&state=";
-        QDesktopServices::openUrl(QUrl(authUrl));
-        console.SetState(ConsoleState::WAITING_TOKEN_URL);
-    };
 
     QObject::connect(&vkClient, &Client::TokenExpired, [&]() {
             if (console.GetState() == ConsoleState::WAITING_TOKEN_URL) return;
