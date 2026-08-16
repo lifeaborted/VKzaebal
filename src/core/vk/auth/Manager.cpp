@@ -1,7 +1,7 @@
 #include "Manager.h"
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
-#include <QFile>
+#include <QSettings> // ДОБАВЛЕНО ВМЕСТО QFile
 
 #include <QRegularExpression>
 
@@ -12,33 +12,27 @@ Manager::Manager(QObject* parent) : QObject(parent) {
 Manager::~Manager() {}
 
 std::string Manager::GetSavedToken() const {
-    QFile file(PathManager::GetTokenFilePath());
-    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QTextStream in(&file);
-        return in.readLine().trimmed().toStdString();
-    }
-    return "";
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    return settings.value("General/vk_token", "").toString().toStdString();
 }
 
 void Manager::SaveToken(const std::string& token) const {
-    QFile file(PathManager::GetTokenFilePath());
-    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QTextStream out(&file);
-        out << QString::fromStdString(token);
-        Logger::Log(LogLevel::INFO, "auth: Token saved to local file.");
-    }
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    settings.setValue("General/vk_token", QString::fromStdString(token));
+    settings.sync();
+
+    Logger::Log(LogLevel::INFO, "auth: Token saved to config.ini.");
 }
 
 void Manager::ClearSavedToken() const {
-    QFile file(PathManager::GetTokenFilePath());
-    if (file.exists()) {
-        file.remove();
-        Logger::Log(LogLevel::INFO, "auth: Token file removed.");
-    }
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    settings.remove("General/vk_token");
+    settings.sync();
+
+    Logger::Log(LogLevel::INFO, "auth: Token removed from config.ini.");
 }
 
 void Manager::onUrlIntercepted(const QString& urlStr) {
-    // Ищем токен в адресной строке
     if (urlStr.contains("access_token=")) {
         QRegularExpression re("access_token=([^&]+)");
         QRegularExpressionMatch match = re.match(urlStr);

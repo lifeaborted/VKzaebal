@@ -366,13 +366,17 @@ void MiniaudioEngine::Resume() {
     }
 }
 
+// Логарифмический прирост громкости
 void MiniaudioEngine::SetVolume(float volume) {
     m_volume = volume;
+
     if (m_volume < 0.0f) m_volume = 0.0f;
     if (m_volume > 1.0f) m_volume = 1.0f;
 
     if (m_isDeviceInitialized) {
-        ma_device_set_master_volume(&m_device, m_volume);
+        float actualVolume = std::pow(m_volume, 3.0f);
+
+        ma_device_set_master_volume(&m_device, actualVolume);
     }
 }
 

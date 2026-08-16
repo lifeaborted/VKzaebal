@@ -36,6 +36,7 @@ public:
     void Start();
     void Stop();
     void SetState(ConsoleState state);
+    ConsoleState GetState() const { return m_currentState; }
 
     std::function<void(bool)> OnGaplessModeChanged;
 

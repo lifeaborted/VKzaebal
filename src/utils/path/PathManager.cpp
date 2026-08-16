@@ -89,7 +89,3 @@ QString PathManager::GetLyricsFilePath(const std::string& artist, const std::str
     }
     return GetLyricsDir() + "/lyric.txt";
 }
-
-QString PathManager::GetTokenFilePath() {
-    return GetAppDataDir() + "/.vk_token";
-}

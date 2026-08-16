@@ -317,16 +317,16 @@ int main(int argc, char *argv[]) {
     });
 
     QObject::connect(&authManager, &Manager::TokenReceived, [&](const std::string& token) {
-        settings.setValue("vk_token", QString::fromStdString(token));
-        vkClient.SetAccessToken(token);
-        console.SetState(ConsoleState::COMMAND_MODE);
-        std::cout << "\n[УСПЕХ] Авторизация пройдена! Загрузка аудио...\n> ";
-        std::cout.flush();
+            authManager.SaveToken(token);
+            vkClient.SetAccessToken(token);
+            console.SetState(ConsoleState::COMMAND_MODE);
+            std::cout << "\n[УСПЕХ] Авторизация пройдена! Загрузка аудио...\n> ";
+            std::cout.flush();
 
-        initPlaylistAndStart(true);
-        vkSyncIndex = 0;
-        vkClient.FetchAllUserAudio(0, 200);
-    });
+            initPlaylistAndStart(true);
+            vkSyncIndex = 0;
+            vkClient.FetchAllUserAudio(0, 200);
+        });
 
     std::function<void()> startAuthFlow = [&]() {
         Logger::Log(LogLevel::INFO, "Main: Starting auth flow...");
@@ -341,19 +341,22 @@ int main(int argc, char *argv[]) {
     };
 
     QObject::connect(&vkClient, &Client::TokenExpired, [&]() {
-        Logger::Log(LogLevel::WARNING, "Main: Token expired.");
-        std::cout << "\n[ВНИМАНИЕ] Токен устарел.\n";
-        settings.remove("vk_token");
-        vkClient.SetAccessToken("");
-        startAuthFlow();
-    });
+            if (console.GetState() == ConsoleState::WAITING_TOKEN_URL) return;
 
-    QString savedToken = settings.value("vk_token", "").toString();
+            Logger::Log(LogLevel::WARNING, "Main: Token expired.");
+            std::cout << "\n[ВНИМАНИЕ] Токен устарел (Или сменился IP из-за VPN).\n";
 
-    if (savedToken.isEmpty()) {
+            authManager.ClearSavedToken();
+            vkClient.SetAccessToken("");
+            startAuthFlow();
+        });
+
+    std::string savedToken = authManager.GetSavedToken();
+
+    if (savedToken.empty()) {
         startAuthFlow();
     } else {
-        vkClient.SetAccessToken(savedToken.toStdString());
+        vkClient.SetAccessToken(savedToken);
         std::cout << "Проверка сохраненного токена...\n";
         std::cout.flush();
 

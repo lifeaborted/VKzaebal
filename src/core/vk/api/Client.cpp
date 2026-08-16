@@ -63,32 +63,6 @@ void Client::ValidateToken(std::function<void(bool)> callback) {
     });
 }
 
-void Client::FetchUserAudio(long long ownerId, int count) {
-    if (m_accessToken.empty()) {
-        emit ApiError("Access token is missing!");
-        return;
-    }
-
-    QUrl url("https://api.vk.com/method/audio.get");
-    QUrlQuery query;
-    if (ownerId != 0) {
-        query.addQueryItem("owner_id", QString::number(ownerId));
-    }
-    query.addQueryItem("count", QString::number(count));
-    query.addQueryItem("v", QString::fromStdString(m_apiVersion));
-    query.addQueryItem("access_token", QString::fromStdString(m_accessToken));
-
-    url.setQuery(query);
-    QNetworkRequest request(url);
-
-    request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-
-    Logger::Log(LogLevel::INFO, "api: Fetching audio...");
-
-    QNetworkReply* reply = m_manager->get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() { OnReplyFinished(reply); });
-}
-
 void Client::FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) {
     QUrl url("https://api.vk.com/method/audio.getById");
     QUrlQuery query;
@@ -96,6 +70,8 @@ void Client::FetchTrackUrl(const std::string& trackId, std::function<void(const 
     query.addQueryItem("access_token", QString::fromStdString(m_accessToken));
     query.addQueryItem("v", QString::fromStdString(m_apiVersion));
     url.setQuery(query);
+
+    Logger::Log(LogLevel::INFO, "http запрос: " + url.toString().toStdString());
 
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, "VKAndroidApp/5.56.1-12345 (Android 11; SDK 30; x86_64; en; 2274003)");

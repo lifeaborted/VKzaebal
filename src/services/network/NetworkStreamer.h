@@ -75,4 +75,5 @@ private:
     QByteArray m_aesKey;
     QByteArray m_aesIV;
     QByteArray m_currentChunkData; // Буфер для накопления целого чанка
+    double m_pendingSeekPos = -1.0;
 };

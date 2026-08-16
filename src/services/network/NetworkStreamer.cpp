@@ -18,6 +18,7 @@ NetworkStreamer::~NetworkStreamer() {
 
 void NetworkStreamer::StartDownload(const std::string& urlString) {
     Logger::Log(LogLevel::INFO, "Starting network stream from: " + urlString);
+    m_pendingSeekPos = -1.0;
 
     if (m_reply) {
         StopDownload();
@@ -151,6 +152,13 @@ void NetworkStreamer::ParseM3u8(const QString& manifestData, const QUrl& baseUrl
     }
 
     Logger::Log(LogLevel::INFO, "Parsed " + std::to_string(m_hlsChunks.size()) + " audio chunks. Encrypted: " + (m_isEncrypted ? "Yes" : "No"));
+    if (m_pendingSeekPos >= 0.0) {
+        double pos = m_pendingSeekPos;
+        m_pendingSeekPos = -1.0;
+        SeekTo(pos);
+    } else {
+        DownloadNextChunk();
+    }
 }
 
 void NetworkStreamer::DownloadKey() {
@@ -310,6 +318,11 @@ void NetworkStreamer::OnErrorOccurred(QNetworkReply::NetworkError code) {
 }
 
 void NetworkStreamer::SeekTo(double targetSeconds) {
+    if (m_hlsChunks.isEmpty() && m_totalFileSize == 0) {
+        m_pendingSeekPos = targetSeconds;
+        Logger::Log(LogLevel::INFO, "NetworkStreamer: Manifest not loaded yet. Seek deferred to " + std::to_string(targetSeconds) + "s.");
+        return;
+    }
     StopDownload();
     m_currentChunkData.clear();
 
