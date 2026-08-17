@@ -9,6 +9,15 @@
 #include <QUrl>
 #include <string>
 #include <QtWebView>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QUrlQuery>
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QFile>
+#include <QTextStream>
+#include <QMap>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -29,6 +38,31 @@
 #include "utils/path/PathManager.h"
 
 
+// Функция для парсинга .env файла
+QMap<QString, QString> LoadEnvFile(const QString& filePath) {
+    QMap<QString, QString> env;
+    QFile file(filePath);
+    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream in(&file);
+        while (!in.atEnd()) {
+            QString line = in.readLine().trimmed();
+            if (line.isEmpty() || line.startsWith("#")) continue;
+            int idx = line.indexOf('=');
+            if (idx != -1) {
+                QString key = line.left(idx).trimmed();
+                QString value = line.mid(idx + 1).trimmed();
+                if (value.startsWith('"') && value.endsWith('"')) {
+                    value = value.mid(1, value.length() - 2);
+                }
+                env[key] = value;
+            }
+        }
+    } else {
+        Logger::Log(LogLevel::WARNING, "Main: .env file not found at " + filePath.toStdString());
+    }
+    return env;
+}
+
 int main(int argc, char *argv[]) {
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
@@ -41,11 +75,15 @@ int main(int argc, char *argv[]) {
 #endif
 
     QGuiApplication app(argc, argv);
+
+    app.setQuitOnLastWindowClosed(false);
+
     QtWebView::initialize();
     QCoreApplication::setOrganizationName("VKAudioTeam");
     QCoreApplication::setApplicationName("VKAudioPlayer");
     PathManager::Init();
     Logger::Init();
+    QMap<QString, QString> envVars = LoadEnvFile(".env");
     Logger::Log(LogLevel::INFO, "--- VK Audio Player Started ---");
     Logger::Log(LogLevel::INFO, "DB Path: " + PathManager::GetDbPath().toStdString());
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
@@ -318,23 +356,22 @@ int main(int argc, char *argv[]) {
     });
 
     QQmlApplicationEngine* authEngine = nullptr;
+    QString currentAuthService = "";
 
-    std::function<void()> startAuthFlow = [&]() {
-        Logger::Log(LogLevel::INFO, "Main: Starting auth flow via QML...");
+    // УНИВЕРСАЛЬНЫЙ МЕТОД АВТОРИЗАЦИИ
+    auto startAuthFlow = [&](const QString& service, const QString& authUrl) {
+        currentAuthService = service;
+        Logger::Log(LogLevel::INFO, "Main: Starting auth flow via QML for " + service.toStdString() + "...");
         console.SetState(ConsoleState::WAITING_TOKEN_URL);
 
-        std::cout << "\n=== Авторизация ВКонтакте ===\n";
+        std::cout << "\n=== Авторизация " << service.toStdString() << " ===\n";
         std::cout << "Откроется окно браузера. Войдите в аккаунт, токен перехватится автоматически.\n> ";
         std::cout.flush();
-
-        QString authUrl = "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131";
 
         if (!authEngine) {
             authEngine = new QQmlApplicationEngine();
             authEngine->rootContext()->setContextProperty("cppAuthManager", &authManager);
             authEngine->rootContext()->setContextProperty("cppAuthUrl", authUrl);
-
-            // БЫЛО: authEngine->load(QUrl(QStringLiteral("qrc:/core/vk/VkAuthManager/auth.qml")));
             authEngine->load(QUrl(QStringLiteral("qrc:/core/vk/auth/auth.qml")));
 
             if (authEngine->rootObjects().isEmpty()) {
@@ -343,41 +380,107 @@ int main(int argc, char *argv[]) {
         }
     };
 
+// 1. Коннект для неявного токена (ВКонтакте)
     QObject::connect(&authManager, &Manager::TokenReceived, [&](const std::string& token) {
-            if (authEngine) {
-                authEngine->deleteLater();
-                authEngine = nullptr;
-                Logger::Log(LogLevel::INFO, "Main: QML Engine scheduled for destruction, memory freed.");
-            }
+        if (authEngine) {
+            authEngine->deleteLater();
+            authEngine = nullptr;
+            Logger::Log(LogLevel::INFO, "Main: QML Engine scheduled for destruction, memory freed.");
+        }
 
-            authManager.SaveToken(token);
+        // Сохраняем токен именно для того сервиса, который открыл окно
+        authManager.SaveToken(token, currentAuthService);
+        console.SetState(ConsoleState::COMMAND_MODE);
+
+        std::cout << "\n[УСПЕХ] Авторизация " << currentAuthService.toStdString() << " пройдена!\n> ";
+        std::cout.flush();
+
+        // Роутинг действий после успешной авторизации
+        if (currentAuthService == "VK") {
             vkClient.SetAccessToken(token);
-            console.SetState(ConsoleState::COMMAND_MODE);
-            std::cout << "\n[УСПЕХ] Авторизация пройдена! Загрузка аудио...\n> ";
-            std::cout.flush();
-
             initPlaylistAndStart(true);
             vkClient.FetchAllUserAudio(0, 200);
+        }
+    });
+
+    // Локальный менеджер сети для запроса токенов
+    QNetworkAccessManager* spotifyAuthNetManager = new QNetworkAccessManager(&app);
+
+    // 2. Коннект для кода авторизации (Spotify)
+    QObject::connect(&authManager, &Manager::AuthCodeReceived, &app, [&](const std::string& code) {
+        if (authEngine) {
+            authEngine->deleteLater();
+            authEngine = nullptr;
+        }
+
+        std::cout << "\n[Spotify] Код получен. Отправка POST-запроса на обмен токена...\n";
+        std::cout.flush();
+
+        QString clientId = envVars.value("SPOTIFY_CLIENT_ID", "");
+        QString clientSecret = envVars.value("SPOTIFY_CLIENT_SECRET", "");
+
+        if (clientId.isEmpty() || clientSecret.isEmpty()) {
+            std::cout << "\n[ОШИБКА] Ключи Spotify не найдены в .env файле!\n> ";
+            std::cout.flush();
+            console.SetState(ConsoleState::COMMAND_MODE);
+            return;
+        }
+
+        QUrl url("https://accounts.spotify.com/api/token");
+        QNetworkRequest request(url);
+        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+
+        // Создаем заголовок Basic Auth по стандарту OAuth 2.0
+        QByteArray auth = (clientId + ":" + clientSecret).toUtf8().toBase64();
+        request.setRawHeader("Authorization", "Basic " + auth);
+
+        QString decodedCode = QUrl::fromPercentEncoding(QString::fromStdString(code).toUtf8());
+
+        QByteArray body;
+        body.append("grant_type=authorization_code");
+        body.append("&code=" + QUrl::toPercentEncoding(decodedCode));
+        body.append("&redirect_uri=" + QUrl::toPercentEncoding("http://127.0.0.1:8080/callback"));
+
+        QNetworkReply* reply = spotifyAuthNetManager->post(request, body);
+
+        QObject::connect(reply, &QNetworkReply::finished, [reply, &authManager, &console]() {
+            if (reply->error() == QNetworkReply::NoError) {
+                QJsonDocument json = QJsonDocument::fromJson(reply->readAll());
+                std::string token = json.object()["access_token"].toString().toStdString();
+
+                authManager.SaveToken(token, "Spotify");
+                console.SetState(ConsoleState::COMMAND_MODE);
+                std::cout << "\n[УСПЕХ] Авторизация Spotify пройдена!\n> ";
+                std::cout.flush();
+            } else {
+                std::cout << "\n[ОШИБКА] Не удалось получить токен: " << reply->errorString().toStdString() << "\n> ";
+                std::cout.flush();
+                console.SetState(ConsoleState::COMMAND_MODE);
+            }
+            reply->deleteLater();
         });
+    });
 
     QObject::connect(&vkClient, &Client::TokenExpired, [&]() {
-            if (console.GetState() == ConsoleState::WAITING_TOKEN_URL) return;
+        if (console.GetState() == ConsoleState::WAITING_TOKEN_URL) return;
+        Logger::Log(LogLevel::WARNING, "Main: Token VK expired.");
+        std::cout << "\n[ВНИМАНИЕ] Токен ВК устарел (Или сменился IP из-за VPN).\n";
 
-            Logger::Log(LogLevel::WARNING, "Main: Token expired.");
-            std::cout << "\n[ВНИМАНИЕ] Токен устарел (Или сменился IP из-за VPN).\n";
+        authManager.ClearSavedToken("VK");
+        vkClient.SetAccessToken("");
 
-            authManager.ClearSavedToken();
-            vkClient.SetAccessToken("");
-            startAuthFlow();
-        });
+        QString vkUrl = "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131";
+        startAuthFlow("VK", vkUrl);
+    });
 
-// === РОУТЕР ИСТОЧНИКОВ ===
+    // === РОУТЕР ИСТОЧНИКОВ ===
 
     // 1. ВКонтакте
     auto startVkService = [&]() {
-        std::string savedToken = authManager.GetSavedToken();
+        std::string savedToken = authManager.GetSavedToken("VK");
         if (savedToken.empty()) {
-            startAuthFlow();
+            QString vkUrl = "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131";
+            startAuthFlow("VK", vkUrl);
         } else {
             vkClient.SetAccessToken(savedToken);
             std::cout << "Проверка сохраненного токена ВК...\n";
@@ -394,9 +497,10 @@ int main(int argc, char *argv[]) {
                 } else {
                     std::cout << "\n[ВНИМАНИЕ] Нет сети или токен ВК недействителен.\n";
                     std::cout.flush();
-                    settings.remove("General/vk_token");
+                    authManager.ClearSavedToken("VK");
                     vkClient.SetAccessToken("");
-                    startAuthFlow();
+                    QString vkUrl = "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131";
+                    startAuthFlow("VK", vkUrl);
                 }
             });
         }
@@ -404,10 +508,25 @@ int main(int argc, char *argv[]) {
 
     // 2. Spotify
     auto startSpotifyService = [&]() {
-        console.SetState(ConsoleState::COMMAND_MODE);
-        std::cout << "\n[Spotify] Инициализация Spotify Web API...\n";
-        std::cout << "Ожидание настройки OAuth 2.0 (В разработке)\n> ";
-        std::cout.flush();
+        std::string savedToken = authManager.GetSavedToken("Spotify");
+        if (savedToken.empty()) {
+            QString clientId = envVars.value("SPOTIFY_CLIENT_ID", "");
+
+            if (clientId.isEmpty()) {
+                console.SetState(ConsoleState::COMMAND_MODE);
+                std::cout << "\n[ОШИБКА] SPOTIFY_CLIENT_ID не задан в .env файле!\n> ";
+                std::cout.flush();
+                return;
+            }
+
+            QString spotUrl = "https://accounts.spotify.com/authorize?client_id=" + clientId + "&response_type=code&redirect_uri=http://127.0.0.1:8080/callback&scope=user-library-read%20user-read-playback-state%20playlist-read-private&show_dialog=true";
+
+            startAuthFlow("Spotify", spotUrl);
+        } else {
+            console.SetState(ConsoleState::COMMAND_MODE);
+            std::cout << "\n[Spotify] Токен найден! Подключение Spotify Web API (в разработке)...\n> ";
+            std::cout.flush();
+        }
     };
 
     // 3. Переключатель
@@ -415,7 +534,6 @@ int main(int argc, char *argv[]) {
         Logger::Log(LogLevel::INFO, "Main: Switching audio source to " + newSource);
 
         audio.Pause();
-
         isPlaybackStarted = false;
         playlist.Clear();
 
@@ -430,13 +548,13 @@ int main(int argc, char *argv[]) {
     };
 
     QObject::connect(&console, &ConsoleController::SourceChanged, &app, [&](const std::string& source) {
-            switchSource(source);
-        }, Qt::QueuedConnection);
+        switchSource(source);
+    }, Qt::QueuedConnection);
 
+    // === ПЕРВЫЙ ЗАПУСК ===
     QString currentSource = settings.value("General/source", "VK").toString();
     switchSource(currentSource.toStdString());
 
-    // ИСПРАВЛЕННЫЙ БЛОК СОХРАНЕНИЯ СОСТОЯНИЯ СЕССИИ (Возвращена закрывающая скобка)
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [&]() {
         Logger::Log(LogLevel::INFO, "Main: Saving session state...");
         settings.setValue("Session/Volume", audio.GetVolume());
