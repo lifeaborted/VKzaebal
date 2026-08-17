@@ -151,9 +151,9 @@ int main(int argc, char *argv[]) {
         }
     };
 
-    QObject::connect(&console, &ConsoleController::OfflineModeRequested, [&]() {
-        initPlaylistAndStart(false); // Запуск строго в оффлайн режиме
-    });
+    QObject::connect(&console, &ConsoleController::OfflineModeRequested, &app, [&]() {
+            initPlaylistAndStart(false);
+        }, Qt::QueuedConnection);
 
     console.OnGaplessModeChanged = [&](bool isCrossfade) {
         crossfadeEnabled = isCrossfade;
@@ -371,34 +371,72 @@ int main(int argc, char *argv[]) {
             startAuthFlow();
         });
 
-    std::string savedToken = authManager.GetSavedToken();
+// === РОУТЕР ИСТОЧНИКОВ ===
 
-    if (savedToken.empty()) {
-        startAuthFlow();
-    } else {
-        vkClient.SetAccessToken(savedToken);
-        std::cout << "Проверка сохраненного токена...\n";
+    // 1. ВКонтакте
+    auto startVkService = [&]() {
+        std::string savedToken = authManager.GetSavedToken();
+        if (savedToken.empty()) {
+            startAuthFlow();
+        } else {
+            vkClient.SetAccessToken(savedToken);
+            std::cout << "Проверка сохраненного токена ВК...\n";
+            std::cout.flush();
+
+            vkClient.ValidateToken([&, startAuthFlow, initPlaylistAndStart](bool isValid) {
+                if (isValid) {
+                    console.SetState(ConsoleState::COMMAND_MODE);
+                    std::cout << "\n[УСПЕХ] Синхронизация свежих треков ВК...\n> ";
+                    std::cout.flush();
+                    initPlaylistAndStart(true);
+                    vkSyncIndex = 0;
+                    vkClient.FetchAllUserAudio(0, 200);
+                } else {
+                    std::cout << "\n[ВНИМАНИЕ] Нет сети или токен ВК недействителен.\n";
+                    std::cout.flush();
+                    settings.remove("General/vk_token");
+                    vkClient.SetAccessToken("");
+                    startAuthFlow();
+                }
+            });
+        }
+    };
+
+    // 2. Spotify
+    auto startSpotifyService = [&]() {
+        console.SetState(ConsoleState::COMMAND_MODE);
+        std::cout << "\n[Spotify] Инициализация Spotify Web API...\n";
+        std::cout << "Ожидание настройки OAuth 2.0 (В разработке)\n> ";
         std::cout.flush();
+    };
 
-        vkClient.ValidateToken([&, startAuthFlow, initPlaylistAndStart](bool isValid) {
-            if (isValid) {
-                console.SetState(ConsoleState::COMMAND_MODE);
-                std::cout << "\n[УСПЕХ] Синхронизация свежих треков...\n> ";
-                std::cout.flush();
+    // 3. Переключатель
+    auto switchSource = [&](const std::string& newSource) {
+        Logger::Log(LogLevel::INFO, "Main: Switching audio source to " + newSource);
 
-                initPlaylistAndStart(true);
-                vkSyncIndex = 0;
-                vkClient.FetchAllUserAudio(0, 200);
-            } else {
-                std::cout << "\n[ВНИМАНИЕ] Нет сети или токен недействителен.\n";
-                std::cout.flush();
-                settings.remove("vk_token");
-                vkClient.SetAccessToken("");
-                startAuthFlow();
-            }
-        });
-    }
+        audio.Pause();
 
+        isPlaybackStarted = false;
+        playlist.Clear();
+
+        if (newSource == "VK") {
+            startVkService();
+        } else if (newSource == "Spotify") {
+            startSpotifyService();
+        } else if (newSource == "Offline") {
+            console.SetState(ConsoleState::COMMAND_MODE);
+            initPlaylistAndStart(false);
+        }
+    };
+
+    QObject::connect(&console, &ConsoleController::SourceChanged, &app, [&](const std::string& source) {
+            switchSource(source);
+        }, Qt::QueuedConnection);
+
+    QString currentSource = settings.value("General/source", "VK").toString();
+    switchSource(currentSource.toStdString());
+
+    // ИСПРАВЛЕННЫЙ БЛОК СОХРАНЕНИЯ СОСТОЯНИЯ СЕССИИ (Возвращена закрывающая скобка)
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [&]() {
         Logger::Log(LogLevel::INFO, "Main: Saving session state...");
         settings.setValue("Session/Volume", audio.GetVolume());

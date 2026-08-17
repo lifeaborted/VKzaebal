@@ -29,6 +29,8 @@ public:
     void SetShuffle(bool enable);
     void ToggleRepeat();
 
+    void Clear();
+
     std::function<void(const Track&)> OnTrackRequested;
     std::vector<Track> GetQueueTracks() const;
     std::vector<Track> GetAllTracks() const;

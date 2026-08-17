@@ -246,3 +246,10 @@ void PlaylistManager::InsertTrack(int position, const Track& track) {
         }
     }
 }
+
+void PlaylistManager::Clear() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_tracks.clear();
+    m_playQueue.clear();
+    m_queueIndex = 0;
+}

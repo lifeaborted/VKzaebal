@@ -128,6 +128,28 @@ void ConsoleController::InputLoop() {
             continue;
         }
 
+        // === РЕЖИМ ВЫБОРА ИСТОЧНИКА ===
+        if (m_currentState == ConsoleState::SELECT_SOURCE) {
+            size_t start = rawInput.find_first_not_of(" \t\r\n");
+            if (start == std::string::npos) {
+                std::cout << "> "; std::cout.flush(); continue;
+            }
+            std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
+
+            if (input == "1") {
+                emit SourceChanged("VK");
+            } else if (input == "2") {
+                emit SourceChanged("Spotify");
+            } else if (input == "3") {
+                emit SourceChanged("Offline");
+            } else {
+                syncPrint("[Ошибка] Неверный выбор. Введите 1, 2 или 3:\n> ");
+                continue;
+            }
+            m_currentState = ConsoleState::COMMAND_MODE;
+            continue;
+        }
+
         // === РЕЖИМ ПЛЕЕРА (COMMAND_MODE) ===
         std::cout << "\033[1A\r\033[2K";
         std::cout.flush();
@@ -143,6 +165,13 @@ void ConsoleController::InputLoop() {
         if (m_currentState == ConsoleState::COMMAND_MODE) {
             std::string lowerInput = input;
             for (char& c : lowerInput) c = std::tolower(c);
+
+            // Команда выбора источника
+            if (lowerInput == "source") {
+                m_currentState = ConsoleState::SELECT_SOURCE;
+                syncPrint("\n=== Выбор источника ===\n1 - ВКонтакте\n2 - Spotify\n3 - Оффлайн режим\n\nВведите номер: ");
+                continue;
+            }
 
             std::string cmdType = lowerInput.substr(0, 2);
             if (cmdType == "dl" || cmdType == "rm") {
@@ -244,9 +273,7 @@ void ConsoleController::InputLoop() {
             if (lowerInput == "sh") {
                 QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() {
                     m_playlist.SetShuffle(true);
-
                     m_playlist.JumpToQueueIndex(0);
-
                     m_dbManager.SaveQueue(m_playlist.GetQueueTracks(), m_playlist.IsShuffle());
                     m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
                 }, Qt::QueuedConnection);
@@ -336,7 +363,6 @@ void ConsoleController::InputLoop() {
                     isSplit = true;
                 }
 
-                // Переводим в нижний регистр для независимого от регистра поиска
                 QString qArtist = QString::fromStdString(searchArtist).trimmed();
                 QString qTitle = QString::fromStdString(searchTitle).trimmed();
                 QString qFull = QString::fromStdString(query).trimmed();
@@ -433,15 +459,16 @@ void ConsoleController::InputLoop() {
                     std::string helpText = "\n" + s + "\n"
                               + " [P] Play/Pause\n [N] Next\n [B] Prev\n"
                               + " [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n"
-                              + " [st] Standard Order\n [sh] Shuffle (Reshuffles if already on)\n [R] Repeat Mode\n"
+                              + " [st] Standard Order\n [sh] Shuffle\n [R] Repeat Mode\n"
                               + " [J <num>] Jump to track\n [cv] Current volume\n"
-                              + " [rs] Reset Session (Back to track 1, standard order)\n"
+                              + " [rs] Reset Session\n"
                               + " [mode <0/1>] 0 - Standard, 1 - Gapless transition\n"
-                              + " [search <text>] Search tracks in the loaded playlist\n"
+                              + " [search <text>] Search tracks in playlist\n"
                               + " [ly] Show lyrics for current track\n"
+                              + " [source] Select audio source (VK, Spotify, Offline)\n"
                               + " [tl] Export tracklist to TXT\n"
-                              + " [dl] / [dl <num>] Download track for offline playback\n"
-                              + " [rm] / [rm <num>] Delete downloaded track from local cache\n"
+                              + " [dl] / [dl <num>] Download track\n"
+                              + " [rm] / [rm <num>] Delete downloaded track\n"
                               + " [Q] Quit\n"
                               + s + "\n\n> ";
                     syncPrint(helpText);
@@ -460,7 +487,6 @@ void ConsoleController::InputLoop() {
                                          + "[Инфо] Название: " + current.title + "\n"
                                          + "[Инфо] ID: " + current.id + "\n"
                                          + "[Инфо] Обложка: " + (current.coverUrl.empty() ? "НЕТ ОБЛОЖКИ" : current.coverUrl) + "\n\n> ";
-                        // Для команды i используем прямую очистку
                         std::cout << "\r\033[2K\033[1A\r\033[2K" << info;
                         std::cout.flush();
                     }, Qt::QueuedConnection);
@@ -480,10 +506,11 @@ void ConsoleController::UiLoop() {
     const int numBands = 16; // Количество столбиков
 
     while (m_isRunning) {
-        if (m_currentState == ConsoleState::WAITING_TOKEN_URL) {
+        if (m_currentState == ConsoleState::WAITING_TOKEN_URL || m_currentState == ConsoleState::SELECT_SOURCE) {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
             continue;
         }
+
         if (m_currentState == ConsoleState::COMMAND_MODE && m_audio.IsPlaying()) {
             double current = m_audio.GetPositionSeconds();
             if (current < 0.0) current = 0.0;

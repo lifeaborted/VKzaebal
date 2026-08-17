@@ -15,7 +15,8 @@ class DatabaseManager;
 
 enum class ConsoleState {
     COMMAND_MODE,
-    WAITING_TOKEN_URL
+    WAITING_TOKEN_URL,
+    SELECT_SOURCE
 };
 
 class ConsoleController : public QObject {
@@ -43,6 +44,7 @@ public:
     signals:
         void QuitRequested();
         void OfflineModeRequested();
+        void SourceChanged(const std::string& sourceName);
 
 private:
     void InputLoop();
