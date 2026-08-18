@@ -11,6 +11,8 @@
 #include <vector>
 #include <mutex>
 #include <memory>
+#include <thread>
+#include <condition_variable>
 
 
 class MiniaudioEngine : public IAudioEngine {
@@ -40,6 +42,7 @@ private:
     void DecodeAACFrames();   // функция для декодирования ADTS пакетов
     void InitiateCrossfade(); // Вспомогательный метод кроссфейда
     void StopFadeOut();       // Вспомогательный метод очистки затухания
+    void DecodeLoop();
 
     // Кастомный удалитель для декодера
     struct DecoderDeleter {
@@ -52,6 +55,11 @@ private:
     };
 
     ma_device m_device;
+    std::thread m_decodeThread;
+    std::atomic<bool> m_isDecoding{false};
+    std::condition_variable m_decodeCv;
+    std::vector<int16_t> m_mainBuffer;
+    std::vector<int16_t> m_fadeOutBuffer;
     bool m_isDeviceInitialized = false;
     float m_volume = 1.0f;
     std::atomic<bool> m_isPlaying = false;

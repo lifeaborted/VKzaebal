@@ -46,9 +46,23 @@ MiniaudioEngine::MiniaudioEngine() : m_demuxer([this](const uint8_t* payload, si
     m_isDecoderInitialized = false;
     m_isPlaying = false;
     m_volume = 1.0f;
+    // Выделяем память один раз
+    m_mainBuffer.resize(16384, 0);
+    m_fadeOutBuffer.resize(16384, 0);
+
+    // Запускаем фоновый поток декодирования
+    m_isDecoding = true;
+    m_decodeThread = std::thread(&MiniaudioEngine::DecodeLoop, this);
 }
 
 MiniaudioEngine::~MiniaudioEngine() {
+    // Останавливаем фоновый поток
+    m_isDecoding = false;
+    m_decodeCv.notify_all();
+
+    if (m_decodeThread.joinable()) {
+        m_decodeThread.join();
+    }
     if (m_isDeviceInitialized) {
         ma_device_uninit(&m_device);
     }
@@ -172,28 +186,32 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
         std::lock_guard<std::mutex> lock(engine->m_audioMutex);
         engine->m_playbackFrameCount += frameCount;
 
-        std::vector<int16_t> mainBuffer(frameCount * 2, 0);
+        if (frameCount * 2 > engine->m_mainBuffer.size()) {
+            engine->m_mainBuffer.resize(frameCount * 2, 0);
+            engine->m_fadeOutBuffer.resize(frameCount * 2, 0);
+        }
+
+        std::memset(engine->m_mainBuffer.data(), 0, frameCount * 2 * sizeof(int16_t));
+        std::memset(engine->m_fadeOutBuffer.data(), 0, frameCount * 2 * sizeof(int16_t));
+
         ma_uint32 framesRead = 0;
 
         if (engine->m_decoder) {
             ma_uint64 read = 0;
-            // ИСПРАВЛЕНО: добавлено .get()
-            ma_decoder_read_pcm_frames(engine->m_decoder.get(), mainBuffer.data(), frameCount, &read);
+            ma_decoder_read_pcm_frames(engine->m_decoder.get(), engine->m_mainBuffer.data(), frameCount, &read);
             framesRead = read;
         } else {
             ma_uint32 bytesToRead = frameCount * 2 * sizeof(int16_t);
-            size_t bytesRead = engine->m_pcmBuffer.Read(reinterpret_cast<uint8_t*>(mainBuffer.data()), bytesToRead);
+            size_t bytesRead = engine->m_pcmBuffer.Read(reinterpret_cast<uint8_t*>(engine->m_mainBuffer.data()), bytesToRead);
             framesRead = bytesRead / (2 * sizeof(int16_t));
         }
 
-        std::vector<int16_t> fadeOutBuffer(frameCount * 2, 0);
         ma_uint32 fadeOutFramesRead = 0;
 
         if (engine->m_isCrossfading) {
             if (engine->m_fadeOutIsLocal && engine->m_fadeOutDecoder) {
                 ma_uint64 read = 0;
-                // ИСПРАВЛЕНО: добавлено .get()
-                ma_decoder_read_pcm_frames(engine->m_fadeOutDecoder.get(), fadeOutBuffer.data(), frameCount, &read);
+                ma_decoder_read_pcm_frames(engine->m_fadeOutDecoder.get(), engine->m_fadeOutBuffer.data(), frameCount, &read);
                 fadeOutFramesRead = read;
             } else {
                 size_t elementsAvail = engine->m_fadeOutPcm.size() - engine->m_fadeOutPcmReadPos;
@@ -201,7 +219,7 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
                 if (elementsToRead > elementsAvail) elementsToRead = elementsAvail;
 
                 if (elementsToRead > 0) {
-                    std::memcpy(fadeOutBuffer.data(), engine->m_fadeOutPcm.data() + engine->m_fadeOutPcmReadPos, elementsToRead * sizeof(int16_t));
+                    std::memcpy(engine->m_fadeOutBuffer.data(), engine->m_fadeOutPcm.data() + engine->m_fadeOutPcmReadPos, elementsToRead * sizeof(int16_t));
                     engine->m_fadeOutPcmReadPos += elementsToRead;
                     fadeOutFramesRead = elementsToRead / 2;
                 }
@@ -226,8 +244,8 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
 
             for (int c = 0; c < 2; ++c) {
                 int idx = i * 2 + c;
-                float s1 = (i < framesRead) ? mainBuffer[idx] * mainVol : 0.0f;
-                float s2 = (i < fadeOutFramesRead) ? fadeOutBuffer[idx] * fadeOutVol : 0.0f;
+                float s1 = (i < framesRead) ? engine->m_mainBuffer[idx] * mainVol : 0.0f;
+                float s2 = (i < fadeOutFramesRead) ? engine->m_fadeOutBuffer[idx] * fadeOutVol : 0.0f;
 
                 float mixed = s1 + s2;
                 if (mixed > 32767.0f) mixed = 32767.0f;
@@ -285,8 +303,6 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
             }
         }
     }
-
-    engine->DecodeAACFrames();
 }
 
 bool MiniaudioEngine::PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId) {
@@ -368,7 +384,27 @@ void MiniaudioEngine::PushNetworkData(const uint8_t* data, size_t size) {
         std::lock_guard<std::mutex> lock(m_networkMutex);
         m_aacBuffer.insert(m_aacBuffer.end(), data, data + size);
     }
-    DecodeAACFrames();
+    m_decodeCv.notify_one();
+}
+
+void MiniaudioEngine::DecodeLoop() {
+    while (m_isDecoding) {
+        {
+            std::unique_lock<std::mutex> lock(m_networkMutex);
+            m_decodeCv.wait(lock, [this]() {
+                return !m_isDecoding || (m_aacBuffer.size() >= 188);
+            });
+        }
+
+        if (!m_isDecoding) break;
+
+        if (m_pcmBuffer.GetAvailableWrite() < 176400) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        DecodeAACFrames();
+    }
 }
 
 void MiniaudioEngine::DecodeAACFrames() {
