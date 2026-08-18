@@ -14,12 +14,12 @@
 #include <QCoreApplication>
 #include <QMetaObject>
 #include <cmath>
+#include <QSettings>
 
 #include "ConsoleController.h"
 #include "core/audio/IAudioEngine.h"
 #include "core/playlist/PlaylistManager.h"
 #include "core/auth/OAuthManager.h"
-
 #include "services/database/DatabaseManager.h"
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
@@ -40,7 +40,11 @@ ConsoleController::ConsoleController(
         m_downloader(downloader),
         m_lyricsFetcher(lyricsFetcher),
         m_currentState(ConsoleState::COMMAND_MODE),
-        m_isRunning(false) {}
+        m_isRunning(false) {
+            QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+            m_showVisualizer = settings.value("Ui/ShowVisualizer", true).toBool();
+        }
+
 
 ConsoleController::~ConsoleController() {
     Stop();
@@ -454,6 +458,17 @@ void ConsoleController::InputLoop() {
                 continue;
             }
 
+            if (lowerInput == "vis") {
+                m_showVisualizer = !m_showVisualizer;
+                QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+                settings.setValue("Ui/ShowVisualizer", m_showVisualizer);
+                settings.sync();
+
+                std::string stateStr = m_showVisualizer ? "ВКЛЮЧЕН" : "ВЫКЛЮЧЕН";
+                syncPrint("[UI] Визуализатор " + stateStr + "\n\n> ");
+                continue;
+            }
+
             char command = lowerInput[0];
             std::string s(50, '*');
             switch (command) {
@@ -467,10 +482,11 @@ void ConsoleController::InputLoop() {
                               + " [mode <0/1>] 0 - Standard, 1 - Gapless transition\n"
                               + " [search <text>] Search tracks in playlist\n"
                               + " [ly] Show lyrics for current track\n"
-                              + " [source] Select audio source (VK, Spotify, Offline)\n"
+                              + " [source] Select audio source\n"
                               + " [tl] Export tracklist to TXT\n"
                               + " [dl] / [dl <num>] Download track\n"
                               + " [rm] / [rm <num>] Delete downloaded track\n"
+                              + " [vis] Toggle visualizer\n"
                               + " [Q] Quit\n"
                               + s + "\n\n> ";
                     syncPrint(helpText);
@@ -546,32 +562,36 @@ void ConsoleController::UiLoop() {
                 bar += "]";
 
                 // === ЛОГИКА ВИЗУАЛИЗАТОРА ===
-                std::vector<float> fft = m_audio.GetSpectrumData();
-                std::string spectrum = " [";
+                std::string spectrum = "";
 
-                if (!fft.empty()) {
-                    for (int i = 0; i < numBands; ++i) {
-                        float peak = 0.0f;
-                        // Используем экспоненту, чтобы захватить больше басов и средних частот
-                        int startBin = static_cast<int>(std::pow(2.0, i * 7.0 / numBands));
-                        int endBin = static_cast<int>(std::pow(2.0, (i + 1) * 7.0 / numBands));
-                        if (endBin <= startBin) endBin = startBin + 1;
-                        if (endBin > 128) endBin = 128;
+                // Считаем Фурье и рисуем столбики ТОЛЬКО если визуализатор включен
+                if (m_showVisualizer) {
+                    std::vector<float> fft = m_audio.GetSpectrumData();
+                    spectrum = " [";
 
-                        for (int b = startBin; b < endBin; ++b) {
-                            if (fft[b] > peak) peak = fft[b];
+                    if (!fft.empty()) {
+                        for (int i = 0; i < numBands; ++i) {
+                            float peak = 0.0f;
+                            int startBin = static_cast<int>(std::pow(2.0, i * 7.0 / numBands));
+                            int endBin = static_cast<int>(std::pow(2.0, (i + 1) * 7.0 / numBands));
+                            if (endBin <= startBin) endBin = startBin + 1;
+                            if (endBin > 128) endBin = 128;
+
+                            for (int b = startBin; b < endBin; ++b) {
+                                if (fft[b] > peak) peak = fft[b];
+                            }
+
+                            int level = static_cast<int>(std::sqrt(peak) * 18.0f);
+                            if (level < 0) level = 0;
+                            if (level > 7) level = 7;
+
+                            spectrum += blocks[level];
                         }
-
-                        int level = static_cast<int>(std::sqrt(peak) * 18.0f);
-                        if (level < 0) level = 0;
-                        if (level > 7) level = 7;
-
-                        spectrum += blocks[level];
+                    } else {
+                        spectrum += std::string(numBands, ' ');
                     }
-                } else {
-                    spectrum += std::string(numBands, ' ');
+                    spectrum += "]";
                 }
-                spectrum += "]";
 
                 Track currentTrack = m_playlist.GetCurrentTrack();
                 std::vector<Track> queue = m_playlist.GetQueueTracks();
@@ -597,7 +617,7 @@ void ConsoleController::UiLoop() {
                 }, Qt::QueuedConnection);
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
 

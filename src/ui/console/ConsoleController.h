@@ -56,6 +56,7 @@ private:
     TrackDownloader& m_downloader;
     LyricsFetcher& m_lyricsFetcher;
     IAudioProvider* m_currentProvider = nullptr;
+    bool m_showVisualizer = true;
 
     std::atomic<ConsoleState> m_currentState;
     std::atomic<bool> m_isRunning;
