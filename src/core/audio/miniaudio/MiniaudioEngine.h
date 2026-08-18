@@ -3,11 +3,13 @@
 #include "miniaudio.h"
 #include "minimp3.h"
 #include "utils/buffer/RingBuffer.h"
-#include "aacdecoder_lib.h" // <--- Инклуд FDK-AAC
+#include "aacdecoder_lib.h"
+
 #include <string>
 #include <atomic>
 #include <vector>
 #include <mutex>
+#include <memory>
 
 
 class MiniaudioEngine : public IAudioEngine {
@@ -40,19 +42,29 @@ private:
     void InitiateCrossfade(); // Вспомогательный метод кроссфейда
     void StopFadeOut();       // Вспомогательный метод очистки затухания
 
+    // Кастомный удалитель для декодера
+    struct DecoderDeleter {
+        void operator()(ma_decoder* dec) const {
+            if (dec) {
+                ma_decoder_uninit(dec);
+                delete dec;
+            }
+        }
+    };
+
     ma_device m_device;
     bool m_isDeviceInitialized = false;
     float m_volume = 1.0f;
     std::atomic<bool> m_isPlaying = false;
-    ma_decoder* m_decoder = nullptr;          // Декодер для чтения файлов
-    bool m_isDecoderInitialized = false;      // Флаг состояния декодера
-    std::mutex m_audioMutex;                  // Защита от конфликта потоков
-    HANDLE_AACDECODER m_aacDecoder = nullptr; // Указатель на FDK-AAC декодер
-    RingBuffer m_pcmBuffer;                   // Потокобезопасный буфер для PCM
-    std::vector<uint8_t> m_aacBuffer;         // Временный буфер для сырых скачанных данных
-    std::mutex m_networkMutex;                // Защита буфера скачивания
+    std::unique_ptr<ma_decoder, DecoderDeleter> m_decoder;          // Декодер для чтения файлов
+    bool m_isDecoderInitialized = false;                            // Флаг состояния декодера
+    std::mutex m_audioMutex;                                        // Защита от конфликта потоков
+    HANDLE_AACDECODER m_aacDecoder = nullptr;                       // Указатель на FDK-AAC декодер
+    RingBuffer m_pcmBuffer;                                         // Потокобезопасный буфер для PCM
+    std::vector<uint8_t> m_aacBuffer;                               // Временный буфер для сырых скачанных данных
+    std::mutex m_networkMutex;                                      // Защита буфера скачивания
     std::atomic<ma_uint64> m_playbackFrameCount{0};
-    uint16_t m_audioPid = 0x1FFF;             // хранение значения PID
+    uint16_t m_audioPid = 0x1FFF;                                   // хранение значения PID
     int m_dumpedFirstPayload = 0;
     size_t m_id3BytesToSkip = 0;
 
@@ -67,7 +79,7 @@ private:
     ma_uint32 m_crossfadeFramesRemaining = 0;
 
     bool m_fadeOutIsLocal = false;
-    ma_decoder* m_fadeOutDecoder = nullptr;
+    std::unique_ptr<ma_decoder, DecoderDeleter> m_fadeOutDecoder;
     std::vector<int16_t> m_fadeOutPcm;
     size_t m_fadeOutPcmReadPos = 0;
     // -----------------------------------------

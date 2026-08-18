@@ -27,7 +27,7 @@ void Logger::Init() {
 
 void Logger::Log(LogLevel level, const std::string& message) {
 #ifdef NDEBUG
-    return;
+    if (level == LogLevel::DEBUG) return;
 #endif
     // Получаем текущее время
     auto now = std::chrono::system_clock::now();

@@ -47,10 +47,7 @@ MiniaudioEngine::~MiniaudioEngine() {
         ma_device_uninit(&m_device);
     }
     StopFadeOut();
-    if (m_decoder) {
-        ma_decoder_uninit(m_decoder);
-        delete m_decoder;
-    }
+    m_decoder.reset();
     if (m_aacDecoder) {
         aacDecoder_Close(m_aacDecoder);
     }
@@ -69,16 +66,15 @@ void MiniaudioEngine::SetPositionSeconds(double pos) {
     std::lock_guard<std::mutex> lock(m_audioMutex);
 
     if (m_decoder) {
-        // ЛОКАЛЬНЫЙ ФАЙЛ
         ma_uint64 targetFrame = static_cast<ma_uint64>(pos * 44100.0);
-        if (ma_decoder_seek_to_pcm_frame(m_decoder, targetFrame) == MA_SUCCESS) {
+        // ИСПРАВЛЕНО: добавлено .get()
+        if (ma_decoder_seek_to_pcm_frame(m_decoder.get(), targetFrame) == MA_SUCCESS) {
             m_playbackFrameCount = targetFrame;
             m_nearEndTriggered = false;
             m_finishedTriggered = false;
             Logger::Log(LogLevel::INFO, "Miniaudio: Seeked to " + std::to_string(pos) + "s");
         }
     } else {
-        // СЕТЕВОЙ ПОТОК
         m_playbackFrameCount = static_cast<ma_uint64>(pos * 44100.0);
         m_nearEndTriggered = false;
         m_finishedTriggered = false;
@@ -88,13 +84,12 @@ void MiniaudioEngine::SetPositionSeconds(double pos) {
             std::lock_guard<std::mutex> netLock(m_networkMutex);
             m_aacBuffer.clear();
         }
-        m_mp3Buffer.clear(); // Важно для ВК!
+        m_mp3Buffer.clear();
 
         m_audioPid = 0x1FFF;
         m_id3BytesToSkip = 0;
         m_streamFormat = AudioStreamFormat::Unknown;
 
-        // Сброс декодеров
         if (m_aacDecoder) {
             aacDecoder_Close(m_aacDecoder);
             m_aacDecoder = aacDecoder_Open(TT_MP4_ADTS, 1);
@@ -121,7 +116,6 @@ std::vector<float> MiniaudioEngine::GetSpectrumData() const {
     {
         std::lock_guard<std::mutex> lock(m_spectrumMutex);
         for (int i = 0; i < 256; ++i) {
-            // Окно Ханна
             double multiplier = 0.5 * (1.0 - cos(2 * PI * i / 255.0));
             a[i] = Complex(m_recentSamples[i] * multiplier, 0);
         }
@@ -130,7 +124,6 @@ std::vector<float> MiniaudioEngine::GetSpectrumData() const {
     SimpleFFT(a);
 
     for (int i = 0; i < 128; ++i) {
-        // Нормализуем амплитуду
         float mag = static_cast<float>(std::abs(a[i]) / 128.0) * 2.5f;
         result[i] = mag;
     }
@@ -173,17 +166,16 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
     if (!engine) return;
 
     {
-        // Мьютекс теперь защищает внутренние массивы от переключения треков
         std::lock_guard<std::mutex> lock(engine->m_audioMutex);
         engine->m_playbackFrameCount += frameCount;
 
-        // 1. Читаем НОВЫЙ трек
         std::vector<int16_t> mainBuffer(frameCount * 2, 0);
         ma_uint32 framesRead = 0;
 
         if (engine->m_decoder) {
             ma_uint64 read = 0;
-            ma_decoder_read_pcm_frames(engine->m_decoder, mainBuffer.data(), frameCount, &read);
+            // ИСПРАВЛЕНО: добавлено .get()
+            ma_decoder_read_pcm_frames(engine->m_decoder.get(), mainBuffer.data(), frameCount, &read);
             framesRead = read;
         } else {
             ma_uint32 bytesToRead = frameCount * 2 * sizeof(int16_t);
@@ -191,14 +183,14 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
             framesRead = bytesRead / (2 * sizeof(int16_t));
         }
 
-        // 2. Читаем СТАРЫЙ затухающий трек
         std::vector<int16_t> fadeOutBuffer(frameCount * 2, 0);
         ma_uint32 fadeOutFramesRead = 0;
 
         if (engine->m_isCrossfading) {
             if (engine->m_fadeOutIsLocal && engine->m_fadeOutDecoder) {
                 ma_uint64 read = 0;
-                ma_decoder_read_pcm_frames(engine->m_fadeOutDecoder, fadeOutBuffer.data(), frameCount, &read);
+                // ИСПРАВЛЕНО: добавлено .get()
+                ma_decoder_read_pcm_frames(engine->m_fadeOutDecoder.get(), fadeOutBuffer.data(), frameCount, &read);
                 fadeOutFramesRead = read;
             } else {
                 size_t elementsAvail = engine->m_fadeOutPcm.size() - engine->m_fadeOutPcmReadPos;
@@ -213,7 +205,6 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
             }
         }
 
-        // 3. Микшируем треки с математическим фейдом
         int16_t* pOut = static_cast<int16_t*>(pOutput);
         for (ma_uint32 i = 0; i < frameCount; ++i) {
             float mainVol = 1.0f;
@@ -222,8 +213,8 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
             if (engine->m_isCrossfading) {
                 if (engine->m_crossfadeFramesRemaining > 0) {
                     float progress = 1.0f - (static_cast<float>(engine->m_crossfadeFramesRemaining) / engine->m_crossfadeFramesTotal);
-                    mainVol = progress;           // Нарастание нового
-                    fadeOutVol = 1.0f - progress; // Затухание старого
+                    mainVol = progress;
+                    fadeOutVol = 1.0f - progress;
                     engine->m_crossfadeFramesRemaining--;
                 } else {
                     engine->StopFadeOut();
@@ -243,7 +234,6 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
             }
         }
 
-        // 4. лоигка для визуализатора (Сбор семплов)
         {
             std::lock_guard<std::mutex> specLock(engine->m_spectrumMutex);
             size_t samplesToCopy = std::min(static_cast<size_t>(frameCount), static_cast<size_t>(256));
@@ -263,13 +253,11 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
             }
         }
 
-        // 5. Генерируем автоматические события перехода
         double currentSec = static_cast<double>(engine->m_playbackFrameCount.load()) / 44100.0;
         double totalSec = static_cast<double>(engine->m_currentDurationSec);
         double crossfadeSec = engine->m_crossfadeDurationMs / 1000.0;
 
         if (totalSec > 0.0) {
-            // Подгрузка следующего трека за 10 сек
             if (!engine->m_nearEndTriggered && currentSec >= totalSec - 10.0) {
                 engine->m_nearEndTriggered = true;
                 if (engine->OnTrackNearEnd) {
@@ -279,10 +267,9 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
                 }
             }
 
-            // Переход на следующий трек
             double endTriggerSec = totalSec;
             if (engine->m_crossfadeDurationMs > 0) {
-                endTriggerSec = totalSec - crossfadeSec; // Стартуем следующий с учетом кроссфейда
+                endTriggerSec = totalSec - crossfadeSec;
             }
 
             if (!engine->m_finishedTriggered && currentSec >= endTriggerSec) {
@@ -296,7 +283,6 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
         }
     }
 
-    // Декодируем сеть
     engine->DecodeAACFrames();
 }
 
@@ -324,24 +310,20 @@ bool MiniaudioEngine::PlayStream(const std::string& url, int durationSec, bool c
         InitiateCrossfade();
     } else {
         StopFadeOut();
-        if (m_decoder) {
-            ma_decoder_uninit(m_decoder);
-            delete m_decoder;
-            m_decoder = nullptr;
-        }
+        m_decoder.reset();
         m_pcmBuffer.Clear();
     }
 
     ma_decoder_config decoderConfig = ma_decoder_config_init(ma_format_s16, 2, 44100);
-    m_decoder = new ma_decoder;
+    m_decoder.reset(new ma_decoder);
 
 #ifdef _WIN32
-    if (ma_decoder_init_file_w(reinterpret_cast<const wchar_t*>(localPath.utf16()), &decoderConfig, m_decoder) != MA_SUCCESS) {
+    // ИСПРАВЛЕНО: Используем правильную функцию для Win32 и добавляем .get()
+    if (ma_decoder_init_file_w(reinterpret_cast<const wchar_t*>(localPath.utf16()), &decoderConfig, m_decoder.get()) != MA_SUCCESS) {
 #else
-    if (ma_decoder_init_file(localPath.toStdString().c_str(), &decoderConfig, m_decoder) != MA_SUCCESS) {
+    if (ma_decoder_init_file(localPath.toStdString().c_str(), &decoderConfig, m_decoder.get()) != MA_SUCCESS) {
 #endif
-        delete m_decoder;
-        m_decoder = nullptr;
+        m_decoder.reset();
         Logger::Log(LogLevel::ERROR, "Miniaudio: Failed to init decoder for file: " + localPath.toStdString());
         return false;
     }
@@ -366,7 +348,6 @@ void MiniaudioEngine::Resume() {
     }
 }
 
-// Логарифмический прирост громкости
 void MiniaudioEngine::SetVolume(float volume) {
     m_volume = volume;
 
@@ -375,7 +356,6 @@ void MiniaudioEngine::SetVolume(float volume) {
 
     if (m_isDeviceInitialized) {
         float actualVolume = std::pow(m_volume, 3.0f);
-
         ma_device_set_master_volume(&m_device, actualVolume);
     }
 }
@@ -400,7 +380,6 @@ void MiniaudioEngine::DecodeAACFrames() {
 
         const uint8_t* tsPacket = m_aacBuffer.data() + bytesConsumed;
 
-        // Быстрый поиск: Если пакет сбит, ищем следующий синхробайт
         if (tsPacket[0] != 0x47) {
             auto startIt = m_aacBuffer.begin() + bytesConsumed;
             auto it = std::find(startIt, m_aacBuffer.end(), 0x47);
@@ -422,11 +401,9 @@ void MiniaudioEngine::DecodeAACFrames() {
             size_t payloadSize = 188 - payloadOffset;
             const uint8_t* payload = tsPacket + payloadOffset;
 
-            // Детектим PES-заголовок
             if (pusi == 1 && payloadSize >= 9 && payload[0] == 0x00 && payload[1] == 0x00 && payload[2] == 0x01) {
                 uint8_t streamId = payload[3];
 
-                // СТРОГАЯ ПРОВЕРКА: Захватываем только аудиопоток (Stream ID от 0xC0 до 0xDF)
                 if (m_audioPid == 0x1FFF && streamId >= 0xC0 && streamId <= 0xDF) {
                     m_audioPid = pid;
                     Logger::Log(LogLevel::INFO, "Miniaudio: Locked to AUDIO PID -> " + std::to_string(pid));
@@ -442,11 +419,6 @@ void MiniaudioEngine::DecodeAACFrames() {
                         payloadSize = 0;
                     }
 
-                    // VK мультиплексирует ID3v2-тег прямо в начало audio ES,
-                    // перед реальными ADTS-фреймами. Если это начало нового PES-пакета
-                    // и он начинается с "ID3" — вычисляем полный размер тега и
-                    // выставляем счётчик байт на пропуск (тег может занимать
-                    // несколько TS-пакетов подряд).
                     if (payloadSize >= 10 &&
                         payload[0] == 'I' && payload[1] == 'D' && payload[2] == '3') {
                         uint32_t tagSize = ((payload[6] & 0x7F) << 21) |
@@ -460,8 +432,6 @@ void MiniaudioEngine::DecodeAACFrames() {
                 }
             }
 
-            // Пропускаем байты ID3-тега — независимо от того, начало это PES-пакета
-            // или его продолжение, т.к. тег может растянуться на несколько TS-пакетов.
             if (pid == m_audioPid && m_id3BytesToSkip > 0 && payloadSize > 0) {
                 size_t toSkip = std::min(m_id3BytesToSkip, payloadSize);
                 payload += toSkip;
@@ -469,12 +439,8 @@ void MiniaudioEngine::DecodeAACFrames() {
                 m_id3BytesToSkip -= toSkip;
             }
 
-            // Отправляем в декодер только пакеты захваченного аудио-PID
             if (payloadSize > 0 && pid == m_audioPid) {
 
-                // Определяем формат один раз на трек, по сигнатуре первых байт ES.
-                // ADTS(AAC) и MP3 делят один и тот же префикс "FF Ex/Fx" — разделяет их
-                // поле layer: у ADTS оно всегда 00, у валидного MP3 — никогда.
                 if (m_streamFormat == AudioStreamFormat::Unknown) {
                     m_streamFormat = DetectAudioFormat(payload, payloadSize);
                     if (m_streamFormat != AudioStreamFormat::Unknown) {
@@ -494,7 +460,6 @@ void MiniaudioEngine::DecodeAACFrames() {
         bytesConsumed += 188;
     }
 
-    // Очищаем обработанные данные разом
     if (bytesConsumed > 0) {
         m_aacBuffer.erase(m_aacBuffer.begin(), m_aacBuffer.begin() + bytesConsumed);
     }
@@ -507,7 +472,6 @@ MiniaudioEngine::AudioStreamFormat MiniaudioEngine::DetectAudioFormat(const uint
 
     uint8_t b1 = data[1];
 
-    // ADTS (AAC): синк 12 бит (4 бита в этом байте) + layer(2 бита) всегда == 00
     if ((b1 & 0xF0) == 0xF0) {
         uint8_t layer = (b1 >> 1) & 0x03;
         if (layer == 0x00) {
@@ -515,7 +479,6 @@ MiniaudioEngine::AudioStreamFormat MiniaudioEngine::DetectAudioFormat(const uint
         }
     }
 
-    // MP3: синк 11 бит (3 бита в этом байте) + version != 01(reserved) + layer != 00(reserved)
     if ((b1 & 0xE0) == 0xE0) {
         uint8_t version = (b1 >> 3) & 0x03;
         uint8_t layer = (b1 >> 1) & 0x03;
@@ -547,7 +510,6 @@ void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSiz
         CStreamInfo* info = aacDecoder_GetStreamInfo(m_aacDecoder);
         if (info && info->numChannels > 0) {
             if (info->numChannels == 1) {
-                // Апмикс: дублируем моно-сэмпл в Левый и Правый каналы
                 std::vector<int16_t> stereoBuf(info->frameSize * 2);
                 for (int i = 0; i < info->frameSize; ++i) {
                     stereoBuf[i * 2]     = pcmBuf[i];
@@ -556,7 +518,6 @@ void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSiz
                 size_t bytesToOutput = info->frameSize * 2 * sizeof(int16_t);
                 m_pcmBuffer.Write(reinterpret_cast<uint8_t*>(stereoBuf.data()), bytesToOutput);
             } else {
-                // Стерео пишем как есть
                 size_t bytesToOutput = info->frameSize * info->numChannels * sizeof(int16_t);
                 m_pcmBuffer.Write(reinterpret_cast<uint8_t*>(pcmBuf.data()), bytesToOutput);
             }
@@ -567,8 +528,8 @@ void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSiz
 void MiniaudioEngine::DecodeMp3Payload(const uint8_t* payload, size_t payloadSize) {
     m_mp3Buffer.insert(m_mp3Buffer.end(), payload, payload + payloadSize);
 
-    static constexpr size_t kMinBufferForDecode = 8192; // запас на неск. фреймов даже на 320 kbps
-    static constexpr size_t kMaxFrameSize = 2048;        // с запасом больше реального макс. фрейма MP3
+    static constexpr size_t kMinBufferForDecode = 8192;
+    static constexpr size_t kMaxFrameSize = 2048;
 
     if (m_mp3Buffer.size() < kMinBufferForDecode) {
         return;
@@ -616,11 +577,7 @@ void MiniaudioEngine::ClearBuffers(bool crossfade, int nextDurationSec) {
         InitiateCrossfade();
     } else {
         StopFadeOut();
-        if (m_decoder) {
-            ma_decoder_uninit(m_decoder);
-            delete m_decoder;
-            m_decoder = nullptr;
-        }
+        m_decoder.reset();
         m_pcmBuffer.Clear();
     }
 
@@ -638,12 +595,9 @@ void MiniaudioEngine::InitiateCrossfade() {
     StopFadeOut();
 
     if (m_decoder) {
-        // Трек был локальным
-        m_fadeOutDecoder = m_decoder;
-        m_decoder = nullptr;
+        m_fadeOutDecoder = std::move(m_decoder);
         m_fadeOutIsLocal = true;
     } else {
-        // Трек был сетевым
         m_fadeOutIsLocal = false;
         m_fadeOutPcm.clear();
         m_fadeOutPcmReadPos = 0;
@@ -661,11 +615,7 @@ void MiniaudioEngine::InitiateCrossfade() {
 }
 
 void MiniaudioEngine::StopFadeOut() {
-    if (m_fadeOutDecoder) {
-        ma_decoder_uninit(m_fadeOutDecoder);
-        delete m_fadeOutDecoder;
-        m_fadeOutDecoder = nullptr;
-    }
+    m_fadeOutDecoder.reset();
     m_fadeOutPcm.clear();
     m_isCrossfading = false;
 }

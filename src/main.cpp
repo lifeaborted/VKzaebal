@@ -5,6 +5,7 @@
 #include <QSettings>
 #include <string>
 #include <QtWebView>
+#include <QWindow>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -343,6 +344,20 @@ int main(int argc, char *argv[]) {
 
             if (authEngine->rootObjects().isEmpty()) {
                 Logger::Log(LogLevel::ERROR, "Main: Failed to load auth.qml!");
+            }
+            else {
+                QWindow* rootWindow = qobject_cast<QWindow*>(authEngine->rootObjects().first());
+                if (rootWindow) {
+                    QObject::connect(rootWindow, &QWindow::visibleChanged, &app, [&](bool visible) {
+                        if (!visible && authEngine) {
+                            authEngine->deleteLater();
+                            authEngine = nullptr;
+                            console.SetState(ConsoleState::COMMAND_MODE);
+                            std::cout << "\n[Инфо] Окно авторизации закрыто.\n> ";
+                            std::cout.flush();
+                        }
+                    });
+                }
             }
         }
     };

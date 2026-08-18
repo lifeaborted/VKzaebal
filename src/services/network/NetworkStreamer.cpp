@@ -60,6 +60,10 @@ void NetworkStreamer::StartDownload(const std::string& urlString) {
                 }
             } else {
                 Logger::Log(LogLevel::ERROR, "Failed to download .m3u8 manifest");
+                if (m_reply) {
+                    m_reply->deleteLater();
+                    m_reply = nullptr;
+                }
             }
         });
         connect(m_reply, &QNetworkReply::errorOccurred, this, &NetworkStreamer::OnErrorOccurred);
