@@ -4,13 +4,13 @@
 #include <atomic>
 #include <thread>
 #include <functional>
-#include "core/vk/api/Client.h"
+#include "core/vk/api/VkClient.h"
 #include "services/downloader/TrackDownloader.h"
 #include "core/lyrics/LyricsFetcher.h"
 
 class IAudioEngine;
 class PlaylistManager;
-class Manager;
+class OAuthManager;
 class DatabaseManager;
 
 enum class ConsoleState {
@@ -25,9 +25,9 @@ public:
     ConsoleController(
         IAudioEngine& audio,
         PlaylistManager& playlist,
-        Manager& authManager,
+        OAuthManager& authManager,
         DatabaseManager& dbManager,
-        Client& vkClient,
+        VkClient& vkClient,
         TrackDownloader& downloader,
         LyricsFetcher& lyricsFetcher,
         QObject* parent = nullptr
@@ -52,9 +52,9 @@ private:
 
     IAudioEngine& m_audio;
     PlaylistManager& m_playlist;
-    Manager& m_authManager;
+    OAuthManager& m_authManager;
     DatabaseManager& m_dbManager;
-    Client& m_vkClient;
+    VkClient& m_vkClient;
     TrackDownloader& m_downloader;
     LyricsFetcher& m_lyricsFetcher;
 

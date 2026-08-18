@@ -31,16 +31,22 @@ set(PROJECT_SOURCES
         src/core/audio/miniaudio/MiniaudioEngine.h
         src/core/audio/miniaudio/MiniaudioEngine.cpp
 
+        # Authorization
+        src/core/auth/OAuthManager.h
+        src/core/auth/OAuthManager.cpp
+        src/resources.qrc
+
         # Playlist
         src/core/playlist/PlaylistManager.h
         src/core/playlist/PlaylistManager.cpp
 
+        # Spotify
+        src/core/spotify/api/SpotifyClient.h
+        src/core/spotify/api/SpotifyClient.cpp
+
         # VK
-        src/core/vk/api/Client.h
-        src/core/vk/api/Client.cpp
-        src/core/vk/auth/Manager.h
-        src/core/vk/auth/Manager.cpp
-        src/resources.qrc
+        src/core/vk/api/VkClient.h
+        src/core/vk/api/VkClient.cpp
 
         # Lyrics
         src/core/lyrics/LyricsFetcher.h
@@ -65,6 +71,9 @@ set(PROJECT_SOURCES
         src/utils/logger/Logger.cpp
         src/utils/path/PathManager.h
         src/utils/path/PathManager.cpp
+        src/utils/env/EnvParser.cpp
+        src/utils/env/EnvParser.h
+
 )
 
 # --- Подключаем внешние библиотеки ---
