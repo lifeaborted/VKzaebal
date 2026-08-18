@@ -16,53 +16,38 @@ SpotifyClient::~SpotifyClient() {
     Logger::Log(LogLevel::INFO, "SpotifyClient destroyed.");
 }
 
-QString SpotifyClient::GenerateAuthUrl(const QString& clientId) {
-    const QString possibleCharacters("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~");
-    m_codeVerifier.clear();
-    for(int i = 0; i < 64; ++i) {
-        int index = QRandomGenerator::global()->bounded(possibleCharacters.length());
-        m_codeVerifier.append(possibleCharacters.at(index));
-    }
-
-    QByteArray hash = QCryptographicHash::hash(m_codeVerifier.toUtf8(), QCryptographicHash::Sha256);
-    QString codeChallenge = hash.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
-
-    QString authUrl = "https://accounts.spotify.com/authorize?";
-    authUrl += "client_id=" + QUrl::toPercentEncoding(clientId);
-    authUrl += "&response_type=code";
-    authUrl += "&redirect_uri=" + QUrl::toPercentEncoding("http://127.0.0.1:8080/callback");
-    authUrl += "&scope=" + QUrl::toPercentEncoding("user-library-read user-read-playback-state playlist-read-private");
-    authUrl += "&show_dialog=true";
-    authUrl += "&code_challenge_method=S256";
-    authUrl += "&code_challenge=" + QUrl::toPercentEncoding(codeChallenge);
-
-    return authUrl;
-}
-
-void SpotifyClient::ExchangeCodeForToken(const std::string& code, const QString& clientId) {
-    QUrl url("https://accounts.spotify.com/api/token");
+void SpotifyClient::AuthWithSpDc(const QString& spDcCookie) {
+    // Стучимся на скрытый эндпоинт выдачи веб-токенов
+    QUrl url("https://open.spotify.com/get_access_token?reason=transport&productType=web_player");
     QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
 
-    QString decodedCode = QUrl::fromPercentEncoding(QString::fromStdString(code).toUtf8());
+    // Имитируем реальный браузер (Добавлены Origin и Referer)
+    request.setRawHeader("Cookie", QByteArray("sp_dc=") + spDcCookie.toUtf8());
+    request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+    request.setRawHeader("Accept", "application/json");
+    request.setRawHeader("App-Platform", "WebPlayer");
+    request.setRawHeader("Origin", "https://open.spotify.com");    // <--- ДОБАВЛЕНО
+    request.setRawHeader("Referer", "https://open.spotify.com/");  // <--- ДОБАВЛЕНО
+    request.setRawHeader("Sec-Fetch-Dest", "empty");
+    request.setRawHeader("Sec-Fetch-Mode", "cors");
+    request.setRawHeader("Sec-Fetch-Site", "same-origin");
 
-    QByteArray body;
-    body.append("grant_type=authorization_code");
-    body.append("&client_id=" + QUrl::toPercentEncoding(clientId));
-    body.append("&code=" + QUrl::toPercentEncoding(decodedCode));
-    body.append("&redirect_uri=" + QUrl::toPercentEncoding("http://127.0.0.1:8080/callback"));
-    body.append("&code_verifier=" + QUrl::toPercentEncoding(m_codeVerifier));
-
-    QNetworkReply* reply = m_manager->post(request, body);
+    QNetworkReply* reply = m_manager->get(request);
 
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         if (reply->error() == QNetworkReply::NoError) {
             QJsonDocument json = QJsonDocument::fromJson(reply->readAll());
-            std::string token = json.object()["access_token"].toString().toStdString();
-            emit TokenReceived(token);
+            std::string token = json.object()["accessToken"].toString().toStdString();
+
+            if (!token.empty()) {
+                Logger::Log(LogLevel::INFO, "Spotify: Web Access Token successfully obtained via sp_dc!");
+                emit TokenReceived(token);
+            } else {
+                emit AuthError("Token not found in response.");
+            }
         } else {
             std::string err = reply->errorString().toStdString();
-            Logger::Log(LogLevel::ERROR, "Spotify token exchange failed: " + err);
+            Logger::Log(LogLevel::ERROR, "Spotify Web Auth failed: " + err);
             emit AuthError(err);
         }
         reply->deleteLater();

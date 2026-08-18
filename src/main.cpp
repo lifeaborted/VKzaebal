@@ -105,6 +105,8 @@ int main(int argc, char *argv[]) {
         if (isPlaybackStarted) return;
 
         if (!playlist.HasTracks()) {
+            cachedTracks = dbManager.LoadTracks();
+
             if (isOnline) {
                 for (const auto& t : cachedTracks) playlist.AddTrack(t);
             } else {
@@ -130,6 +132,7 @@ int main(int argc, char *argv[]) {
 
             if (savedTrackIndex >= 0 && savedTrackIndex < playlist.GetAllTracks().size()) {
                 playlist.JumpTo(savedTrackIndex);
+                savedTrackIndex = -1;
             } else {
                 playlist.OnTrackRequested(playlist.GetCurrentTrack());
             }
@@ -362,23 +365,7 @@ int main(int argc, char *argv[]) {
     });
 
     // Коннект: Spotify
-    QObject::connect(&authManager, &OAuthManager::AuthCodeReceived, &app, [&](const std::string& code) {
-        if (authEngine) { authEngine->deleteLater(); authEngine = nullptr; }
 
-        std::cout << "\n[Spotify] Код получен. Отправка POST-запроса на обмен токена...\n";
-        std::cout.flush();
-
-        QString clientId = envVars.value("SPOTIFY_CLIENT_ID", "");
-
-        if (clientId.isEmpty()) {
-            std::cout << "\n[ОШИБКА] SPOTIFY_CLIENT_ID не найден в .env файле!\n> ";
-            std::cout.flush();
-            console.SetState(ConsoleState::COMMAND_MODE);
-            return;
-        }
-
-        spotifyClient.ExchangeCodeForToken(code, clientId);
-    });
 
     // Успешный обмен кода на токен (Spotify)
     QObject::connect(&spotifyClient, &SpotifyClient::TokenReceived, [&](const std::string& token) {
@@ -431,37 +418,34 @@ int main(int argc, char *argv[]) {
     };
 
     auto startSpotifyService = [&]() {
-        QString clientId = envVars.value("SPOTIFY_CLIENT_ID", "");
-        if (clientId.isEmpty()) {
+        QString spDc = envVars.value("SPOTIFY_SP_DC", "");
+        if (spDc.isEmpty()) {
             console.SetState(ConsoleState::COMMAND_MODE);
-            std::cout << "\n[ОШИБКА] SPOTIFY_CLIENT_ID не задан в .env файле!\n> "; std::cout.flush();
+            std::cout << "\n[ОШИБКА] SPOTIFY_SP_DC не задан в .env файле!\n> "; std::cout.flush();
             return;
         }
 
         std::string savedToken = authManager.GetSavedToken("Spotify");
         if (savedToken.empty()) {
-            QString spotUrl = spotifyClient.GenerateAuthUrl(clientId);
-            startAuthFlow("Spotify", spotUrl);
+            std::cout << "\n[Spotify] Получение Web Access Token...\n"; std::cout.flush();
+            spotifyClient.AuthWithSpDc(spDc);
         } else {
             spotifyClient.SetAccessToken(savedToken);
-            std::cout << "Проверка сохраненного токена Spotify...\n";
-            std::cout.flush();
+            std::cout << "Проверка сохраненного токена Spotify...\n"; std::cout.flush();
 
-            spotifyClient.ValidateToken([&, clientId](bool isValid) {
+            spotifyClient.ValidateToken([&, spDc](bool isValid) {
                 if (isValid) {
                     console.SetState(ConsoleState::COMMAND_MODE);
-                    std::cout << "\n[УСПЕХ] Синхронизация треков Spotify...\n> ";
-                    std::cout.flush();
+                    std::cout << "\n[УСПЕХ] Синхронизация треков Spotify...\n> "; std::cout.flush();
                     initPlaylistAndStart(true);
                     vkSyncIndex = 0;
                     spotifyClient.FetchAllUserAudio(0, 50);
                 } else {
-                    std::cout << "\n[ВНИМАНИЕ] Токен Spotify устарел. Повторная авторизация...\n";
-                    std::cout.flush();
+                    std::cout << "\n[ВНИМАНИЕ] Токен Spotify устарел. Тихое обновление...\n"; std::cout.flush();
                     authManager.ClearSavedToken("Spotify");
                     spotifyClient.SetAccessToken("");
-                    QString spotUrl = spotifyClient.GenerateAuthUrl(clientId);
-                    startAuthFlow("Spotify", spotUrl);
+                    // Тихо запрашиваем новый токен, никаких окон!
+                    spotifyClient.AuthWithSpDc(spDc);
                 }
             });
         }
