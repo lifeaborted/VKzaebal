@@ -305,11 +305,19 @@ int main(int argc, char *argv[]) {
         dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
     };
 
-    QObject::connect(&vkClient, &IAudioProvider::AudioFetched, onAudioFetched);
-    QObject::connect(&spotifyClient, &IAudioProvider::AudioFetched, onAudioFetched);
+    QObject::connect(&vkClient, &IAudioProvider::AudioFetched, [&](const std::vector<Track>& tracks) {
+        if (currentProvider == &vkClient) onAudioFetched(tracks);
+    });
+    QObject::connect(&spotifyClient, &IAudioProvider::AudioFetched, [&](const std::vector<Track>& tracks) {
+        if (currentProvider == &spotifyClient) onAudioFetched(tracks);
+    });
 
-    QObject::connect(&vkClient, &IAudioProvider::FinishedFetching, onFinishedFetching);
-    QObject::connect(&spotifyClient, &IAudioProvider::FinishedFetching, onFinishedFetching);
+    QObject::connect(&vkClient, &IAudioProvider::FinishedFetching, [&]() {
+        if (currentProvider == &vkClient) onFinishedFetching();
+    });
+    QObject::connect(&spotifyClient, &IAudioProvider::FinishedFetching, [&]() {
+        if (currentProvider == &spotifyClient) onFinishedFetching();
+    });
 
     // === АВТОРИЗАЦИЯ И РОУТИНГ ===
     QQmlApplicationEngine* authEngine = nullptr;
@@ -378,7 +386,11 @@ int main(int argc, char *argv[]) {
         console.SetState(ConsoleState::COMMAND_MODE);
         std::cout << "\n[УСПЕХ] Авторизация Spotify пройдена!\n> ";
         std::cout.flush();
-        // В будущем тут будет: spotifyClient.FetchUserAudio();
+
+        spotifyClient.SetAccessToken(token);
+        initPlaylistAndStart(true);
+        vkSyncIndex = 0;
+        spotifyClient.FetchAllUserAudio(0, 50);
     });
 
     QObject::connect(&spotifyClient, &SpotifyClient::AuthError, [&](const std::string& err) {
@@ -419,20 +431,39 @@ int main(int argc, char *argv[]) {
     };
 
     auto startSpotifyService = [&]() {
+        QString clientId = envVars.value("SPOTIFY_CLIENT_ID", "");
+        if (clientId.isEmpty()) {
+            console.SetState(ConsoleState::COMMAND_MODE);
+            std::cout << "\n[ОШИБКА] SPOTIFY_CLIENT_ID не задан в .env файле!\n> "; std::cout.flush();
+            return;
+        }
+
         std::string savedToken = authManager.GetSavedToken("Spotify");
         if (savedToken.empty()) {
-            QString clientId = envVars.value("SPOTIFY_CLIENT_ID", "");
-            if (clientId.isEmpty()) {
-                console.SetState(ConsoleState::COMMAND_MODE);
-                std::cout << "\n[ОШИБКА] SPOTIFY_CLIENT_ID не задан в .env файле!\n> "; std::cout.flush();
-                return;
-            }
-
             QString spotUrl = spotifyClient.GenerateAuthUrl(clientId);
             startAuthFlow("Spotify", spotUrl);
         } else {
-            console.SetState(ConsoleState::COMMAND_MODE);
-            std::cout << "\n[Spotify] Токен найден! Подключение Spotify Web API (в разработке)...\n> "; std::cout.flush();
+            spotifyClient.SetAccessToken(savedToken);
+            std::cout << "Проверка сохраненного токена Spotify...\n";
+            std::cout.flush();
+
+            spotifyClient.ValidateToken([&, clientId](bool isValid) {
+                if (isValid) {
+                    console.SetState(ConsoleState::COMMAND_MODE);
+                    std::cout << "\n[УСПЕХ] Синхронизация треков Spotify...\n> ";
+                    std::cout.flush();
+                    initPlaylistAndStart(true);
+                    vkSyncIndex = 0;
+                    spotifyClient.FetchAllUserAudio(0, 50);
+                } else {
+                    std::cout << "\n[ВНИМАНИЕ] Токен Spotify устарел. Повторная авторизация...\n";
+                    std::cout.flush();
+                    authManager.ClearSavedToken("Spotify");
+                    spotifyClient.SetAccessToken("");
+                    QString spotUrl = spotifyClient.GenerateAuthUrl(clientId);
+                    startAuthFlow("Spotify", spotUrl);
+                }
+            });
         }
     };
 
