@@ -9,7 +9,9 @@ public:
     explicit SpotifyClient(QObject* parent = nullptr);
     ~SpotifyClient() override;
 
-    void ExchangeCodeForToken(const std::string& code, const QString& clientId, const QString& clientSecret);
+    QString GenerateAuthUrl(const QString& clientId);
+
+    void ExchangeCodeForToken(const std::string& code, const QString& clientId);
 
     void SetAccessToken(const std::string& token) override;
     void FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) override;
@@ -22,4 +24,5 @@ public:
 private:
     QNetworkAccessManager* m_manager;
     std::string m_accessToken;
+    QString m_codeVerifier;
 };

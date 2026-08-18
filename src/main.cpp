@@ -353,7 +353,7 @@ int main(int argc, char *argv[]) {
         }
     });
 
-    // Коннект: Spotify (Код из URL)
+    // Коннект: Spotify
     QObject::connect(&authManager, &OAuthManager::AuthCodeReceived, &app, [&](const std::string& code) {
         if (authEngine) { authEngine->deleteLater(); authEngine = nullptr; }
 
@@ -361,16 +361,15 @@ int main(int argc, char *argv[]) {
         std::cout.flush();
 
         QString clientId = envVars.value("SPOTIFY_CLIENT_ID", "");
-        QString clientSecret = envVars.value("SPOTIFY_CLIENT_SECRET", "");
 
-        if (clientId.isEmpty() || clientSecret.isEmpty()) {
-            std::cout << "\n[ОШИБКА] Ключи Spotify не найдены в .env файле!\n> ";
+        if (clientId.isEmpty()) {
+            std::cout << "\n[ОШИБКА] SPOTIFY_CLIENT_ID не найден в .env файле!\n> ";
             std::cout.flush();
             console.SetState(ConsoleState::COMMAND_MODE);
             return;
         }
 
-        spotifyClient.ExchangeCodeForToken(code, clientId, clientSecret);
+        spotifyClient.ExchangeCodeForToken(code, clientId);
     });
 
     // Успешный обмен кода на токен (Spotify)
@@ -428,7 +427,8 @@ int main(int argc, char *argv[]) {
                 std::cout << "\n[ОШИБКА] SPOTIFY_CLIENT_ID не задан в .env файле!\n> "; std::cout.flush();
                 return;
             }
-            QString spotUrl = "https://accounts.spotify.com/authorize?client_id=" + clientId + "&response_type=code&redirect_uri=http://127.0.0.1:8080/callback&scope=user-library-read%20user-read-playback-state%20playlist-read-private&show_dialog=true";
+
+            QString spotUrl = spotifyClient.GenerateAuthUrl(clientId);
             startAuthFlow("Spotify", spotUrl);
         } else {
             console.SetState(ConsoleState::COMMAND_MODE);
