@@ -35,7 +35,13 @@ static void SimpleFFT(std::vector<Complex>& a) {
     }
 }
 
-MiniaudioEngine::MiniaudioEngine() {
+MiniaudioEngine::MiniaudioEngine() : m_demuxer([this](const uint8_t* payload, size_t size, AudioFormat format) {
+    if (format == AudioFormat::MP3) {
+        DecodeMp3Payload(payload, size);
+    } else {
+        DecodeAacPayload(payload, size);
+    }
+}) {
     m_isDeviceInitialized = false;
     m_isDecoderInitialized = false;
     m_isPlaying = false;
@@ -67,7 +73,6 @@ void MiniaudioEngine::SetPositionSeconds(double pos) {
 
     if (m_decoder) {
         ma_uint64 targetFrame = static_cast<ma_uint64>(pos * 44100.0);
-        // ИСПРАВЛЕНО: добавлено .get()
         if (ma_decoder_seek_to_pcm_frame(m_decoder.get(), targetFrame) == MA_SUCCESS) {
             m_playbackFrameCount = targetFrame;
             m_nearEndTriggered = false;
@@ -86,7 +91,7 @@ void MiniaudioEngine::SetPositionSeconds(double pos) {
         }
         m_mp3Buffer.clear();
 
-        m_audioPid = 0x1FFF;
+        m_demuxer.Reset();
         m_id3BytesToSkip = 0;
         m_streamFormat = AudioStreamFormat::Unknown;
 
@@ -372,91 +377,12 @@ void MiniaudioEngine::DecodeAACFrames() {
     std::lock_guard<std::mutex> lock(m_networkMutex);
 
     size_t bytesConsumed = 0;
-
     while (m_aacBuffer.size() - bytesConsumed >= 188) {
         if (m_pcmBuffer.GetAvailableWrite() < 176400) {
             break;
         }
 
-        const uint8_t* tsPacket = m_aacBuffer.data() + bytesConsumed;
-
-        if (tsPacket[0] != 0x47) {
-            auto startIt = m_aacBuffer.begin() + bytesConsumed;
-            auto it = std::find(startIt, m_aacBuffer.end(), 0x47);
-            bytesConsumed = std::distance(m_aacBuffer.begin(), it);
-            continue;
-        }
-
-        uint16_t pid = ((tsPacket[1] & 0x1F) << 8) | tsPacket[2];
-        uint8_t pusi = (tsPacket[1] & 0x40) >> 6;
-        uint8_t afc  = (tsPacket[3] & 0x30) >> 4;
-
-        size_t payloadOffset = 4;
-        if (afc == 2 || afc == 3) {
-            uint8_t afLength = tsPacket[4];
-            payloadOffset += 1 + afLength;
-        }
-
-        if ((afc == 1 || afc == 3) && payloadOffset < 188) {
-            size_t payloadSize = 188 - payloadOffset;
-            const uint8_t* payload = tsPacket + payloadOffset;
-
-            if (pusi == 1 && payloadSize >= 9 && payload[0] == 0x00 && payload[1] == 0x00 && payload[2] == 0x01) {
-                uint8_t streamId = payload[3];
-
-                if (m_audioPid == 0x1FFF && streamId >= 0xC0 && streamId <= 0xDF) {
-                    m_audioPid = pid;
-                    Logger::Log(LogLevel::INFO, "Miniaudio: Locked to AUDIO PID -> " + std::to_string(pid));
-                }
-
-                if (pid == m_audioPid) {
-                    uint8_t pesHeaderLen = payload[8];
-                    size_t pesTotalOffset = 9 + pesHeaderLen;
-                    if (pesTotalOffset < payloadSize) {
-                        payload += pesTotalOffset;
-                        payloadSize -= pesTotalOffset;
-                    } else {
-                        payloadSize = 0;
-                    }
-
-                    if (payloadSize >= 10 &&
-                        payload[0] == 'I' && payload[1] == 'D' && payload[2] == '3') {
-                        uint32_t tagSize = ((payload[6] & 0x7F) << 21) |
-                                           ((payload[7] & 0x7F) << 14) |
-                                           ((payload[8] & 0x7F) << 7)  |
-                                            (payload[9] & 0x7F);
-                        m_id3BytesToSkip = 10 + tagSize;
-                        Logger::Log(LogLevel::INFO, "Found inline ID3 tag in audio ES, skipping " +
-                                    std::to_string(m_id3BytesToSkip) + " bytes.");
-                    }
-                }
-            }
-
-            if (pid == m_audioPid && m_id3BytesToSkip > 0 && payloadSize > 0) {
-                size_t toSkip = std::min(m_id3BytesToSkip, payloadSize);
-                payload += toSkip;
-                payloadSize -= toSkip;
-                m_id3BytesToSkip -= toSkip;
-            }
-
-            if (payloadSize > 0 && pid == m_audioPid) {
-
-                if (m_streamFormat == AudioStreamFormat::Unknown) {
-                    m_streamFormat = DetectAudioFormat(payload, payloadSize);
-                    if (m_streamFormat != AudioStreamFormat::Unknown) {
-                        Logger::Log(LogLevel::INFO, std::string("Miniaudio: Detected stream format -> ") +
-                                    (m_streamFormat == AudioStreamFormat::AAC_ADTS ? "AAC (ADTS)" : "MP3"));
-                    }
-                }
-
-                if (m_streamFormat == AudioStreamFormat::MP3) {
-                    DecodeMp3Payload(payload, payloadSize);
-                } else {
-                    DecodeAacPayload(payload, payloadSize);
-                }
-            }
-        }
-
+        m_demuxer.ProcessBytes(m_aacBuffer.data() + bytesConsumed, 188);
         bytesConsumed += 188;
     }
 
@@ -581,7 +507,7 @@ void MiniaudioEngine::ClearBuffers(bool crossfade, int nextDurationSec) {
         m_pcmBuffer.Clear();
     }
 
-    m_audioPid = 0x1FFF;
+    m_demuxer.Reset();
     m_id3BytesToSkip = 0;
     m_streamFormat = AudioStreamFormat::Unknown;
     m_mp3Buffer.clear();

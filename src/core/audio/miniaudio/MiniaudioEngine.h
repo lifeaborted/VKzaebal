@@ -4,6 +4,7 @@
 #include "minimp3.h"
 #include "utils/buffer/RingBuffer.h"
 #include "aacdecoder_lib.h"
+#include "utils/parser/MpegTsDemuxer.h"
 
 #include <string>
 #include <atomic>
@@ -90,6 +91,7 @@ private:
 
     mp3dec_t m_mp3Decoder;
     std::vector<uint8_t> m_mp3Buffer;
+    MpegTsDemuxer m_demuxer;
     AudioStreamFormat m_streamFormat = AudioStreamFormat::Unknown;
 
     // --- ПЕРЕМЕННЫЕ ВИЗУАЛИЗАТОРА ---

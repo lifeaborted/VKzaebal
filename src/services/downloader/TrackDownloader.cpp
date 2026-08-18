@@ -2,6 +2,7 @@
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
 #include "services/network/NetworkStreamer.h"
+#include "utils/parser/MpegTsDemuxer.h"
 
 #include <QDir>
 #include <QFile>
@@ -120,93 +121,18 @@ void TrackDownloader::Download(const Track& track, const std::string& urlStr) {
         return;
     }
 
-    auto tsBuffer = std::make_shared<std::vector<uint8_t>>();
-    auto audioPid = std::make_shared<uint16_t>(0x1FFF);
-    auto id3BytesToSkip = std::make_shared<size_t>(0);
     auto isAacFormat = std::make_shared<bool>(false);
-    auto formatDetected = std::make_shared<bool>(false);
 
-    connect(streamer, &NetworkStreamer::DataReceived, [file, tsBuffer, audioPid, id3BytesToSkip, isAacFormat, formatDetected](const QByteArray& data) {
-        // Проверка: если сервис отдал прямой файл без контейнера MPEG-TS (нет 0x47)
-        if (tsBuffer->empty() && data.size() > 0 && static_cast<uint8_t>(data[0]) != 0x47) {
-            file->write(data);
-            return;
+    // Вся та логика схлопнулась вот в этот элегантный объект!
+    auto demuxer = std::make_shared<MpegTsDemuxer>([file, isAacFormat](const uint8_t* payload, size_t size, AudioFormat format) {
+        if (format == AudioFormat::AAC_ADTS) {
+            *isAacFormat = true;
         }
+        file->write(reinterpret_cast<const char*>(payload), size);
+    });
 
-        tsBuffer->insert(tsBuffer->end(), data.begin(), data.end());
-        size_t bytesConsumed = 0;
-
-        while (tsBuffer->size() - bytesConsumed >= 188) {
-            const uint8_t* tsPacket = tsBuffer->data() + bytesConsumed;
-
-            if (tsPacket[0] != 0x47) {
-                auto startIt = tsBuffer->begin() + bytesConsumed;
-                auto it = std::find(startIt, tsBuffer->end(), 0x47);
-                bytesConsumed = std::distance(tsBuffer->begin(), it);
-                continue;
-            }
-
-            uint16_t pid = ((tsPacket[1] & 0x1F) << 8) | tsPacket[2];
-            uint8_t pusi = (tsPacket[1] & 0x40) >> 6;
-            uint8_t afc  = (tsPacket[3] & 0x30) >> 4;
-
-            size_t payloadOffset = 4;
-            if (afc == 2 || afc == 3) payloadOffset += 1 + tsPacket[4];
-
-            if ((afc == 1 || afc == 3) && payloadOffset < 188) {
-                size_t payloadSize = 188 - payloadOffset;
-                const uint8_t* payload = tsPacket + payloadOffset;
-
-                if (pusi == 1 && payloadSize >= 9 && payload[0] == 0x00 && payload[1] == 0x00 && payload[2] == 0x01) {
-                    uint8_t streamId = payload[3];
-
-                    if (*audioPid == 0x1FFF && streamId >= 0xC0 && streamId <= 0xDF) {
-                        *audioPid = pid;
-                    }
-
-                    if (pid == *audioPid) {
-                        uint8_t pesHeaderLen = payload[8];
-                        size_t pesTotalOffset = 9 + pesHeaderLen;
-                        if (pesTotalOffset < payloadSize) {
-                            payload += pesTotalOffset;
-                            payloadSize -= pesTotalOffset;
-                        } else {
-                            payloadSize = 0;
-                        }
-
-                        if (payloadSize >= 10 && payload[0] == 'I' && payload[1] == 'D' && payload[2] == '3') {
-                            uint32_t tagSize = ((payload[6] & 0x7F) << 21) | ((payload[7] & 0x7F) << 14) |
-                                               ((payload[8] & 0x7F) << 7)  | (payload[9] & 0x7F);
-                            *id3BytesToSkip = 10 + tagSize;
-                        }
-                    }
-                }
-
-                if (pid == *audioPid && *id3BytesToSkip > 0 && payloadSize > 0) {
-                    size_t toSkip = std::min(*id3BytesToSkip, payloadSize);
-                    payload += toSkip;
-                    payloadSize -= toSkip;
-                    *id3BytesToSkip -= toSkip;
-                }
-
-                if (payloadSize > 0 && pid == *audioPid) {
-                    // ОПРЕДЕЛЕНИЕ КОДЕКА (AAC vs MP3)
-                    if (!(*formatDetected) && payloadSize >= 2) {
-                        if (payload[0] == 0xFF && ((payload[1] & 0xF0) == 0xF0) && (((payload[1] >> 1) & 0x03) == 0x00)) {
-                            *isAacFormat = true; // Это AAC!
-                        }
-                        *formatDetected = true;
-                    }
-
-                    file->write(reinterpret_cast<const char*>(payload), payloadSize);
-                }
-            }
-            bytesConsumed += 188;
-        }
-
-        if (bytesConsumed > 0) {
-            tsBuffer->erase(tsBuffer->begin(), tsBuffer->begin() + bytesConsumed);
-        }
+    connect(streamer, &NetworkStreamer::DataReceived, [demuxer](const QByteArray& data) {
+        demuxer->ProcessBytes(reinterpret_cast<const uint8_t*>(data.constData()), data.size());
     });
 
     connect(streamer, &NetworkStreamer::DownloadFinished, this, [this, streamer, file, track, filePath, safeName, isAacFormat, syncPrint]() {

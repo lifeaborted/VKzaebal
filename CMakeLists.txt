@@ -76,14 +76,17 @@ set(PROJECT_SOURCES
         src/utils/buffer/RingBuffer.h
         src/utils/buffer/RingBuffer.cpp
 
+        src/utils/env/EnvParser.cpp
+        src/utils/env/EnvParser.h
+
         src/utils/logger/Logger.h
         src/utils/logger/Logger.cpp
 
+        src/utils/parser/MpegTsDemuxer.cpp
+        src/utils/parser/MpegTsDemuxer.h
+
         src/utils/path/PathManager.h
         src/utils/path/PathManager.cpp
-
-        src/utils/env/EnvParser.cpp
-        src/utils/env/EnvParser.h
 )
 
 # --- Подключаем внешние библиотеки ---
