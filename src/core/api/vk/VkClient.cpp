@@ -51,6 +51,12 @@ void VkClient::ValidateToken(std::function<void(bool)> callback) {
         QByteArray response_data = reply->readAll();
         QJsonDocument json = QJsonDocument::fromJson(response_data);
 
+        if (json.isNull() || !json.isObject()) {
+            Logger::Log(LogLevel::ERROR, "VK API: Received invalid JSON in ValidateToken");
+            callback(false);
+            return;
+        }
+
         // Если ВК вернул ошибку, значит токен невалиден
         if (json.object().contains("error")) {
             Logger::Log(LogLevel::WARNING, "api: Token validation failed (API error).");
@@ -228,7 +234,7 @@ void VkClient::FetchAllUserAudio(int offset, int count) {
             emit FinishedFetching();
             return;
         }
-        
+
         QJsonObject root = json.object();
 
         if (root.contains("error")) {
