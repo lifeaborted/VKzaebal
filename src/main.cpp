@@ -13,16 +13,16 @@
 #include "core/audio/miniaudio/MiniaudioEngine.h"
 #include "core/lyrics/LyricsFetcher.h"
 #include "core/playlist/PlaylistManager.h"
-#include "core/vk/api/VkClient.h"               // ПЕРЕИМЕНОВАНО
-#include "core/spotify/api/SpotifyClient.h"     // НОВЫЙ ИНКЛУД
-#include "core/auth/OAuthManager.h"             // ПЕРЕНЕСЕНО
+#include "core/api/vk/VkClient.h"
+#include "core/api/spotify/SpotifyClient.h"
+#include "core/auth/OAuthManager.h"
 #include "services/database/DatabaseManager.h"
 #include "services/downloader/TrackDownloader.h"
 #include "services/network/NetworkStreamer.h"
 #include "ui/console/ConsoleController.h"
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
-#include "utils/env/EnvParser.h"                // НОВЫЙ ИНКЛУД
+#include "utils/env/EnvParser.h"
 
 int main(int argc, char *argv[]) {
 #ifdef _WIN32
@@ -69,6 +69,7 @@ int main(int argc, char *argv[]) {
     TrackDownloader downloader;
     LyricsFetcher lyricsFetcher;
     NetworkStreamer streamer;
+    IAudioProvider* currentProvider = nullptr;
 
     bool crossfadeEnabled = settings.value("Audio/CrossfadePlayback", false).toBool();
     bool isShuffle = settings.value("Session/Shuffle", false).toBool();
@@ -160,7 +161,8 @@ int main(int argc, char *argv[]) {
         Track nextTrack = playlist.PeekNextTrack();
         if (nextTrack.id.empty()) return;
 
-        vkClient.FetchTrackUrl(nextTrack.id, [nextTrack, &cachedNextUrl, &preloadedTrack](const std::string& freshUrl, bool isNetworkError) {
+        if (!currentProvider) return;
+        currentProvider->FetchTrackUrl(nextTrack.id, [nextTrack, &cachedNextUrl, &preloadedTrack](const std::string& freshUrl, bool isNetworkError) {
             if (!isNetworkError && !freshUrl.empty()) {
                 cachedNextUrl = freshUrl;
                 preloadedTrack = nextTrack;
@@ -220,7 +222,6 @@ int main(int argc, char *argv[]) {
 
             if (!isNetworkError && freshUrl.empty()) {
                 skipCount++;
-                // Если онлайн сессия сломалась (пропал инет) и скипнуто 5 треков подряд - стопаем
                 if (skipCount >= 5) {
                     Logger::Log(LogLevel::ERROR, "Too many unplayable tracks. Stopping loop.");
                     skipCount = 0;
@@ -263,15 +264,18 @@ int main(int argc, char *argv[]) {
             }
         };
 
-        vkClient.FetchTrackUrl(track.id, executePlay);
+        if (currentProvider) {
+            currentProvider->FetchTrackUrl(track.id, executePlay);
+        } else if (!isDownloaded) {
+            playlist.Next();
+        }
     };
 
     playlist.OnTrackRequested = [&](Track track) { attemptPlay(track, 1); };
 
-    QObject::connect(&vkClient, &VkClient::AudioFetched, [&](const std::vector<Track>& tracks) {
+    auto onAudioFetched = [&](const std::vector<Track>& tracks) {
         bool hasNewTracks = false;
         auto allTracks = playlist.GetAllTracks();
-
         for (const auto& track : tracks) {
             bool exists = false;
             for (const auto& cached : allTracks) {
@@ -283,28 +287,29 @@ int main(int argc, char *argv[]) {
             }
             vkSyncIndex++;
         }
-
         dbManager.SaveTracks(tracks);
+        if (!isPlaybackStarted) {
+            initPlaylistAndStart(true);
+        }
+        if (!isPlaybackStarted || hasNewTracks) {
+            dbManager.SaveQueue(playlist.GetAllTracks(), false);
+            dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
+            dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
+        }
+    };
 
-                if (!isPlaybackStarted) {
-                    initPlaylistAndStart(true);
-                    dbManager.SaveQueue(playlist.GetAllTracks(), false);
-                    dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
-                    dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
-                } else if (hasNewTracks) {
-                    dbManager.SaveQueue(playlist.GetAllTracks(), false);
-                    dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
-                    dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
-                }
-            });
-
-    QObject::connect(&vkClient, &VkClient::FinishedFetching, [&]() {
+    auto onFinishedFetching = [&]() {
         Logger::Log(LogLevel::INFO, "=== ФОНОВАЯ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА ===");
-
         dbManager.SaveQueue(playlist.GetAllTracks(), false);
         dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
         dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
-    });
+    };
+
+    QObject::connect(&vkClient, &IAudioProvider::AudioFetched, onAudioFetched);
+    QObject::connect(&spotifyClient, &IAudioProvider::AudioFetched, onAudioFetched);
+
+    QObject::connect(&vkClient, &IAudioProvider::FinishedFetching, onFinishedFetching);
+    QObject::connect(&spotifyClient, &IAudioProvider::FinishedFetching, onFinishedFetching);
 
     // === АВТОРИЗАЦИЯ И РОУТИНГ ===
     QQmlApplicationEngine* authEngine = nullptr;
@@ -433,18 +438,31 @@ int main(int argc, char *argv[]) {
 
     auto switchSource = [&](const std::string& newSource) {
         Logger::Log(LogLevel::INFO, "Main: Switching audio source to " + newSource);
-        audio.Pause();
-        isPlaybackStarted = false;
-        playlist.Clear();
 
-        if (newSource == "VK") startVkService();
-        else if (newSource == "Spotify") startSpotifyService();
-        else if (newSource == "Offline") {
+        // --- ЖЕСТКАЯ ОЧИСТКА СОСТОЯНИЯ ПРИ ПЕРЕКЛЮЧЕНИИ ---
+        streamer.StopDownload();      // Обрываем текущее сетевое соединение
+        audio.ClearBuffers(false, 0); // Вычищаем PCM-буферы и декодеры
+        audio.Pause();                // Ставим движок на паузу
+        isPlaybackStarted = false;    // Сбрасываем флаг старта
+        playlist.Clear();             // Чистим очередь
+
+        // --- СОХРАНЯЕМ ВЫБОР В НАСТРОЙКИ ---
+        settings.setValue("General/source", QString::fromStdString(newSource));
+        settings.sync();
+
+        // Роутинг
+        if (newSource == "VK") {
+            currentProvider = &vkClient;
+            startVkService();
+        } else if (newSource == "Spotify") {
+            currentProvider = &spotifyClient;
+            startSpotifyService();
+        } else if (newSource == "Offline") {
+            currentProvider = nullptr;
             console.SetState(ConsoleState::COMMAND_MODE);
             initPlaylistAndStart(false);
         }
     };
-
     QObject::connect(&console, &ConsoleController::SourceChanged, &app, [&](const std::string& source) {
         switchSource(source);
     }, Qt::QueuedConnection);

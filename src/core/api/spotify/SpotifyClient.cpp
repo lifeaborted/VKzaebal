@@ -5,7 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-SpotifyClient::SpotifyClient(QObject* parent) : QObject(parent), m_manager(new QNetworkAccessManager(this)) {
+SpotifyClient::SpotifyClient(QObject* parent) : IAudioProvider(parent), m_manager(new QNetworkAccessManager(this)) {
     Logger::Log(LogLevel::INFO, "SpotifyClient created.");
 }
 
@@ -42,4 +42,18 @@ void SpotifyClient::ExchangeCodeForToken(const std::string& code, const QString&
         }
         reply->deleteLater();
     });
+}
+
+void SpotifyClient::SetAccessToken(const std::string& token) {
+    m_accessToken = token;
+}
+
+void SpotifyClient::FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) {
+    // ЗАГЛУШКА
+    callback("", false);
+}
+
+void SpotifyClient::FetchAllUserAudio(int offset, int count) {
+    // ЗАГЛУШКА
+    emit FinishedFetching();
 }

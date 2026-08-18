@@ -23,30 +23,36 @@ set(PROJECT_SOURCES
         src/models/Track.h
 
         # --- Core ---
+
+        # API
+        src/core/api/IAudioProvider.h
+
+        src/core/api/spotify/SpotifyClient.h
+        src/core/api/spotify/SpotifyClient.cpp
+
+        src/core/api/vk/VkClient.h
+        src/core/api/vk/VkClient.cpp
+
         # Audio
         src/core/audio/IAudioEngine.h
+
         src/core/audio/bass/BassEngine.h
         src/core/audio/bass/BassEngine.cpp
+
         src/core/audio/miniaudio/miniaudio_impl.cpp
+
         src/core/audio/miniaudio/MiniaudioEngine.h
         src/core/audio/miniaudio/MiniaudioEngine.cpp
 
         # Authorization
         src/core/auth/OAuthManager.h
         src/core/auth/OAuthManager.cpp
+
         src/resources.qrc
 
         # Playlist
         src/core/playlist/PlaylistManager.h
         src/core/playlist/PlaylistManager.cpp
-
-        # Spotify
-        src/core/spotify/api/SpotifyClient.h
-        src/core/spotify/api/SpotifyClient.cpp
-
-        # VK
-        src/core/vk/api/VkClient.h
-        src/core/vk/api/VkClient.cpp
 
         # Lyrics
         src/core/lyrics/LyricsFetcher.h
@@ -55,8 +61,10 @@ set(PROJECT_SOURCES
         # --- Services ---
         src/services/network/NetworkStreamer.h
         src/services/network/NetworkStreamer.cpp
+
         src/services/database/DatabaseManager.h
         src/services/database/DatabaseManager.cpp
+
         src/services/downloader/TrackDownloader.h
         src/services/downloader/TrackDownloader.cpp
 
@@ -67,13 +75,15 @@ set(PROJECT_SOURCES
         # --- Utils ---
         src/utils/buffer/RingBuffer.h
         src/utils/buffer/RingBuffer.cpp
+
         src/utils/logger/Logger.h
         src/utils/logger/Logger.cpp
+
         src/utils/path/PathManager.h
         src/utils/path/PathManager.cpp
+
         src/utils/env/EnvParser.cpp
         src/utils/env/EnvParser.h
-
 )
 
 # --- Подключаем внешние библиотеки ---

@@ -4,7 +4,7 @@
 #include <atomic>
 #include <thread>
 #include <functional>
-#include "core/vk/api/VkClient.h"
+#include "core/api/vk/VkClient.h"
 #include "services/downloader/TrackDownloader.h"
 #include "core/lyrics/LyricsFetcher.h"
 

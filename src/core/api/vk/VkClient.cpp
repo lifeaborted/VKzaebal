@@ -11,8 +11,7 @@
 #include <iostream>
 #include <QEventLoop>
 
-VkClient::VkClient(QObject* parent)
-    : QObject(parent), m_manager(new QNetworkAccessManager(this)) {
+VkClient::VkClient(QObject* parent) : IAudioProvider(parent), m_manager(new QNetworkAccessManager(this)) {
     Logger::Log(LogLevel::INFO, "api created.");
 }
 

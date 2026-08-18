@@ -19,7 +19,7 @@
 #include "core/audio/IAudioEngine.h"
 #include "core/playlist/PlaylistManager.h"
 #include "core/auth/OAuthManager.h"
-#include "core/vk/api/VkClient.h"
+#include "core/api/vk/VkClient.h"
 #include "services/database/DatabaseManager.h"
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
