@@ -9,7 +9,7 @@ public:
 
     // Основные методы плеера
     virtual bool Init() = 0;
-    virtual bool PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId = "") = 0;
+    virtual bool PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId) = 0;
     virtual void Pause() = 0;
     virtual void Resume() = 0;
     virtual void SetVolume(float volume) = 0;

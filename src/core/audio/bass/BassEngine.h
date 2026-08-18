@@ -17,7 +17,7 @@ public:
     ~BassEngine() override;
 
     bool Init() override;
-    bool PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId = "") override;
+    bool PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId) override;
     void Pause() override;
     void Resume() override;
     void SetVolume(float volume) override;

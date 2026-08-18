@@ -117,6 +117,7 @@ void TrackDownloader::Download(const Track& track, const std::string& urlStr) {
     NetworkStreamer* streamer = new NetworkStreamer(this);
     std::shared_ptr<QFile> file = std::make_shared<QFile>(filePath);
     if (!file->open(QIODevice::WriteOnly)) {
+        syncPrint("[Ошибка] Не удалось создать файл для сохранения: " + safeName);
         streamer->deleteLater();
         return;
     }

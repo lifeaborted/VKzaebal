@@ -24,6 +24,8 @@
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
 #include "core/api/IAudioProvider.h"
+#include "services/downloader/TrackDownloader.h"
+#include "core/lyrics/LyricsFetcher.h"
 
 
 ConsoleController::ConsoleController(

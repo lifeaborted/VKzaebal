@@ -159,6 +159,7 @@ void VkClient::OnReplyFinished(QNetworkReply* reply) {
     QJsonArray itemsArray = responseObj["items"].toArray();
 
     std::vector<Track> tracks;
+    tracks.reserve(itemsArray.size());
     for (int i = 0; i < itemsArray.size(); ++i) {
         QJsonObject trackObj = itemsArray[i].toObject();
 
@@ -253,6 +254,7 @@ void VkClient::FetchAllUserAudio(int offset, int count) {
         std::vector<Track> chunkTracks;
         QJsonObject responseObj = root["response"].toObject();
         QJsonArray items = responseObj["items"].toArray();
+        chunkTracks.reserve(items.size());
 
         for (const QJsonValue& val : items) {
             QJsonObject trackJson = val.toObject();

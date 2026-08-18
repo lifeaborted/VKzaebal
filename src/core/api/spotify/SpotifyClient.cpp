@@ -37,6 +37,12 @@ void SpotifyClient::AuthWithSpDc(const QString& spDcCookie) {
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         if (reply->error() == QNetworkReply::NoError) {
             QJsonDocument json = QJsonDocument::fromJson(reply->readAll());
+
+            if (json.isNull() || !json.isObject()) {
+                emit AuthError("Invalid JSON response from Spotify.");
+                return;
+            }
+
             std::string token = json.object()["accessToken"].toString().toStdString();
 
             if (!token.empty()) {
@@ -110,6 +116,14 @@ void SpotifyClient::FetchAllUserAudio(int offset, int count) {
 
         QByteArray response_data = reply->readAll();
         QJsonDocument json = QJsonDocument::fromJson(response_data);
+        
+        if (json.isNull() || !json.isObject()) {
+            Logger::Log(LogLevel::ERROR, "Spotify API: Received invalid JSON");
+            emit FinishedFetching();
+            reply->deleteLater();
+            return;
+        }
+
         QJsonObject root = json.object();
         QJsonArray items = root["items"].toArray();
 

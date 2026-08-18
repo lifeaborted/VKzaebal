@@ -21,7 +21,7 @@ public:
     ~MiniaudioEngine() override;
 
     bool Init() override;
-    bool PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId = "") override;
+    bool PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId) override;
     void Pause() override;
     void Resume() override;
     void SetVolume(float volume) override;
@@ -36,6 +36,8 @@ public:
     // Метод, куда NetworkStreamer будет пушить скачанные байты AAC
     void PushNetworkData(const uint8_t* data, size_t size);
     void ClearBuffers(bool crossfade = false, int nextDurationSec = 0);
+
+    static constexpr int SAMPLE_RATE = 44100;
 
 private:
     static void DataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);

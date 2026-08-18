@@ -2,7 +2,10 @@
 #include <QObject>
 #include <QString>
 #include <string>
+#include <memory>
 
+
+class QSettings;
 class OAuthManager : public QObject {
     Q_OBJECT
 public:
@@ -19,4 +22,7 @@ public:
         void TokenReceived(const std::string& token);
         void AuthFailed(const std::string& error);
         void AuthCodeReceived(const std::string& code);
+
+private:
+    std::unique_ptr<QSettings> m_settings;
 };

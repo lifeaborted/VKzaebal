@@ -6,27 +6,25 @@
 #include <QRegularExpression>
 
 OAuthManager::OAuthManager(QObject* parent) : QObject(parent) {
+    m_settings = std::make_unique<QSettings>(PathManager::GetConfigPath(), QSettings::IniFormat);
     Logger::Log(LogLevel::INFO, "auth (WebView Auth) created.");
 }
 
 OAuthManager::~OAuthManager() {}
 
 std::string OAuthManager::GetSavedToken(const QString& service) const {
-    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
-    return settings.value("General/" + service.toLower() + "_token", "").toString().toStdString();
+    return m_settings->value("General/" + service.toLower() + "_token", "").toString().toStdString();
 }
 
 void OAuthManager::SaveToken(const std::string& token, const QString& service) const {
-    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
-    settings.setValue("General/" + service.toLower() + "_token", QString::fromStdString(token));
-    settings.sync();
+    m_settings->setValue("General/" + service.toLower() + "_token", QString::fromStdString(token));
+    m_settings->sync();
     Logger::Log(LogLevel::INFO, "auth: Token saved for " + service.toStdString());
 }
 
 void OAuthManager::ClearSavedToken(const QString& service) const {
-    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
-    settings.remove("General/" + service.toLower() + "_token");
-    settings.sync();
+    m_settings->remove("General/" + service.toLower() + "_token");
+    m_settings->sync();
     Logger::Log(LogLevel::INFO, "auth: Token removed for " + service.toStdString());
 }
 

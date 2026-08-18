@@ -492,6 +492,7 @@ int main(int argc, char *argv[]) {
             console.SetState(ConsoleState::COMMAND_MODE);
             initPlaylistAndStart(false);
         }
+        console.SetCurrentProvider(currentProvider);
     };
     QObject::connect(&console, &ConsoleController::SourceChanged, &app, [&](const std::string& source) {
         switchSource(source);

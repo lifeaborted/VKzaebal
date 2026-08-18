@@ -86,7 +86,7 @@ void MiniaudioEngine::SetPositionSeconds(double pos) {
     std::lock_guard<std::mutex> lock(m_audioMutex);
 
     if (m_decoder) {
-        ma_uint64 targetFrame = static_cast<ma_uint64>(pos * 44100.0);
+        ma_uint64 targetFrame = static_cast<ma_uint64>(pos * static_cast<double>(SAMPLE_RATE));
         if (ma_decoder_seek_to_pcm_frame(m_decoder.get(), targetFrame) == MA_SUCCESS) {
             m_playbackFrameCount = targetFrame;
             m_nearEndTriggered = false;
@@ -94,7 +94,7 @@ void MiniaudioEngine::SetPositionSeconds(double pos) {
             Logger::Log(LogLevel::INFO, "Miniaudio: Seeked to " + std::to_string(pos) + "s");
         }
     } else {
-        m_playbackFrameCount = static_cast<ma_uint64>(pos * 44100.0);
+        m_playbackFrameCount = static_cast<ma_uint64>(pos * static_cast<double>(SAMPLE_RATE));
         m_nearEndTriggered = false;
         m_finishedTriggered = false;
 
@@ -119,7 +119,7 @@ void MiniaudioEngine::SetPositionSeconds(double pos) {
     }
 }
 
-double MiniaudioEngine::GetPositionSeconds() const { return static_cast<double>(m_playbackFrameCount.load()) / 44100.0; }
+double MiniaudioEngine::GetPositionSeconds() const { return static_cast<double>(m_playbackFrameCount.load()) / static_cast<double>(SAMPLE_RATE); }
 
 double MiniaudioEngine::GetLengthSeconds() const {
     return static_cast<double>(m_currentDurationSec);
@@ -152,11 +152,11 @@ bool MiniaudioEngine::Init() {
     QSettings settings("config.ini", QSettings::IniFormat);
     m_crossfadeDurationMs = settings.value("Audio/CrossfadeDurationMs", 3000).toInt();
 
-    m_pcmBuffer.Init(44100 * 2 * sizeof(int16_t) * 5);
+    m_pcmBuffer.Init(SAMPLE_RATE * 2 * sizeof(int16_t) * 5);
     ma_device_config deviceConfig = ma_device_config_init(ma_device_type_playback);
     deviceConfig.playback.format   = ma_format_s16;
     deviceConfig.playback.channels = 2;
-    deviceConfig.sampleRate        = 44100;
+    deviceConfig.sampleRate        = SAMPLE_RATE;
     deviceConfig.dataCallback      = DataCallback;
     deviceConfig.pUserData         = this;
 
@@ -274,7 +274,7 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
             }
         }
 
-        double currentSec = static_cast<double>(engine->m_playbackFrameCount.load()) / 44100.0;
+        double currentSec = static_cast<double>(engine->m_playbackFrameCount.load()) / static_cast<double>(SAMPLE_RATE);
         double totalSec = static_cast<double>(engine->m_currentDurationSec);
         double crossfadeSec = engine->m_crossfadeDurationMs / 1000.0;
 
@@ -333,7 +333,7 @@ bool MiniaudioEngine::PlayStream(const std::string& url, int durationSec, bool c
         m_pcmBuffer.Clear();
     }
 
-    ma_decoder_config decoderConfig = ma_decoder_config_init(ma_format_s16, 2, 44100);
+    ma_decoder_config decoderConfig = ma_decoder_config_init(ma_format_s16, 2, SAMPLE_RATE);
     m_decoder.reset(new ma_decoder);
 
 #ifdef _WIN32
@@ -542,7 +542,7 @@ void MiniaudioEngine::InitiateCrossfade() {
     }
     m_pcmBuffer.Clear();
 
-    m_crossfadeFramesTotal = (m_crossfadeDurationMs * 44100) / 1000;
+    m_crossfadeFramesTotal = (m_crossfadeDurationMs * SAMPLE_RATE) / 1000;
     m_crossfadeFramesRemaining = m_crossfadeFramesTotal;
     m_isCrossfading = true;
 }

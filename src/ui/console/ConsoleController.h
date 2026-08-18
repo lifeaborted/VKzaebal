@@ -4,14 +4,14 @@
 #include <atomic>
 #include <thread>
 #include <functional>
-#include "services/downloader/TrackDownloader.h"
-#include "core/lyrics/LyricsFetcher.h"
 
 class IAudioEngine;
 class PlaylistManager;
 class OAuthManager;
 class DatabaseManager;
 class IAudioProvider;
+class TrackDownloader;
+class LyricsFetcher;
 
 enum class ConsoleState {
     COMMAND_MODE,
