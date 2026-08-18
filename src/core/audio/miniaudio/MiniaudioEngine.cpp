@@ -92,8 +92,6 @@ void MiniaudioEngine::SetPositionSeconds(double pos) {
         m_mp3Buffer.clear();
 
         m_demuxer.Reset();
-        m_id3BytesToSkip = 0;
-        m_streamFormat = AudioStreamFormat::Unknown;
 
         if (m_aacDecoder) {
             aacDecoder_Close(m_aacDecoder);
@@ -391,31 +389,6 @@ void MiniaudioEngine::DecodeAACFrames() {
     }
 }
 
-MiniaudioEngine::AudioStreamFormat MiniaudioEngine::DetectAudioFormat(const uint8_t* data, size_t size) {
-    if (size < 2 || data[0] != 0xFF) {
-        return AudioStreamFormat::Unknown;
-    }
-
-    uint8_t b1 = data[1];
-
-    if ((b1 & 0xF0) == 0xF0) {
-        uint8_t layer = (b1 >> 1) & 0x03;
-        if (layer == 0x00) {
-            return AudioStreamFormat::AAC_ADTS;
-        }
-    }
-
-    if ((b1 & 0xE0) == 0xE0) {
-        uint8_t version = (b1 >> 3) & 0x03;
-        uint8_t layer = (b1 >> 1) & 0x03;
-        if (version != 0x01 && layer != 0x00) {
-            return AudioStreamFormat::MP3;
-        }
-    }
-
-    return AudioStreamFormat::Unknown;
-}
-
 void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSize) {
     UCHAR* pBuffer = const_cast<UCHAR*>(payload);
     UINT bufferSize = static_cast<UINT>(payloadSize);
@@ -508,8 +481,6 @@ void MiniaudioEngine::ClearBuffers(bool crossfade, int nextDurationSec) {
     }
 
     m_demuxer.Reset();
-    m_id3BytesToSkip = 0;
-    m_streamFormat = AudioStreamFormat::Unknown;
     m_mp3Buffer.clear();
     mp3dec_init(&m_mp3Decoder);
 

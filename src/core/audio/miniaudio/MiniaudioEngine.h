@@ -35,8 +35,6 @@ public:
     void PushNetworkData(const uint8_t* data, size_t size);
     void ClearBuffers(bool crossfade = false, int nextDurationSec = 0);
 
-    enum class AudioStreamFormat { Unknown, AAC_ADTS, MP3 };
-
 private:
     static void DataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
     void DecodeAACFrames();   // функция для декодирования ADTS пакетов
@@ -65,9 +63,6 @@ private:
     std::vector<uint8_t> m_aacBuffer;                               // Временный буфер для сырых скачанных данных
     std::mutex m_networkMutex;                                      // Защита буфера скачивания
     std::atomic<ma_uint64> m_playbackFrameCount{0};
-    uint16_t m_audioPid = 0x1FFF;                                   // хранение значения PID
-    int m_dumpedFirstPayload = 0;
-    size_t m_id3BytesToSkip = 0;
 
     // --- ПЕРЕМЕННЫЕ КРОССФЕЙДА И ТАЙМИНГОВ ---
     int m_crossfadeDurationMs = 3000;
@@ -85,14 +80,12 @@ private:
     size_t m_fadeOutPcmReadPos = 0;
     // -----------------------------------------
 
-    AudioStreamFormat DetectAudioFormat(const uint8_t* data, size_t size);
     void DecodeAacPayload(const uint8_t* payload, size_t payloadSize);
     void DecodeMp3Payload(const uint8_t* payload, size_t payloadSize);
 
     mp3dec_t m_mp3Decoder;
     std::vector<uint8_t> m_mp3Buffer;
     MpegTsDemuxer m_demuxer;
-    AudioStreamFormat m_streamFormat = AudioStreamFormat::Unknown;
 
     // --- ПЕРЕМЕННЫЕ ВИЗУАЛИЗАТОРА ---
     mutable std::mutex m_spectrumMutex;
