@@ -270,8 +270,9 @@ void NetworkStreamer::DecryptAndPushChunk() {
     }
 
     if (m_aesKey.size() != 16) {
-        Logger::Log(LogLevel::ERROR, "Invalid AES key size.");
-        emit DataReceived(m_currentChunkData);
+        std::string err = "Invalid AES key size.";
+        Logger::Log(LogLevel::ERROR, err);
+        emit DownloadError(err);
         return;
     }
 

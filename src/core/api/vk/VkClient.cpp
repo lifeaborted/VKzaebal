@@ -85,6 +85,14 @@ void VkClient::FetchTrackUrl(const std::string& trackId, std::function<void(cons
         if (reply->error() == QNetworkReply::NoError) {
             QByteArray response_data = reply->readAll();
             QJsonDocument json = QJsonDocument::fromJson(response_data);
+
+            if (json.isNull() || !json.isObject()) {
+                Logger::Log(LogLevel::ERROR, "VK API: Received invalid JSON in FetchTrackUrl");
+                callback("", true);
+                reply->deleteLater();
+                return;
+            }
+
             QJsonObject root = json.object();
 
             if (root.contains("error")) {
@@ -214,6 +222,13 @@ void VkClient::FetchAllUserAudio(int offset, int count) {
 
         QByteArray response_data = reply->readAll();
         QJsonDocument json = QJsonDocument::fromJson(response_data);
+
+        if (json.isNull() || !json.isObject()) {
+            Logger::Log(LogLevel::ERROR, "VK API: Received invalid JSON in FetchAllUserAudio");
+            emit FinishedFetching();
+            return;
+        }
+        
         QJsonObject root = json.object();
 
         if (root.contains("error")) {

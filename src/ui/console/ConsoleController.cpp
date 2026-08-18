@@ -86,7 +86,9 @@ void ConsoleController::Stop() {
 void ConsoleController::InputLoop() {
     std::string rawInput;
 
-    auto syncPrint = [](const std::string& text) {
+    auto syncPrint = [this](const std::string& text) {
+        if (!m_isRunning || !QCoreApplication::instance()) return;
+
         QMetaObject::invokeMethod(QCoreApplication::instance(), [text]() {
             std::lock_guard<std::mutex> lock(Logger::GetMutex());
             std::cout << "\r\033[2K\033[1A\r\033[2K" << text;
