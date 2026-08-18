@@ -19,10 +19,11 @@
 #include "core/audio/IAudioEngine.h"
 #include "core/playlist/PlaylistManager.h"
 #include "core/auth/OAuthManager.h"
-#include "core/api/vk/VkClient.h"
+
 #include "services/database/DatabaseManager.h"
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
+#include "core/api/IAudioProvider.h"
 
 
 ConsoleController::ConsoleController(
@@ -30,17 +31,12 @@ ConsoleController::ConsoleController(
     PlaylistManager& playlist,
     OAuthManager& authManager,
     DatabaseManager& dbManager,
-    VkClient& vkClient,
-    TrackDownloader& downloader,
-    LyricsFetcher& lyricsFetcher,
-    QObject* parent
+    TrackDownloader& downloader, LyricsFetcher& lyricsFetcher
     ):
-        QObject(parent),
         m_audio(audio),
         m_playlist(playlist),
         m_authManager(authManager),
         m_dbManager(dbManager),
-        m_vkClient(vkClient),
         m_downloader(downloader),
         m_lyricsFetcher(lyricsFetcher),
         m_currentState(ConsoleState::COMMAND_MODE),
@@ -201,10 +197,15 @@ void ConsoleController::InputLoop() {
                         if (QFile::exists(pathMp3) || QFile::exists(pathAac)) {
                             syncPrint("[Загрузка] Трек уже скачан.\n\n> ");
                         } else {
+                            if (!m_currentProvider) {
+                                syncPrint("[Ошибка] Нет активного онлайн-источника для скачивания.\n\n> ");
+                                continue;
+                            }
+
                             syncPrint("[Загрузка] Получение ссылки для " + targetTrack.title + "...\n\n> ");
 
                             QMetaObject::invokeMethod(QCoreApplication::instance(), [&, targetTrack]() {
-                                m_vkClient.FetchTrackUrl(targetTrack.id, [this, targetTrack](const std::string& url, bool err) {
+                                m_currentProvider->FetchTrackUrl(targetTrack.id, [this, targetTrack](const std::string& url, bool err) {
                                     if (!err && !url.empty()) {
                                         m_downloader.Download(targetTrack, url);
                                     } else {
@@ -598,4 +599,8 @@ void ConsoleController::UiLoop() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
+}
+
+void ConsoleController::SetCurrentProvider(IAudioProvider* provider) {
+    m_currentProvider = provider;
 }

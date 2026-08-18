@@ -98,7 +98,7 @@ int main(int argc, char *argv[]) {
         }, Qt::QueuedConnection);
     };
 
-    ConsoleController console(audio, playlist, authManager, dbManager, vkClient, downloader, lyricsFetcher);
+    ConsoleController console(audio, playlist, authManager, dbManager, downloader, lyricsFetcher);
     QObject::connect(&console, &ConsoleController::QuitRequested, &app, &QCoreApplication::quit);
 
     // --- Инициализация плейлиста ---
