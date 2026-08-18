@@ -399,7 +399,7 @@ void MiniaudioEngine::DecodeLoop() {
         if (!m_isDecoding) break;
 
         if (m_pcmBuffer.GetAvailableWrite() < 176400) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
 

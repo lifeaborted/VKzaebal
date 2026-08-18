@@ -521,7 +521,9 @@ void ConsoleController::InputLoop() {
 
 void ConsoleController::UiLoop() {
     const char* blocks[] = {" ", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
-    const int numBands = 16; // Количество столбиков
+    const int numBands = 16;
+
+    std::string lastPrintedStr = "";
 
     while (m_isRunning) {
         if (m_currentState == ConsoleState::WAITING_TOKEN_URL || m_currentState == ConsoleState::SELECT_SOURCE) {
@@ -561,14 +563,9 @@ void ConsoleController::UiLoop() {
                 }
                 bar += "]";
 
-                // === ЛОГИКА ВИЗУАЛИЗАТОРА ===
-                std::string spectrum = "";
-
-                // Считаем Фурье и рисуем столбики ТОЛЬКО если визуализатор включен
+                std::string spectrum = " [";
                 if (m_showVisualizer) {
                     std::vector<float> fft = m_audio.GetSpectrumData();
-                    spectrum = " [";
-
                     if (!fft.empty()) {
                         for (int i = 0; i < numBands; ++i) {
                             float peak = 0.0f;
@@ -590,8 +587,10 @@ void ConsoleController::UiLoop() {
                     } else {
                         spectrum += std::string(numBands, ' ');
                     }
-                    spectrum += "]";
+                } else {
+                    spectrum += std::string(numBands, ' ');
                 }
+                spectrum += "]";
 
                 Track currentTrack = m_playlist.GetCurrentTrack();
                 std::vector<Track> queue = m_playlist.GetQueueTracks();
@@ -606,18 +605,22 @@ void ConsoleController::UiLoop() {
 
                 std::string trackName = std::to_string(trackIndex) + ". " + currentTrack.artist + " - " + currentTrack.title;
 
-                QMetaObject::invokeMethod(QCoreApplication::instance(), [trackName, curMin, curSec, totMin, totSec, bar, percent, spectrum]() {
-                    std::lock_guard<std::mutex> lock(Logger::GetMutex());
-                    printf("\033[s"
-                           "\033[1A"
-                           "\r\033[2K%s | %02d:%02d / %02d:%02d %s %d%%%s"
-                           "\033[u",
-                           trackName.c_str(), curMin, curSec, totMin, totSec, bar.c_str(), percent, spectrum.c_str());
-                    fflush(stdout);
-                }, Qt::QueuedConnection);
+                char buffer[512];
+                snprintf(buffer, sizeof(buffer), "%s | %02d:%02d / %02d:%02d %s %d%%%s",
+                         trackName.c_str(), curMin, curSec, totMin, totSec, bar.c_str(), percent, spectrum.c_str());
+                std::string currentStr = buffer;
+
+                if (currentStr != lastPrintedStr) {
+                    lastPrintedStr = currentStr;
+                    QMetaObject::invokeMethod(QCoreApplication::instance(), [currentStr]() {
+                        std::lock_guard<std::mutex> lock(Logger::GetMutex());
+                        printf("\033[s\033[1A\r\033[2K%s\033[u", currentStr.c_str());
+                        fflush(stdout);
+                    }, Qt::QueuedConnection);
+                }
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::this_thread::sleep_for(std::chrono::milliseconds(m_showVisualizer ? 50 : 500));
     }
 }
 
