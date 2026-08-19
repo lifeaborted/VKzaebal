@@ -78,6 +78,9 @@ set(PROJECT_SOURCES
         src/ui/console/ConsoleController.h
         src/ui/console/ConsoleController.cpp
 
+        src/ui/console/CommandDispatcher.cpp
+        src/ui/console/CommandDispatcher.h
+
         # --- Utils ---
         src/utils/buffer/RingBuffer.h
         src/utils/buffer/RingBuffer.cpp
