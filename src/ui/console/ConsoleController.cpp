@@ -19,7 +19,7 @@
 #include "ConsoleController.h"
 #include "core/audio/IAudioEngine.h"
 #include "core/playlist/PlaylistManager.h"
-#include "core/auth/OAuthManager.h"
+#include "../../core/auth/oauth/OAuthManager.h"
 #include "services/database/DatabaseManager.h"
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"

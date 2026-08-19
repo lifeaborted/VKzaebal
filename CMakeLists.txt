@@ -34,8 +34,6 @@ set(PROJECT_SOURCES
         src/core/api/vk/VkClient.cpp
 
         # Audio
-        src/core/audio/IAudioEngine.h
-
         src/core/audio/bass/BassEngine.h
         src/core/audio/bass/BassEngine.cpp
 
@@ -44,9 +42,17 @@ set(PROJECT_SOURCES
         src/core/audio/miniaudio/MiniaudioEngine.h
         src/core/audio/miniaudio/MiniaudioEngine.cpp
 
+        src/core/audio/IAudioEngine.h
+
+        src/core/audio/playback/PlaybackController.h
+        src/core/audio/playback/PlaybackController.cpp
+
         # Authorization
-        src/core/auth/OAuthManager.h
-        src/core/auth/OAuthManager.cpp
+        src/core/auth/oauth/OAuthManager.h
+        src/core/auth/oauth/OAuthManager.cpp
+
+        src/core/auth/router/SourceRouter.h
+        src/core/auth/router/SourceRouter.cpp
 
         src/resources.qrc
 

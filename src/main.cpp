@@ -1,11 +1,8 @@
 #include <iostream>
 #include <QGuiApplication>
-#include <QQmlApplicationEngine>
-#include <QQmlContext>
 #include <QSettings>
 #include <string>
 #include <QtWebView>
-#include <QWindow>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -14,9 +11,9 @@
 #include "core/audio/miniaudio/MiniaudioEngine.h"
 #include "core/lyrics/LyricsFetcher.h"
 #include "core/playlist/PlaylistManager.h"
+#include "core/auth/router/SourceRouter.h"
 #include "core/api/vk/VkClient.h"
 #include "core/api/spotify/SpotifyClient.h"
-#include "core/auth/OAuthManager.h"
 #include "services/database/DatabaseManager.h"
 #include "services/downloader/TrackDownloader.h"
 #include "services/network/NetworkStreamer.h"
@@ -24,6 +21,7 @@
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
 #include "utils/env/EnvParser.h"
+#include "core/audio/playback/PlaybackController.h"
 
 int main(int argc, char *argv[]) {
 #ifdef _WIN32
@@ -67,32 +65,29 @@ int main(int argc, char *argv[]) {
 
     DatabaseManager dbManager;
     if (!dbManager.Init()) return -1;
-    std::vector<Track> cachedTracks = dbManager.LoadTracks(activeSource);
 
     MiniaudioEngine audio;
     if (!audio.Init()) return -1;
 
     PlaylistManager playlist;
-    VkClient vkClient;
-    SpotifyClient spotifyClient;
-    OAuthManager authManager;
     TrackDownloader downloader;
     LyricsFetcher lyricsFetcher;
     NetworkStreamer streamer;
-    IAudioProvider* currentProvider = nullptr;
 
+    PlaybackController playbackCtrl(audio, playlist, streamer);
+    SourceRouter router(envVars);
 
-
-    Track preloadedTrack;
-    std::string cachedNextUrl = "";
-
+    // Заглушка для конструктора консоли (позже нужно убрать authManager оттуда)
+    ConsoleController console(audio, playlist, *router.GetAuthManager(), dbManager, downloader, lyricsFetcher);
 
     audio.SetVolume(savedVolume);
-
     bool isPlaybackStarted = false;
     int vkSyncIndex = 0;
 
-    // --- Связи компонентов ---
+    playbackCtrl.SetCrossfadeEnabled(crossfadeEnabled);
+    playbackCtrl.SetSavedPosition(savedPosition);
+
+    // --- Связи компонентов (Внутренняя логика плеера) ---
     QObject::connect(&streamer, &NetworkStreamer::DataReceived, [&](const QByteArray& data) {
         audio.PushNetworkData(reinterpret_cast<const uint8_t*>(data.constData()), data.size());
     });
@@ -103,16 +98,25 @@ int main(int argc, char *argv[]) {
         }, Qt::QueuedConnection);
     };
 
-    ConsoleController console(audio, playlist, authManager, dbManager, downloader, lyricsFetcher);
     QObject::connect(&console, &ConsoleController::QuitRequested, &app, &QCoreApplication::quit);
 
-    // --- Инициализация плейлиста ---
+    audio.OnTrackFinished = [&]() { playbackCtrl.HandleTrackFinished(); };
+    audio.OnTrackNearEnd = [&]() { playbackCtrl.HandleTrackNearEnd(); };
+    playlist.OnTrackRequested = [&](Track track) { playbackCtrl.AttemptPlay(track); };
+
+    console.OnGaplessModeChanged = [&](bool isCrossfade) {
+        settings.setValue("Audio/CrossfadePlayback", isCrossfade);
+        settings.sync();
+        playbackCtrl.SetCrossfadeEnabled(isCrossfade);
+        Logger::Log(LogLevel::INFO, std::string("Main: Crossfade transition set to ") + (isCrossfade ? "ON" : "OFF"));
+    };
+
+    // --- Функции инициализации ---
     auto initPlaylistAndStart = [&](bool isOnline) {
         if (isPlaybackStarted) return;
 
         if (!playlist.HasTracks()) {
-            cachedTracks = dbManager.LoadTracks(activeSource);
-
+            std::vector<Track> cachedTracks = dbManager.LoadTracks(activeSource);
             if (isOnline) {
                 for (const auto& t : cachedTracks) playlist.AddTrack(t);
             } else {
@@ -150,138 +154,6 @@ int main(int argc, char *argv[]) {
         }
     };
 
-    QObject::connect(&console, &ConsoleController::OfflineModeRequested, &app, [&]() {
-        initPlaylistAndStart(false);
-    }, Qt::QueuedConnection);
-
-        console.OnGaplessModeChanged = [&](bool isCrossfade) {
-        crossfadeEnabled = isCrossfade;
-        settings.setValue("Audio/CrossfadePlayback", isCrossfade);
-        settings.sync();
-        Logger::Log(LogLevel::INFO, std::string("Main: Crossfade transition set to ") + (isCrossfade ? "ON" : "OFF"));
-    };
-
-    audio.OnTrackFinished = [&]() {
-        Logger::Log(LogLevel::INFO, "Main: Auto-switching to next track...");
-        playlist.Next();
-    };
-
-    audio.OnTrackNearEnd = [&]() {
-        Track nextTrack = playlist.PeekNextTrack();
-        if (nextTrack.id.empty()) return;
-
-        if (!currentProvider) return;
-        currentProvider->FetchTrackUrl(nextTrack.id, [nextTrack, &cachedNextUrl, &preloadedTrack](const std::string& freshUrl, bool isNetworkError) {
-            if (!isNetworkError && !freshUrl.empty()) {
-                cachedNextUrl = freshUrl;
-                preloadedTrack = nextTrack;
-                Logger::Log(LogLevel::INFO, "Main: Next track URL pre-fetched successfully in background.");
-            }
-        });
-    };
-
-    int skipCount = 0;
-    std::atomic<int> playbackGeneration{0};
-    std::function<void(Track, int)> attemptPlay;
-
-    attemptPlay = [&](Track track, int attempt) {
-        int currentGen = (attempt == 1) ? ++playbackGeneration : playbackGeneration.load();
-
-        QString localPath = PathManager::GetDownloadFilePath(track.GetSafeFilename(), "mp3");
-        if (!QFile::exists(localPath)) {
-            localPath = PathManager::GetDownloadFilePath(track.GetSafeFilename(), "aac");
-        }
-        bool isDownloaded = QFile::exists(localPath);
-
-        if (attempt == 1 && !cachedNextUrl.empty() && preloadedTrack.id == track.id && !isDownloaded) {
-            if (audio.PlayStream(cachedNextUrl, track.duration, crossfadeEnabled, track.GetSafeFilename())) {
-                cachedNextUrl = "";
-                skipCount = 0;
-                if (savedPosition > 0.0) {
-                    audio.SetPositionSeconds(savedPosition);
-                    savedPosition = 0.0;
-                }
-                std::cout << "\r\033[2K\033[1A\r\033[2K\n> ";
-                std::cout.flush();
-                return;
-            }
-        } else if (attempt == 1) {
-            std::cout << "\r\033[2K\033[1A\r\033[2K";
-            std::cout << "[Загрузка] " << track.artist << " - " << track.title << "...\n\n> ";
-            std::cout.flush();
-        }
-
-        if (isDownloaded) {
-            skipCount = 0;
-            if (audio.PlayStream("", track.duration, crossfadeEnabled, track.GetSafeFilename())) {
-                if (savedPosition > 0.0) {
-                    audio.SetPositionSeconds(savedPosition);
-                    savedPosition = 0.0;
-                }
-                std::cout << "\r\033[2K\033[1A\r\033[2K\033[1A\r\033[2K\n> ";
-                std::cout.flush();
-            } else {
-                playlist.Next();
-            }
-            return;
-        }
-
-        auto executePlay = [track, attempt, currentGen, &audio, &playlist, &vkClient, &attemptPlay, &playbackGeneration, &savedPosition, &crossfadeEnabled, &skipCount, &streamer](const std::string& freshUrl, bool isNetworkError) {
-            if (currentGen != playbackGeneration.load()) return;
-
-            if (!isNetworkError && freshUrl.empty()) {
-                skipCount++;
-                if (skipCount >= 5) {
-                    Logger::Log(LogLevel::ERROR, "Too many unplayable tracks. Stopping loop.");
-                    skipCount = 0;
-                    std::cout << "\r\033[2K\033[1A\r\033[2K[Внимание] Ошибка сети/токена. Воспроизведение остановлено.\n\n> ";
-                    std::cout.flush();
-                    return;
-                }
-
-                Logger::Log(LogLevel::WARNING, "Track is restricted or token invalid. Skipping...");
-                playlist.Next();
-                return;
-            }
-
-            skipCount = 0;
-
-            if (!freshUrl.empty()) {
-                streamer.StopDownload();
-
-                // Очищаем состояние движка перед новым треком
-                audio.ClearBuffers(crossfadeEnabled, track.duration);
-
-                // Запускаем скачивание нового трека
-                streamer.StartDownload(freshUrl);
-                audio.Resume();
-
-                if (savedPosition > 0.0) {
-                    audio.SetPositionSeconds(savedPosition);
-                    savedPosition = 0.0;
-                }
-                std::cout << "\r\033[2K\033[1A\r\033[2K\033[1A\r\033[2K\n> ";
-                std::cout.flush();
-                return;
-            }
-
-            if (attempt < 3) {
-                Logger::Log(LogLevel::INFO, "Retrying stream in 2 seconds...");
-                QTimer::singleShot(2000, [track, attempt, &attemptPlay]() { attemptPlay(track, attempt + 1); });
-            } else {
-                playlist.Next();
-            }
-        };
-
-        if (currentProvider) {
-            currentProvider->FetchTrackUrl(track.id, executePlay);
-        } else if (!isDownloaded) {
-            playlist.Next();
-        }
-    };
-
-    playlist.OnTrackRequested = [&](Track track) { attemptPlay(track, 1); };
-
     auto onAudioFetched = [&](const std::vector<Track>& tracks) {
         bool hasNewTracks = false;
         auto allTracks = playlist.GetAllTracks();
@@ -314,198 +186,49 @@ int main(int argc, char *argv[]) {
         dbManager.ExportQueueToTxt(playlist.GetQueueTracks(), "playlist.txt", playlist.IsShuffle());
     };
 
-    QObject::connect(&vkClient, &IAudioProvider::AudioFetched, [&](const std::vector<Track>& tracks) {
-        if (currentProvider == &vkClient) onAudioFetched(tracks);
-    });
-    QObject::connect(&spotifyClient, &IAudioProvider::AudioFetched, [&](const std::vector<Track>& tracks) {
-        if (currentProvider == &spotifyClient) onAudioFetched(tracks);
-    });
+    // --- Связи с роутером ---
+    QObject::connect(&console, &ConsoleController::OfflineModeRequested, &app, [&]() {
+        initPlaylistAndStart(false);
+    }, Qt::QueuedConnection);
 
-    QObject::connect(&vkClient, &IAudioProvider::FinishedFetching, [&]() {
-        if (currentProvider == &vkClient) onFinishedFetching();
-    });
-    QObject::connect(&spotifyClient, &IAudioProvider::FinishedFetching, [&]() {
-        if (currentProvider == &spotifyClient) onFinishedFetching();
-    });
+    QObject::connect(&console, &ConsoleController::SourceChanged, &app, [&](const std::string& source) {
+        router.SwitchSource(source);
+    }, Qt::QueuedConnection);
 
-    // === АВТОРИЗАЦИЯ И РОУТИНГ ===
-    QQmlApplicationEngine* authEngine = nullptr;
-    QString currentAuthService = "";
-
-    auto startAuthFlow = [&](const QString& service, const QString& authUrl) {
-        currentAuthService = service;
-        Logger::Log(LogLevel::INFO, "Main: Starting auth flow via QML for " + service.toStdString() + "...");
-        console.SetState(ConsoleState::WAITING_TOKEN_URL);
-
-        std::cout << "\n=== Авторизация " << service.toStdString() << " ===\n";
-        std::cout << "Откроется окно браузера. Войдите в аккаунт, токен перехватится автоматически.\n> ";
-        std::cout.flush();
-
-        if (!authEngine) {
-            authEngine = new QQmlApplicationEngine();
-            authEngine->rootContext()->setContextProperty("cppAuthManager", &authManager);
-            authEngine->rootContext()->setContextProperty("cppAuthUrl", authUrl);
-            authEngine->load(QUrl(QStringLiteral("qrc:/core/auth/auth.qml")));
-
-            if (authEngine->rootObjects().isEmpty()) {
-                Logger::Log(LogLevel::ERROR, "Main: Failed to load auth.qml!");
-            }
-            else {
-                QWindow* rootWindow = qobject_cast<QWindow*>(authEngine->rootObjects().first());
-                if (rootWindow) {
-                    QObject::connect(rootWindow, &QWindow::visibleChanged, &app, [&](bool visible) {
-                        if (!visible && authEngine) {
-                            authEngine->deleteLater();
-                            authEngine = nullptr;
-                            console.SetState(ConsoleState::COMMAND_MODE);
-                            std::cout << "\n[Инфо] Окно авторизации закрыто.\n> ";
-                            std::cout.flush();
-                        }
-                    });
-                }
-            }
-        }
-    };
-
-    // Коннект: ВК (Токен из URL)
-    QObject::connect(&authManager, &OAuthManager::TokenReceived, [&](const std::string& token) {
-        if (authEngine) { authEngine->deleteLater(); authEngine = nullptr; }
-
-        authManager.SaveToken(token, currentAuthService);
-        console.SetState(ConsoleState::COMMAND_MODE);
-
-        std::cout << "\n[УСПЕХ] Авторизация " << currentAuthService.toStdString() << " пройдена!\n> ";
-        std::cout.flush();
-
-        if (currentAuthService == "VK") {
-            vkClient.SetAccessToken(token);
-            initPlaylistAndStart(true);
-            vkClient.FetchAllUserAudio(0, 200);
-        }
-    });
-
-    // Коннект: Spotify
-
-
-    // Успешный обмен кода на токен (Spotify)
-    QObject::connect(&spotifyClient, &SpotifyClient::TokenReceived, [&](const std::string& token) {
-        authManager.SaveToken(token, "Spotify");
-        console.SetState(ConsoleState::COMMAND_MODE);
-        std::cout << "\n[УСПЕХ] Авторизация Spotify пройдена!\n> ";
-        std::cout.flush();
-
-        spotifyClient.SetAccessToken(token);
-        initPlaylistAndStart(true);
-        vkSyncIndex = 0;
-        spotifyClient.FetchAllUserAudio(0, 50);
-    });
-
-    QObject::connect(&spotifyClient, &SpotifyClient::AuthError, [&](const std::string& err) {
-        std::cout << "\n[ОШИБКА] Не удалось получить токен Spotify: " << err << "\n> ";
-        std::cout.flush();
-        console.SetState(ConsoleState::COMMAND_MODE);
-    });
-
-    QObject::connect(&vkClient, &VkClient::TokenExpired, [&]() {
-        if (console.GetState() == ConsoleState::WAITING_TOKEN_URL) return;
-        Logger::Log(LogLevel::WARNING, "Main: Token VK expired.");
-        std::cout << "\n[ВНИМАНИЕ] Токен ВК устарел.\n";
-        authManager.ClearSavedToken("VK");
-        vkClient.SetAccessToken("");
-        startAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
-    });
-
-    // === Роутер сервисов ===
-    auto startVkService = [&]() {
-        std::string savedToken = authManager.GetSavedToken("VK");
-        if (savedToken.empty()) {
-            startAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
-        } else {
-            vkClient.SetAccessToken(savedToken);
-            vkClient.ValidateToken([&, startAuthFlow, initPlaylistAndStart](bool isValid) {
-                if (isValid) {
-                    console.SetState(ConsoleState::COMMAND_MODE);
-                    initPlaylistAndStart(true);
-                    vkSyncIndex = 0;
-                    vkClient.FetchAllUserAudio(0, 200);
-                } else {
-                    authManager.ClearSavedToken("VK");
-                    vkClient.SetAccessToken("");
-                    startAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
-                }
-            });
-        }
-    };
-
-    auto startSpotifyService = [&]() {
-        QString spDc = envVars.value("SPOTIFY_SP_DC", "");
-        if (spDc.isEmpty()) {
-            console.SetState(ConsoleState::COMMAND_MODE);
-            std::cout << "\n[ОШИБКА] SPOTIFY_SP_DC не задан в .env файле!\n> "; std::cout.flush();
-            return;
-        }
-
-        std::string savedToken = authManager.GetSavedToken("Spotify");
-        if (savedToken.empty()) {
-            std::cout << "\n[Spotify] Получение Web Access Token...\n"; std::cout.flush();
-            spotifyClient.AuthWithSpDc(spDc);
-        } else {
-            spotifyClient.SetAccessToken(savedToken);
-            std::cout << "Проверка сохраненного токена Spotify...\n"; std::cout.flush();
-
-            spotifyClient.ValidateToken([&, spDc](bool isValid) {
-                if (isValid) {
-                    console.SetState(ConsoleState::COMMAND_MODE);
-                    std::cout << "\n[УСПЕХ] Синхронизация треков Spotify...\n> "; std::cout.flush();
-                    initPlaylistAndStart(true);
-                    vkSyncIndex = 0;
-                    spotifyClient.FetchAllUserAudio(0, 50);
-                } else {
-                    std::cout << "\n[ВНИМАНИЕ] Токен Spotify устарел. Тихое обновление...\n"; std::cout.flush();
-                    authManager.ClearSavedToken("Spotify");
-                    spotifyClient.SetAccessToken("");
-                    // Тихо запрашиваем новый токен, никаких окон!
-                    spotifyClient.AuthWithSpDc(spDc);
-                }
-            });
-        }
-    };
-
-    auto switchSource = [&](const std::string& newSource) {
+    QObject::connect(&router, &SourceRouter::SourceChanged, [&](const std::string& newSource) {
         activeSource = newSource;
-        Logger::Log(LogLevel::INFO, "Main: Switching audio source to " + newSource);
+        playbackCtrl.ClearState();
+        isPlaybackStarted = false;
+        playlist.Clear();
 
-        // --- ЖЕСТКАЯ ОЧИСТКА СОСТОЯНИЯ ПРИ ПЕРЕКЛЮЧЕНИИ ---
-        streamer.StopDownload();      // Обрываем текущее сетевое соединение
-        audio.ClearBuffers(false, 0); // Вычищаем PCM-буферы и декодеры
-        audio.Pause();                // Ставим движок на паузу
-        isPlaybackStarted = false;    // Сбрасываем флаг старта
-        playlist.Clear();             // Чистим очередь
-
-        // --- СОХРАНЯЕМ ВЫБОР В НАСТРОЙКИ ---
         settings.setValue("General/source", QString::fromStdString(newSource));
         settings.sync();
 
-        // Роутинг
-        if (newSource == "VK") {
-            currentProvider = &vkClient;
-            startVkService();
-        } else if (newSource == "Spotify") {
-            currentProvider = &spotifyClient;
-            startSpotifyService();
-        } else if (newSource == "Offline") {
-            currentProvider = nullptr;
-            console.SetState(ConsoleState::COMMAND_MODE);
-            initPlaylistAndStart(false);
-        }
-        console.SetCurrentProvider(currentProvider);
-    };
-    QObject::connect(&console, &ConsoleController::SourceChanged, &app, [&](const std::string& source) {
-        switchSource(source);
-    }, Qt::QueuedConnection);
+        console.SetCurrentProvider(router.GetCurrentProvider());
+        playbackCtrl.SetCurrentProvider(router.GetCurrentProvider());
+    });
 
-    QString currentSource = settings.value("General/source", "VK").toString();
-    switchSource(currentSource.toStdString());
+    QObject::connect(&router, &SourceRouter::AuthUiStateChanged, [&](bool isWaiting) {
+        console.SetState(isWaiting ? ConsoleState::WAITING_TOKEN_URL : ConsoleState::COMMAND_MODE);
+    });
+
+    QObject::connect(&router, &SourceRouter::ProviderReady, [&](bool isOnline) {
+        vkSyncIndex = 0;
+        initPlaylistAndStart(isOnline);
+    });
+
+    QObject::connect(router.GetVkClient(), &IAudioProvider::AudioFetched, [&](const std::vector<Track>& tracks) {
+        if (router.GetCurrentProvider() == router.GetVkClient()) onAudioFetched(tracks);
+    });
+    QObject::connect(router.GetSpotifyClient(), &IAudioProvider::AudioFetched, [&](const std::vector<Track>& tracks) {
+        if (router.GetCurrentProvider() == router.GetSpotifyClient()) onAudioFetched(tracks);
+    });
+    QObject::connect(router.GetVkClient(), &IAudioProvider::FinishedFetching, [&]() {
+        if (router.GetCurrentProvider() == router.GetVkClient()) onFinishedFetching();
+    });
+    QObject::connect(router.GetSpotifyClient(), &IAudioProvider::FinishedFetching, [&]() {
+        if (router.GetCurrentProvider() == router.GetSpotifyClient()) onFinishedFetching();
+    });
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [&]() {
         Logger::Log(LogLevel::INFO, "Main: Saving session state...");
@@ -516,7 +239,9 @@ int main(int argc, char *argv[]) {
         settings.sync();
     });
 
+    router.SwitchSource(activeSource);
     console.Start();
+
     int exitCode = app.exec();
     Logger::Close();
     return exitCode;

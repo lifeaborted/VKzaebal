@@ -27,6 +27,8 @@ public:
     double GetPositionSeconds() const override;
     double GetLengthSeconds() const override;
     std::vector<float> GetSpectrumData() const override;
+    // Заглушка
+    void ClearBuffers(bool crossfade = false, int nextDurationSec = 0) override {}
 
 private:
     HSTREAM m_activeStream = 0;

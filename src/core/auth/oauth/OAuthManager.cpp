@@ -2,7 +2,6 @@
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
 #include <QSettings>
-
 #include <QRegularExpression>
 
 OAuthManager::OAuthManager(QObject* parent) : QObject(parent) {
