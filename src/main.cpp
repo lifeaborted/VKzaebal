@@ -62,6 +62,7 @@ int main(int argc, char *argv[]) {
     float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
     int savedTrackIndex = settings.value("Session/CurrentTrackIndex", -1).toInt();
     double savedPosition = settings.value("Session/Position", 0.0).toDouble();
+    int savedRepeatMode = settings.value("Session/Repeat", 1).toInt();
 
     DatabaseManager dbManager;
     if (!dbManager.Init()) return -1;
@@ -70,6 +71,7 @@ int main(int argc, char *argv[]) {
     if (!audio.Init()) return -1;
 
     PlaylistManager playlist;
+    playlist.SetRepeatMode(savedRepeatMode);
     TrackDownloader downloader;
     LyricsFetcher lyricsFetcher;
     NetworkStreamer streamer;
@@ -244,6 +246,7 @@ int main(int argc, char *argv[]) {
         settings.setValue("Session/CurrentTrackIndex", playlist.GetCurrentAbsoluteIndex());
         settings.setValue("Session/Position", audio.GetPositionSeconds());
         settings.setValue("Session/Shuffle", playlist.IsShuffle());
+        settings.setValue("Session/Repeat", playlist.GetRepeatMode());
         settings.sync();
     });
 

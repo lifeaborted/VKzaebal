@@ -278,3 +278,15 @@ void PlaylistManager::RestoreShuffleQueue(const std::vector<std::string>& shuffl
         Logger::Log(LogLevel::INFO, "PlaylistManager: Shuffle queue successfully restored from DB.");
     }
 }
+
+int PlaylistManager::GetRepeatMode() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return static_cast<int>(m_repeatMode);
+}
+
+void PlaylistManager::SetRepeatMode(int mode) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (mode >= 0 && mode <= 2) {
+        m_repeatMode = static_cast<RepeatMode>(mode);
+    }
+}

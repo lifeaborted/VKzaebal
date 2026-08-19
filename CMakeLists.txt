@@ -23,7 +23,6 @@ set(PROJECT_SOURCES
         src/models/Track.h
 
         # --- Core ---
-
         # API
         src/core/api/IAudioProvider.h
 
@@ -75,11 +74,14 @@ set(PROJECT_SOURCES
         src/services/downloader/TrackDownloader.cpp
 
         # --- UI ---
-        src/ui/console/ConsoleController.h
-        src/ui/console/ConsoleController.cpp
+        src/ui/console/core/ConsoleController.h
+        src/ui/console/core/ConsoleController.cpp
 
-        src/ui/console/CommandDispatcher.cpp
-        src/ui/console/CommandDispatcher.h
+        src/ui/console/commands/CommandDispatcher.cpp
+        src/ui/console/commands/CommandDispatcher.h
+
+        src/ui/console/view/ConsoleRenderer.cpp
+        src/ui/console/view/ConsoleRenderer.h
 
         # --- Utils ---
         src/utils/buffer/RingBuffer.h
