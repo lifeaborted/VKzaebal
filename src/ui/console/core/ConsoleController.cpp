@@ -173,9 +173,11 @@ void ConsoleController::InputLoop() {
             } else if (input == "2") {
                 emit SourceChanged("Spotify");
             } else if (input == "3") {
+                emit SourceChanged("SoundCloud");
+            } else if (input == "4") {
                 emit SourceChanged("Offline");
             } else {
-                syncPrint("[Ошибка] Неверный выбор. Введите 1, 2 или 3:\n> ");
+                syncPrint("[Ошибка] Неверный выбор. Введите 1-4:\n> ");
                 continue;
             }
             m_currentState = ConsoleState::COMMAND_MODE;

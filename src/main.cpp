@@ -14,6 +14,7 @@
 #include "core/auth/router/SourceRouter.h"
 #include "core/api/vk/VkClient.h"
 #include "core/api/spotify/SpotifyClient.h"
+#include "core/api/soundcloud/SoundCloudClient.h"
 #include "services/database/DatabaseManager.h"
 #include "services/downloader/TrackDownloader.h"
 #include "services/network/NetworkStreamer.h"
@@ -234,15 +235,24 @@ int main(int argc, char *argv[]) {
     QObject::connect(router.GetVkClient(), &IAudioProvider::AudioFetched, [&](const std::vector<Track>& tracks) {
         if (router.GetCurrentProvider() == router.GetVkClient()) onAudioFetched(tracks);
     });
-    QObject::connect(router.GetSpotifyClient(), &IAudioProvider::AudioFetched, [&](const std::vector<Track>& tracks) {
-        if (router.GetCurrentProvider() == router.GetSpotifyClient()) onAudioFetched(tracks);
-    });
     QObject::connect(router.GetVkClient(), &IAudioProvider::FinishedFetching, [&]() {
         if (router.GetCurrentProvider() == router.GetVkClient()) onFinishedFetching();
+    });
+
+    QObject::connect(router.GetSpotifyClient(), &IAudioProvider::AudioFetched, [&](const std::vector<Track>& tracks) {
+        if (router.GetCurrentProvider() == router.GetSpotifyClient()) onAudioFetched(tracks);
     });
     QObject::connect(router.GetSpotifyClient(), &IAudioProvider::FinishedFetching, [&]() {
         if (router.GetCurrentProvider() == router.GetSpotifyClient()) onFinishedFetching();
     });
+
+    QObject::connect(router.GetSoundCloudClient(), &IAudioProvider::AudioFetched, [&](const std::vector<Track>& tracks) {
+        if (router.GetCurrentProvider() == router.GetSoundCloudClient()) onAudioFetched(tracks);
+    });
+    QObject::connect(router.GetSoundCloudClient(), &IAudioProvider::FinishedFetching, [&]() {
+            if (router.GetCurrentProvider() == router.GetSoundCloudClient()) onFinishedFetching();
+        });
+
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [&]() {
         Logger::Log(LogLevel::INFO, "Main: Saving session state...");

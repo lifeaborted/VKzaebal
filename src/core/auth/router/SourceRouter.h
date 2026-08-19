@@ -7,6 +7,7 @@
 
 class VkClient;
 class SpotifyClient;
+class SoundCloudClient;
 class OAuthManager;
 class IAudioProvider;
 class QQmlApplicationEngine;
@@ -22,11 +23,12 @@ public:
 
     VkClient* GetVkClient() const { return m_vkClient.get(); }
     SpotifyClient* GetSpotifyClient() const { return m_spotifyClient.get(); }
+    SoundCloudClient* GetSoundCloudClient() const { return m_soundCloudClient.get(); }
 
     OAuthManager* GetAuthManager() const { return m_authManager.get(); }
 
     signals:
-        void SourceChanged(const std::string& newSource);
+    void SourceChanged(const std::string& newSource);
     void ProviderReady(bool isOnline);
     void AuthUiStateChanged(bool isWaiting);
 
@@ -39,10 +41,12 @@ private slots:
 private:
     void StartVkService();
     void StartSpotifyService();
+    void StartSoundCloudService();
     void StartAuthFlow(const QString& service, const QString& authUrl);
 
     std::unique_ptr<VkClient> m_vkClient;
     std::unique_ptr<SpotifyClient> m_spotifyClient;
+    std::unique_ptr<SoundCloudClient> m_soundCloudClient;
     std::unique_ptr<OAuthManager> m_authManager;
 
     QQmlApplicationEngine* m_authEngine = nullptr;

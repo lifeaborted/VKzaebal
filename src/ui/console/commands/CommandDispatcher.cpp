@@ -332,7 +332,7 @@ void CommandDispatcher::RegisterCommands() {
 
     // --- Настройки системы ---
     m_commands["source"] = [this](const std::string&) {
-        Print("\n=== Выбор источника ===\n1 - ВКонтакте\n2 - Spotify\n3 - Оффлайн режим\n\nВведите номер: ");
+        Print("\n=== Выбор источника ===\n1 - ВКонтакте\n2 - Spotify\n3 - SoundCloud\n4 - Оффлайн режим\n\nВведите номер: ");
         if (OnSourceChangeRequested) OnSourceChangeRequested("SELECT");
     };
 

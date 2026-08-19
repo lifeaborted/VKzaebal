@@ -9,10 +9,13 @@
 #include <QWindow>
 #include <iostream>
 
+#include "core/api/soundcloud/SoundCloudClient.h"
+
 SourceRouter::SourceRouter(const QMap<QString, QString>& envVars, QObject* parent)
     : QObject(parent), m_envVars(envVars) {
     m_vkClient = std::make_unique<VkClient>();
     m_spotifyClient = std::make_unique<SpotifyClient>();
+    m_soundCloudClient = std::make_unique<SoundCloudClient>();
     m_authManager = std::make_unique<OAuthManager>();
 
     connect(m_authManager.get(), &OAuthManager::TokenReceived, this, [&](const std::string& token) {
@@ -210,6 +213,8 @@ void SourceRouter::SwitchSource(const std::string& newSource) {
         m_currentProvider = m_vkClient.get();
     } else if (newSource == "Spotify") {
         m_currentProvider = m_spotifyClient.get();
+    } else if (newSource == "SoundCloud") {
+        m_currentProvider = m_soundCloudClient.get();
     } else if (newSource == "Offline") {
         m_currentProvider = nullptr;
     }
@@ -220,8 +225,33 @@ void SourceRouter::SwitchSource(const std::string& newSource) {
         StartVkService();
     } else if (newSource == "Spotify") {
         StartSpotifyService();
+    } else if (newSource == "SoundCloud") {
+        StartSoundCloudService();
     } else if (newSource == "Offline") {
         emit AuthUiStateChanged(false);
         emit ProviderReady(false);
     }
+}
+
+void SourceRouter::StartSoundCloudService() {
+    QString scUrl = m_envVars.value("SOUNDCLOUD_URL", "");
+    if (scUrl.isEmpty()) {
+        emit AuthUiStateChanged(false);
+        std::cout << "\n[ОШИБКА] SOUNDCLOUD_URL не задан в .env файле!\n";
+        std::cout << "Пример: SOUNDCLOUD_URL=https://soundcloud.com/octobers-very-own\n> ";
+        std::cout.flush();
+        return;
+    }
+
+    std::cout << "\n[SoundCloud] Инициализация... (поиск свежего API ключа)\n";
+    std::cout.flush();
+
+    connect(m_soundCloudClient.get(), &SoundCloudClient::ApiError, this, [](const std::string& err) {
+        std::cout << "\n[ОШИБКА] SoundCloud: " << err << "\n> ";
+        std::cout.flush();
+    });
+
+    m_soundCloudClient->InitializeWithProfile(scUrl);
+
+    emit ProviderReady(true);
 }

@@ -29,6 +29,9 @@ set(PROJECT_SOURCES
         src/core/api/spotify/SpotifyClient.h
         src/core/api/spotify/SpotifyClient.cpp
 
+        src/core/api/soundcloud/SoundCloudClient.cpp
+        src/core/api/soundcloud/SoundCloudClient.h
+
         src/core/api/vk/VkClient.h
         src/core/api/vk/VkClient.cpp
 
