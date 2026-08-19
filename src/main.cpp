@@ -17,7 +17,7 @@
 #include "services/database/DatabaseManager.h"
 #include "services/downloader/TrackDownloader.h"
 #include "services/network/NetworkStreamer.h"
-#include "ui/console/ConsoleController.h"
+#include "ui/console/core/ConsoleController.h"
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
 #include "utils/env/EnvParser.h"
@@ -128,7 +128,7 @@ int main(int argc, char *argv[]) {
                     }
                 }
             }
-            
+
             if (isShuffle) {
                 std::vector<std::string> savedQueue = dbManager.LoadQueueIds(activeSource, true);
                 if (!savedQueue.empty()) {

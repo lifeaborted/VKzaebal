@@ -1,4 +1,7 @@
 #pragma once
+
+#include <memory>
+
 #include <QObject>
 #include <QString>
 #include <atomic>
@@ -12,6 +15,8 @@ class DatabaseManager;
 class IAudioProvider;
 class TrackDownloader;
 class LyricsFetcher;
+class CommandDispatcher;
+class ConsoleRenderer;
 
 enum class ConsoleState {
     COMMAND_MODE,
@@ -56,8 +61,8 @@ private:
     TrackDownloader& m_downloader;
     LyricsFetcher& m_lyricsFetcher;
     IAudioProvider* m_currentProvider = nullptr;
-    bool m_showVisualizer = true;
-
+    std::unique_ptr<CommandDispatcher> m_dispatcher;
+    std::unique_ptr<ConsoleRenderer> m_renderer;
     std::atomic<ConsoleState> m_currentState;
     std::atomic<bool> m_isRunning;
     std::thread m_inputThread;
