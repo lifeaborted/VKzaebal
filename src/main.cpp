@@ -128,7 +128,15 @@ int main(int argc, char *argv[]) {
                     }
                 }
             }
-            if (isShuffle) playlist.SetShuffle(true);
+            
+            if (isShuffle) {
+                std::vector<std::string> savedQueue = dbManager.LoadQueueIds(activeSource, true);
+                if (!savedQueue.empty()) {
+                    playlist.RestoreShuffleQueue(savedQueue);
+                } else {
+                    playlist.SetShuffle(true);
+                }
+            }
         }
 
         if (playlist.HasTracks()) {

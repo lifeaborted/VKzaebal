@@ -191,3 +191,17 @@ void DatabaseManager::UpdateTrackLyrics(const std::string& trackId, const std::s
         Logger::Log(LogLevel::ERROR, "DB: Failed to update lyrics for track " + trackId);
     }
 }
+
+std::vector<std::string> DatabaseManager::LoadQueueIds(const std::string& source, bool isShuffle) const {
+    std::vector<std::string> ids;
+    QSqlQuery query;
+    query.prepare("SELECT id FROM PlayQueue WHERE source = :source AND is_shuffle = :shuffle ORDER BY position ASC");
+    query.bindValue(":source", QString::fromStdString(source));
+    query.bindValue(":shuffle", isShuffle ? 1 : 0);
+    if (query.exec()) {
+        while (query.next()) {
+            ids.push_back(query.value(0).toString().toStdString());
+        }
+    }
+    return ids;
+}

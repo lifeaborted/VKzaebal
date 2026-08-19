@@ -20,6 +20,7 @@ public:
     // --- Треки и очередь ---
     void SaveTracks(const std::vector<Track>& tracks);
     void SaveQueue(const std::vector<Track>& currentQueue, const std::string& source, bool isShuffle);
+    std::vector<std::string> LoadQueueIds(const std::string& source, bool isShuffle) const;
 
     // Вывод в TXT прямо из БД
     void ExportQueueToTxt(const std::vector<Track>& queue, const QString& filename, bool isShuffle) const;

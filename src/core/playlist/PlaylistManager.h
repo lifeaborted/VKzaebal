@@ -28,6 +28,7 @@ public:
     void ToggleShuffle();
     void SetShuffle(bool enable);
     void ToggleRepeat();
+    void RestoreShuffleQueue(const std::vector<std::string>& shuffledIds);
 
     void Clear();
 

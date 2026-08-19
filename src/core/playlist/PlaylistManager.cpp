@@ -253,3 +253,28 @@ void PlaylistManager::Clear() {
     m_playQueue.clear();
     m_queueIndex = 0;
 }
+
+void PlaylistManager::RestoreShuffleQueue(const std::vector<std::string>& shuffledIds) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_isShuffle = true;
+    m_playQueue.clear();
+
+    for (const std::string& id : shuffledIds) {
+        auto it = std::find_if(m_tracks.begin(), m_tracks.end(), [&](const Track& t){ return t.id == id; });
+        if (it != m_tracks.end()) {
+            m_playQueue.push_back(std::distance(m_tracks.begin(), it));
+        }
+    }
+
+    if (m_playQueue.size() != m_tracks.size()) {
+        m_playQueue.clear();
+        for (int i = 0; i < m_tracks.size(); ++i) m_playQueue.push_back(i);
+
+        std::random_device rd;
+        std::mt19937 g(rd());
+        std::shuffle(m_playQueue.begin(), m_playQueue.end(), g);
+        Logger::Log(LogLevel::WARNING, "PlaylistManager: Shuffle queue mismatched, created a new one.");
+    } else {
+        Logger::Log(LogLevel::INFO, "PlaylistManager: Shuffle queue successfully restored from DB.");
+    }
+}
