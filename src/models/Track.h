@@ -3,6 +3,7 @@
 
 struct Track {
     std::string id;
+    std::string source;
     std::string ownerId;
     std::string artist;
     std::string title;
@@ -22,7 +23,7 @@ struct Track {
     }
 
     std::string GetSafeFilename() const {
-        std::string name = artist + " - " + title;
+        std::string name = id + " - " + artist + " - " + title;
         const std::string invalidChars = "\\/:*?\"<>|";
         for (char& c : name) {
             if (invalidChars.find(c) != std::string::npos) {

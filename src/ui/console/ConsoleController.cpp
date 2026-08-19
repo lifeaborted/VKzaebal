@@ -273,7 +273,7 @@ void ConsoleController::InputLoop() {
 
             if (lowerInput == "tl") {
                 QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() {
-                    m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
+                    m_dbManager.ExportQueueToTxt(m_playlist.GetQueueTracks(), "playlist.txt", m_playlist.IsShuffle());
                 }, Qt::QueuedConnection);
 
                 syncPrint("[Инфо] Текущий плейлист успешно экспортирован в playlist.txt\n\n> ");
@@ -284,8 +284,9 @@ void ConsoleController::InputLoop() {
                 QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() {
                     m_playlist.SetShuffle(true);
                     m_playlist.JumpToQueueIndex(0);
-                    m_dbManager.SaveQueue(m_playlist.GetQueueTracks(), m_playlist.IsShuffle());
-                    m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
+                    std::string src = QSettings(PathManager::GetConfigPath(), QSettings::IniFormat).value("General/source", "VK").toString().toStdString();
+                    m_dbManager.SaveQueue(m_playlist.GetQueueTracks(), src, m_playlist.IsShuffle());
+                    m_dbManager.ExportQueueToTxt(m_playlist.GetQueueTracks(), "playlist.txt", m_playlist.IsShuffle());
                 }, Qt::QueuedConnection);
 
                 syncPrint("[Плейлист] Режим: Перемешивание (Shuffle). Стартуем случайный трек!\n\n> ");
@@ -295,8 +296,9 @@ void ConsoleController::InputLoop() {
             if (lowerInput == "st") {
                 QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() {
                     m_playlist.SetShuffle(false);
-                    m_dbManager.SaveQueue(m_playlist.GetQueueTracks(), m_playlist.IsShuffle());
-                    m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
+                    std::string src = QSettings(PathManager::GetConfigPath(), QSettings::IniFormat).value("General/source", "VK").toString().toStdString();
+                    m_dbManager.SaveQueue(m_playlist.GetQueueTracks(), src, m_playlist.IsShuffle());
+                    m_dbManager.ExportQueueToTxt(m_playlist.GetQueueTracks(), "playlist.txt", m_playlist.IsShuffle());
                 }, Qt::QueuedConnection);
 
                 syncPrint("[Плейлист] Режим: Стандартный порядок\n\n> ");
@@ -307,8 +309,9 @@ void ConsoleController::InputLoop() {
                 QMetaObject::invokeMethod(QCoreApplication::instance(), [&]() {
                     m_playlist.SetShuffle(false);
                     m_playlist.JumpTo(0);
-                    m_dbManager.SaveQueue(m_playlist.GetQueueTracks(), m_playlist.IsShuffle());
-                    m_dbManager.ExportQueueToTxt("playlist.txt", m_playlist.IsShuffle());
+                    std::string src = QSettings(PathManager::GetConfigPath(), QSettings::IniFormat).value("General/source", "VK").toString().toStdString();
+                    m_dbManager.SaveQueue(m_playlist.GetQueueTracks(), src, m_playlist.IsShuffle());
+                    m_dbManager.ExportQueueToTxt(m_playlist.GetQueueTracks(), "playlist.txt", m_playlist.IsShuffle());
                 }, Qt::QueuedConnection);
 
                 syncPrint("[Сессия] Плейлист сброшен: стандартный порядок, 1-й трек.\n\n> ");

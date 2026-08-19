@@ -57,8 +57,17 @@ int main(int argc, char *argv[]) {
         settings.sync();
     }
 
+    std::string activeSource = settings.value("General/source", "VK").toString().toStdString();
+    bool crossfadeEnabled = settings.value("Audio/CrossfadePlayback", false).toBool();
+    bool isShuffle = settings.value("Session/Shuffle", false).toBool();
+    bool autoPlay = settings.value("Session/AutoPlay", false).toBool();
+    float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
+    int savedTrackIndex = settings.value("Session/CurrentTrackIndex", -1).toInt();
+    double savedPosition = settings.value("Session/Position", 0.0).toDouble();
+
     DatabaseManager dbManager;
     if (!dbManager.Init()) return -1;
+    std::vector<Track> cachedTracks = dbManager.LoadTracks(activeSource);
 
     MiniaudioEngine audio;
     if (!audio.Init()) return -1;
@@ -72,18 +81,14 @@ int main(int argc, char *argv[]) {
     NetworkStreamer streamer;
     IAudioProvider* currentProvider = nullptr;
 
-    bool crossfadeEnabled = settings.value("Audio/CrossfadePlayback", false).toBool();
-    bool isShuffle = settings.value("Session/Shuffle", false).toBool();
-    bool autoPlay = settings.value("Session/AutoPlay", false).toBool();
+
+
     Track preloadedTrack;
     std::string cachedNextUrl = "";
-    float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
-    int savedTrackIndex = settings.value("Session/CurrentTrackIndex", -1).toInt();
-    double savedPosition = settings.value("Session/Position", 0.0).toDouble();
+
 
     audio.SetVolume(savedVolume);
 
-    std::vector<Track> cachedTracks = dbManager.LoadTracks();
     bool isPlaybackStarted = false;
     int vkSyncIndex = 0;
 
@@ -106,7 +111,7 @@ int main(int argc, char *argv[]) {
         if (isPlaybackStarted) return;
 
         if (!playlist.HasTracks()) {
-            cachedTracks = dbManager.LoadTracks();
+            cachedTracks = dbManager.LoadTracks(activeSource);
 
             if (isOnline) {
                 for (const auto& t : cachedTracks) playlist.AddTrack(t);
@@ -296,17 +301,17 @@ int main(int argc, char *argv[]) {
             initPlaylistAndStart(true);
         }
         if (!isPlaybackStarted || hasNewTracks) {
-            dbManager.SaveQueue(playlist.GetAllTracks(), false);
-            dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
-            dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
+            dbManager.SaveQueue(playlist.GetAllTracks(), activeSource, false);
+            dbManager.SaveQueue(playlist.GetQueueTracks(), activeSource, playlist.IsShuffle());
+            dbManager.ExportQueueToTxt(playlist.GetQueueTracks(), "playlist.txt", playlist.IsShuffle());
         }
     };
 
     auto onFinishedFetching = [&]() {
         Logger::Log(LogLevel::INFO, "=== ФОНОВАЯ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА ===");
-        dbManager.SaveQueue(playlist.GetAllTracks(), false);
-        dbManager.SaveQueue(playlist.GetQueueTracks(), playlist.IsShuffle());
-        dbManager.ExportQueueToTxt("playlist.txt", playlist.IsShuffle());
+        dbManager.SaveQueue(playlist.GetAllTracks(), activeSource, false);
+        dbManager.SaveQueue(playlist.GetQueueTracks(), activeSource, playlist.IsShuffle());
+        dbManager.ExportQueueToTxt(playlist.GetQueueTracks(), "playlist.txt", playlist.IsShuffle());
     };
 
     QObject::connect(&vkClient, &IAudioProvider::AudioFetched, [&](const std::vector<Track>& tracks) {
@@ -467,6 +472,7 @@ int main(int argc, char *argv[]) {
     };
 
     auto switchSource = [&](const std::string& newSource) {
+        activeSource = newSource;
         Logger::Log(LogLevel::INFO, "Main: Switching audio source to " + newSource);
 
         // --- ЖЕСТКАЯ ОЧИСТКА СОСТОЯНИЯ ПРИ ПЕРЕКЛЮЧЕНИИ ---

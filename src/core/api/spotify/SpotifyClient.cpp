@@ -116,7 +116,7 @@ void SpotifyClient::FetchAllUserAudio(int offset, int count) {
 
         QByteArray response_data = reply->readAll();
         QJsonDocument json = QJsonDocument::fromJson(response_data);
-        
+
         if (json.isNull() || !json.isObject()) {
             Logger::Log(LogLevel::ERROR, "Spotify API: Received invalid JSON");
             emit FinishedFetching();
@@ -135,6 +135,7 @@ void SpotifyClient::FetchAllUserAudio(int offset, int count) {
             Track track;
 
             track.id = trackObj["id"].toString().toStdString();
+            track.source = "Spotify";
             track.title = trackObj["name"].toString().toStdString();
             track.duration = trackObj["duration_ms"].toInt() / 1000;
             track.ownerId = "spotify";

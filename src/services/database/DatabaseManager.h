@@ -3,7 +3,7 @@
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <vector>
-#include "../../models/Track.h"
+#include "models/Track.h"
 
 class DatabaseManager {
 public:
@@ -19,11 +19,11 @@ public:
 
     // --- Треки и очередь ---
     void SaveTracks(const std::vector<Track>& tracks);
-    void SaveQueue(const std::vector<Track>& currentQueue, bool isShuffle);
+    void SaveQueue(const std::vector<Track>& currentQueue, const std::string& source, bool isShuffle);
 
     // Вывод в TXT прямо из БД
-    void ExportQueueToTxt(const QString& filename, bool isShuffle) const;
-    std::vector<Track> LoadTracks();
+    void ExportQueueToTxt(const std::vector<Track>& queue, const QString& filename, bool isShuffle) const;
+    std::vector<Track> LoadTracks(const std::string& source);
 
     // Обновление локального кэша текста
     void UpdateTrackLyrics(const std::string& trackId, const std::string& lyrics);

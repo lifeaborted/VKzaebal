@@ -167,8 +167,8 @@ void VkClient::OnReplyFinished(QNetworkReply* reply) {
         int audioId = trackObj["id"].toInt();
         int ownerId = trackObj["owner_id"].toInt();
 
-        // СТРОГОЕ СООТВЕТСТВИЕ СТРУКТУРЕ Track ИЗ РЕПОЗИТОРИЯ
         t.id = std::to_string(ownerId) + "_" + std::to_string(audioId);
+        t.source = "VK";
         t.ownerId = std::to_string(ownerId);
         t.artist = trackObj["artist"].toString().toStdString();
         t.title = trackObj["title"].toString().toStdString();
@@ -263,8 +263,8 @@ void VkClient::FetchAllUserAudio(int offset, int count) {
             int owner_id = trackJson["owner_id"].toInt();
             int audio_id = trackJson["id"].toInt();
 
-            // СТРОГОЕ СООТВЕТСТВИЕ СТРУКТУРЕ Track ИЗ РЕПОЗИТОРИЯ
             track.id = std::to_string(owner_id) + "_" + std::to_string(audio_id);
+            track.source = "VK";
             track.ownerId = std::to_string(owner_id);
             track.artist = trackJson["artist"].toString().toStdString();
             track.title = trackJson["title"].toString().toStdString();
