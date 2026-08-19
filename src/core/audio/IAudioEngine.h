@@ -26,4 +26,6 @@ public:
     std::function<void()> OnTrackNearEnd;
     std::function<void()> OnTrackFinished;
     std::function<void(double)> OnNetworkSeekRequested;
+
+    std::function<void(const std::string&)> OnPlaybackError;
 };

@@ -184,12 +184,12 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
 
     {
         std::lock_guard<std::mutex> lock(engine->m_audioMutex);
-        engine->m_playbackFrameCount += frameCount;
 
         if (frameCount * 2 > engine->m_mainBuffer.size()) {
-            engine->m_mainBuffer.resize(frameCount * 2, 0);
-            engine->m_fadeOutBuffer.resize(frameCount * 2, 0);
+            frameCount = engine->m_mainBuffer.size() / 2;
         }
+
+        engine->m_playbackFrameCount += frameCount;
 
         std::memset(engine->m_mainBuffer.data(), 0, frameCount * 2 * sizeof(int16_t));
         std::memset(engine->m_fadeOutBuffer.data(), 0, frameCount * 2 * sizeof(int16_t));
@@ -439,6 +439,12 @@ void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSiz
         if (err == AAC_DEC_NOT_ENOUGH_BITS) break;
         if (err != AAC_DEC_OK) {
             Logger::Log(LogLevel::WARNING, "AAC decode error: " + std::to_string(err));
+            
+            if (OnPlaybackError) {
+                QMetaObject::invokeMethod(QCoreApplication::instance(), [this, err]() {
+                    OnPlaybackError("AAC Decode Error: " + std::to_string(err));
+                }, Qt::QueuedConnection);
+            }
             break;
         }
 

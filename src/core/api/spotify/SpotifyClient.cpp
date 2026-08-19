@@ -1,6 +1,7 @@
 #include "SpotifyClient.h"
 #include "utils/logger/Logger.h"
 #include <QUrl>
+#include <QUrlQuery>
 #include <QNetworkRequest>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -14,50 +15,6 @@ SpotifyClient::SpotifyClient(QObject* parent) : IAudioProvider(parent), m_manage
 
 SpotifyClient::~SpotifyClient() {
     Logger::Log(LogLevel::INFO, "SpotifyClient destroyed.");
-}
-
-void SpotifyClient::AuthWithSpDc(const QString& spDcCookie) {
-    // Стучимся на скрытый эндпоинт выдачи веб-токенов
-    QUrl url("https://open.spotify.com/get_access_token?reason=transport&productType=web_player");
-    QNetworkRequest request(url);
-
-    // Имитируем реальный браузер (Добавлены Origin и Referer)
-    request.setRawHeader("Cookie", QByteArray("sp_dc=") + spDcCookie.toUtf8());
-    request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-    request.setRawHeader("Accept", "application/json");
-    request.setRawHeader("App-Platform", "WebPlayer");
-    request.setRawHeader("Origin", "https://open.spotify.com");    // <--- ДОБАВЛЕНО
-    request.setRawHeader("Referer", "https://open.spotify.com/");  // <--- ДОБАВЛЕНО
-    request.setRawHeader("Sec-Fetch-Dest", "empty");
-    request.setRawHeader("Sec-Fetch-Mode", "cors");
-    request.setRawHeader("Sec-Fetch-Site", "same-origin");
-
-    QNetworkReply* reply = m_manager->get(request);
-
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        if (reply->error() == QNetworkReply::NoError) {
-            QJsonDocument json = QJsonDocument::fromJson(reply->readAll());
-
-            if (json.isNull() || !json.isObject()) {
-                emit AuthError("Invalid JSON response from Spotify.");
-                return;
-            }
-
-            std::string token = json.object()["accessToken"].toString().toStdString();
-
-            if (!token.empty()) {
-                Logger::Log(LogLevel::INFO, "Spotify: Web Access Token successfully obtained via sp_dc!");
-                emit TokenReceived(token);
-            } else {
-                emit AuthError("Token not found in response.");
-            }
-        } else {
-            std::string err = reply->errorString().toStdString();
-            Logger::Log(LogLevel::ERROR, "Spotify Web Auth failed: " + err);
-            emit AuthError(err);
-        }
-        reply->deleteLater();
-    });
 }
 
 void SpotifyClient::ValidateToken(std::function<void(bool)> callback) {
@@ -105,7 +62,9 @@ void SpotifyClient::FetchAllUserAudio(int offset, int count) {
 
     connect(reply, &QNetworkReply::finished, this, [this, reply, offset]() {
         if (reply->error() != QNetworkReply::NoError) {
-            Logger::Log(LogLevel::ERROR, "Spotify API Error: " + reply->errorString().toStdString());
+            QByteArray errBody = reply->readAll();
+                        Logger::Log(LogLevel::ERROR, "Spotify API Error: " + reply->errorString().toStdString());
+                        Logger::Log(LogLevel::ERROR, "Spotify Error Body: " + errBody.toStdString());
 
             if (reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 401) {
                 emit TokenExpired();
@@ -170,6 +129,111 @@ void SpotifyClient::FetchAllUserAudio(int offset, int count) {
             emit FinishedFetching();
         }
 
+        reply->deleteLater();
+    });
+}
+
+std::string SpotifyClient::StartAuthPkce(const QString& clientId) {
+    m_clientId = clientId;
+
+    // 1. Генерируем Code Verifier
+    const QString possibleChars("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~");
+    m_codeVerifier.clear();
+    for (int i = 0; i < 64; ++i) {
+        int index = QRandomGenerator::global()->generate() % possibleChars.length();
+        m_codeVerifier.append(possibleChars.at(index));
+    }
+
+    // 2. Генерируем Code Challenge
+    QByteArray hash = QCryptographicHash::hash(m_codeVerifier.toUtf8(), QCryptographicHash::Sha256);
+    QString codeChallenge = hash.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
+
+    // 3. Собираем URL для окна авторизации
+    QUrl url("https://accounts.spotify.com/authorize");
+    QUrlQuery query;
+    query.addQueryItem("client_id", m_clientId);
+    query.addQueryItem("response_type", "code");
+    query.addQueryItem("redirect_uri", "http://127.0.0.1:8080/callback");
+    query.addQueryItem("code_challenge_method", "S256");
+    query.addQueryItem("code_challenge", codeChallenge);
+    query.addQueryItem("scope", "user-library-read");
+    url.setQuery(query);
+
+    return url.toString().toStdString();
+}
+
+void SpotifyClient::ExchangeCodeForToken(const std::string& code) {
+    QUrl url("https://accounts.spotify.com/api/token");
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+
+    QByteArray postData;
+    postData.append("client_id=" + QUrl::toPercentEncoding(m_clientId));
+    postData.append("&grant_type=authorization_code");
+    postData.append("&code=" + QUrl::toPercentEncoding(QString::fromStdString(code)));
+    postData.append("&redirect_uri=" + QUrl::toPercentEncoding("http://127.0.0.1:8080/callback"));
+    postData.append("&code_verifier=" + QUrl::toPercentEncoding(m_codeVerifier));
+
+    QNetworkReply* reply = m_manager->post(request, postData);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        if (reply->error() == QNetworkReply::NoError) {
+            QJsonDocument json = QJsonDocument::fromJson(reply->readAll());
+            std::string token = json.object()["access_token"].toString().toStdString();
+
+            if (!token.empty()) {
+                Logger::Log(LogLevel::INFO, "Spotify: Access Token successfully obtained via PKCE!");
+                emit TokenReceived(token);
+            } else {
+                emit AuthError("Access token not found in response.");
+            }
+        } else {
+            std::string err = reply->errorString().toStdString();
+            Logger::Log(LogLevel::ERROR, "Spotify PKCE Token Exchange failed: " + err);
+            emit AuthError(err);
+        }
+        reply->deleteLater();
+    });
+}
+
+void SpotifyClient::AuthWithSpDc(const QString& spDcCookie) {
+    QUrl url("https://open.spotify.com/get_access_token?reason=transport&productType=web_player");
+    QNetworkRequest request(url);
+
+    request.setRawHeader("Cookie", QByteArray("sp_dc=") + spDcCookie.toUtf8());
+    request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+    request.setRawHeader("Accept", "application/json");
+    request.setRawHeader("App-Platform", "WebPlayer");
+    request.setRawHeader("Origin", "https://open.spotify.com");
+    request.setRawHeader("Referer", "https://open.spotify.com/");
+    request.setRawHeader("Sec-Fetch-Dest", "empty");
+    request.setRawHeader("Sec-Fetch-Mode", "cors");
+    request.setRawHeader("Sec-Fetch-Site", "same-origin");
+
+    QNetworkReply* reply = m_manager->get(request);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        if (reply->error() == QNetworkReply::NoError) {
+            QJsonDocument json = QJsonDocument::fromJson(reply->readAll());
+
+            if (json.isNull() || !json.isObject()) {
+                emit AuthError("Invalid JSON response from Spotify.");
+                return;
+            }
+
+            std::string token = json.object()["accessToken"].toString().toStdString();
+
+            if (!token.empty()) {
+                Logger::Log(LogLevel::INFO, "Spotify: Web Access Token successfully obtained via sp_dc!");
+                emit TokenReceived(token);
+            } else {
+                emit AuthError("Token not found in response.");
+            }
+        } else {
+            std::string err = reply->errorString().toStdString();
+            Logger::Log(LogLevel::ERROR, "Spotify Web Auth failed: " + err);
+            emit AuthError(err);
+        }
         reply->deleteLater();
     });
 }

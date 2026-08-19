@@ -104,6 +104,10 @@ int main(int argc, char *argv[]) {
 
     audio.OnTrackFinished = [&]() { playbackCtrl.HandleTrackFinished(); };
     audio.OnTrackNearEnd = [&]() { playbackCtrl.HandleTrackNearEnd(); };
+    audio.OnPlaybackError = [&](const std::string& err) {
+        Logger::Log(LogLevel::ERROR, "Playback failed: " + err + ". Skipping to next track...");
+        playlist.Next();
+    };
     playlist.OnTrackRequested = [&](Track track) { playbackCtrl.AttemptPlay(track); };
 
     console.OnGaplessModeChanged = [&](bool isCrossfade) {

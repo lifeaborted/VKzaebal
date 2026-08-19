@@ -9,8 +9,9 @@ class SpotifyClient : public IAudioProvider {
 public:
     explicit SpotifyClient(QObject* parent = nullptr);
     ~SpotifyClient() override;
-
     void AuthWithSpDc(const QString& spDcCookie);
+    std::string StartAuthPkce(const QString& clientId);
+    void ExchangeCodeForToken(const std::string& code);
 
     void ValidateToken(std::function<void(bool)> callback);
     void SetAccessToken(const std::string& token) override;
@@ -24,4 +25,7 @@ public:
 private:
     QNetworkAccessManager* m_manager;
     std::string m_accessToken;
+
+    QString m_clientId;
+    QString m_codeVerifier;
 };
