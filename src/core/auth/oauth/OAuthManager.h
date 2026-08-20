@@ -2,7 +2,7 @@
 #include <QObject>
 #include <QString>
 #include <string>
-#include <memory>
+#include <functional>
 
 
 class QSettings;
@@ -12,7 +12,7 @@ public:
     explicit OAuthManager(QObject* parent = nullptr);
     ~OAuthManager();
 
-    std::string GetSavedToken(const QString& service = "VK") const;
+    void GetSavedToken(const QString& service, std::function<void(const std::string&)> callback) const;
     void SaveToken(const std::string& token, const QString& service = "VK") const;
     void ClearSavedToken(const QString& service = "VK") const;
 
@@ -23,7 +23,4 @@ public:
         void TokenReceived(const std::string& token);
         void AuthFailed(const std::string& error);
         void AuthCodeReceived(const std::string& code);
-
-private:
-    std::unique_ptr<QSettings> m_settings;
 };

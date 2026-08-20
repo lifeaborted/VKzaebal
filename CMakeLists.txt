@@ -106,6 +106,15 @@ set(PROJECT_SOURCES
 # --- Подключаем внешние библиотеки ---
 add_subdirectory(libs/fdk-aac)
 
+# Подключаем безопасное хранилище QtKeychain
+include(FetchContent)
+FetchContent_Declare(
+        qtkeychain
+        GIT_REPOSITORY https://github.com/frankosterfeld/qtkeychain.git
+        GIT_TAG        0.17.0
+)
+FetchContent_MakeAvailable(qtkeychain)
+
 # Создаем исполняемый файл
 add_executable(${PROJECT_NAME}
         ${PROJECT_SOURCES}
@@ -129,6 +138,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         Qt6::Sql
         Qt6::Qml
         Qt6::WebView
+        qt6keychain
 )
 
 # --- Платформозависимая линковка BASS ---

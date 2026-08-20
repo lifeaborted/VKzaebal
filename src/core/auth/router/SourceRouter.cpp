@@ -136,85 +136,109 @@ void SourceRouter::OnVkTokenExpired() {
 }
 
 void SourceRouter::StartVkService() {
-    std::string savedToken = m_authManager->GetSavedToken("VK");
-    if (savedToken.empty()) {
-        StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
-    } else {
-        m_vkClient->SetAccessToken(savedToken);
-        m_vkClient->ValidateToken([this](bool isValid) {
-            if (isValid) {
-                emit AuthUiStateChanged(false);
-                emit ProviderReady(true);
-                m_vkClient->FetchAllUserAudio(0, 200);
-            } else {
-                m_authManager->ClearSavedToken("VK");
-                m_vkClient->SetAccessToken("");
-                StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
-            }
-        });
-    }
+    m_authManager->GetSavedToken("VK", [this](const std::string& savedToken) {
+        if (savedToken.empty()) {
+            std::cout << "\n[VK] Токен не найден. Открываем окно авторизации...\n";
+            std::cout.flush();
+            StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
+        } else {
+            std::cout << "\n[VK] Проверка сохраненного токена...\n";
+            std::cout.flush();
+            m_vkClient->SetAccessToken(savedToken);
+
+            m_vkClient->ValidateToken([this](bool isValid) {
+                if (isValid) {
+                    emit AuthUiStateChanged(false);
+                    emit ProviderReady(true);
+                    m_vkClient->FetchAllUserAudio(0, 200);
+                } else {
+                    m_authManager->ClearSavedToken("VK");
+                    m_vkClient->SetAccessToken("");
+                    StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
+                }
+            });
+        }
+    });
+}
+
+void SourceRouter::StartSoundCloudService() {
+    m_authManager->GetSavedToken("SoundCloud", [this](const std::string& savedToken) {
+        if (savedToken.empty()) {
+            std::cout << "\n[SoundCloud] Токен не найден. Открываем окно авторизации...\n";
+            std::cout.flush();
+            StartAuthFlow("SoundCloud", "https://soundcloud.com/signin");
+        } else {
+            std::cout << "\n[SoundCloud] Инициализация по сохраненному токену...\n";
+            std::cout.flush();
+            m_soundCloudClient->SetAccessToken(savedToken);
+            m_soundCloudClient->InitializeWithToken();
+            emit ProviderReady(true);
+        }
+    });
 }
 
 void SourceRouter::StartSpotifyService() {
     QString spDc = m_envVars.value("SPOTIFY_SP_DC", "");
     QString clientId = m_envVars.value("SPOTIFY_CLIENT_ID", "");
-    std::string savedToken = m_authManager->GetSavedToken("Spotify");
+    
+    m_authManager->GetSavedToken("Spotify", [this, spDc, clientId](const std::string& savedToken) {
 
-    // --- РЕЖИМ 1: Обход через sp_dc ---
-    if (!spDc.isEmpty()) {
-        if (savedToken.empty()) {
-            std::cout << "\n[Spotify] Получение Web Access Token через sp_dc...\n"; std::cout.flush();
-            m_spotifyClient->AuthWithSpDc(spDc);
-        } else {
-            m_spotifyClient->SetAccessToken(savedToken);
-            std::cout << "Проверка сохраненного токена Spotify (sp_dc)...\n"; std::cout.flush();
+        // --- РЕЖИМ 1: Обход через sp_dc ---
+        if (!spDc.isEmpty()) {
+            if (savedToken.empty()) {
+                std::cout << "\n[Spotify] Получение Web Access Token через sp_dc...\n"; std::cout.flush();
+                m_spotifyClient->AuthWithSpDc(spDc);
+            } else {
+                m_spotifyClient->SetAccessToken(savedToken);
+                std::cout << "Проверка сохраненного токена Spotify (sp_dc)...\n"; std::cout.flush();
 
-            m_spotifyClient->ValidateToken([this, spDc](bool isValid) {
-                if (isValid) {
-                    emit AuthUiStateChanged(false);
-                    std::cout << "\n[УСПЕХ] Синхронизация треков Spotify...\n> "; std::cout.flush();
-                    emit ProviderReady(true);
-                    m_spotifyClient->FetchAllUserAudio(0, 50);
-                } else {
-                    std::cout << "\n[ВНИМАНИЕ] Токен Spotify устарел. Тихое обновление...\n"; std::cout.flush();
-                    m_authManager->ClearSavedToken("Spotify");
-                    m_spotifyClient->SetAccessToken("");
-                    m_spotifyClient->AuthWithSpDc(spDc);
-                }
-            });
+                m_spotifyClient->ValidateToken([this, spDc](bool isValid) {
+                    if (isValid) {
+                        emit AuthUiStateChanged(false);
+                        std::cout << "\n[УСПЕХ] Синхронизация треков Spotify...\n> "; std::cout.flush();
+                        emit ProviderReady(true);
+                        m_spotifyClient->FetchAllUserAudio(0, 50);
+                    } else {
+                        std::cout << "\n[ВНИМАНИЕ] Токен Spotify устарел. Тихое обновление...\n"; std::cout.flush();
+                        m_authManager->ClearSavedToken("Spotify");
+                        m_spotifyClient->SetAccessToken("");
+                        m_spotifyClient->AuthWithSpDc(spDc);
+                    }
+                });
+            }
         }
-    }
-    // --- РЕЖИМ 2: Официальный PKCE ---
-    else if (!clientId.isEmpty()) {
-        if (savedToken.empty()) {
-            std::string authUrl = m_spotifyClient->StartAuthPkce(clientId);
-            StartAuthFlow("Spotify", QString::fromStdString(authUrl));
-        } else {
-            m_spotifyClient->SetAccessToken(savedToken);
-            std::cout << "Проверка сохраненного токена Spotify (PKCE)...\n"; std::cout.flush();
+        // --- РЕЖИМ 2: Официальный PKCE ---
+        else if (!clientId.isEmpty()) {
+            if (savedToken.empty()) {
+                std::string authUrl = m_spotifyClient->StartAuthPkce(clientId);
+                StartAuthFlow("Spotify", QString::fromStdString(authUrl));
+            } else {
+                m_spotifyClient->SetAccessToken(savedToken);
+                std::cout << "Проверка сохраненного токена Spotify (PKCE)...\n"; std::cout.flush();
 
-            m_spotifyClient->ValidateToken([this, clientId](bool isValid) {
-                if (isValid) {
-                    emit AuthUiStateChanged(false);
-                    std::cout << "\n[УСПЕХ] Синхронизация треков Spotify...\n> "; std::cout.flush();
-                    emit ProviderReady(true);
-                    m_spotifyClient->FetchAllUserAudio(0, 50);
-                } else {
-                    std::cout << "\n[ВНИМАНИЕ] Токен Spotify устарел. Открытие окна авторизации...\n"; std::cout.flush();
-                    m_authManager->ClearSavedToken("Spotify");
-                    m_spotifyClient->SetAccessToken("");
-                    std::string authUrl = m_spotifyClient->StartAuthPkce(clientId);
-                    StartAuthFlow("Spotify", QString::fromStdString(authUrl));
-                }
-            });
+                m_spotifyClient->ValidateToken([this, clientId](bool isValid) {
+                    if (isValid) {
+                        emit AuthUiStateChanged(false);
+                        std::cout << "\n[УСПЕХ] Синхронизация треков Spotify...\n> "; std::cout.flush();
+                        emit ProviderReady(true);
+                        m_spotifyClient->FetchAllUserAudio(0, 50);
+                    } else {
+                        std::cout << "\n[ВНИМАНИЕ] Токен Spotify устарел. Открытие окна авторизации...\n"; std::cout.flush();
+                        m_authManager->ClearSavedToken("Spotify");
+                        m_spotifyClient->SetAccessToken("");
+                        std::string authUrl = m_spotifyClient->StartAuthPkce(clientId);
+                        StartAuthFlow("Spotify", QString::fromStdString(authUrl));
+                    }
+                });
+            }
         }
-    }
-    // --- ОШИБКА КОНФИГУРАЦИИ ---
-    else {
-        emit AuthUiStateChanged(false);
-        std::cout << "\n[ОШИБКА] В .env не задан ни SPOTIFY_SP_DC, ни SPOTIFY_CLIENT_ID!\n> ";
-        std::cout.flush();
-    }
+        // --- ОШИБКА КОНФИГУРАЦИИ ---
+        else {
+            emit AuthUiStateChanged(false);
+            std::cout << "\n[ОШИБКА] В .env не задан ни SPOTIFY_SP_DC, ни SPOTIFY_CLIENT_ID!\n> ";
+            std::cout.flush();
+        }
+    });
 }
 
 void SourceRouter::SwitchSource(const std::string& newSource) {
@@ -241,22 +265,5 @@ void SourceRouter::SwitchSource(const std::string& newSource) {
     } else if (newSource == "Offline") {
         emit AuthUiStateChanged(false);
         emit ProviderReady(false);
-    }
-}
-
-void SourceRouter::StartSoundCloudService() {
-    std::string savedToken = m_authManager->GetSavedToken("SoundCloud");
-
-    if (savedToken.empty()) {
-        std::cout << "\n[SoundCloud] Токен не найден. Открываем окно авторизации...\n";
-        std::cout.flush();
-        // Запускаем окно на странице входа
-        StartAuthFlow("SoundCloud", "https://soundcloud.com/signin");
-    } else {
-        std::cout << "\n[SoundCloud] Инициализация по сохраненному токену...\n";
-        std::cout.flush();
-        m_soundCloudClient->SetAccessToken(savedToken);
-        m_soundCloudClient->InitializeWithToken();
-        emit ProviderReady(true);
     }
 }
