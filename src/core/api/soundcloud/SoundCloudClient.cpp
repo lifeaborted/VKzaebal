@@ -16,9 +16,8 @@ SoundCloudClient::~SoundCloudClient() {
     Logger::Log(LogLevel::INFO, "SoundCloudClient destroyed.");
 }
 
-void SoundCloudClient::InitializeWithProfile(const QString& profileUrl) {
-    m_profileUrl = profileUrl;
-    Logger::Log(LogLevel::INFO, "SoundCloud: Starting initialization for profile " + profileUrl.toStdString());
+void SoundCloudClient::InitializeWithToken() {
+    Logger::Log(LogLevel::INFO, "SoundCloud: Starting initialization with OAuth token.");
     FetchClientId();
 }
 
@@ -67,7 +66,7 @@ void SoundCloudClient::ExtractClientIdFromJs(const QString& jsUrl) {
                 m_clientId = match.captured(1).toStdString();
                 Logger::Log(LogLevel::INFO, "SoundCloud: Successfully extracted client_id: " + m_clientId);
 
-                ResolveProfileUrl();
+                FetchMe();
             } else {
                 emit ApiError("Could not extract client_id from JS file.");
             }
@@ -78,42 +77,9 @@ void SoundCloudClient::ExtractClientIdFromJs(const QString& jsUrl) {
     });
 }
 
-void SoundCloudClient::ResolveProfileUrl() {
-    QString resolveUrl = QString("https://api-v2.soundcloud.com/resolve?url=%1&client_id=%2")
-                             .arg(QString::fromUtf8(QUrl::toPercentEncoding(m_profileUrl)),
-                                  QString::fromStdString(m_clientId));
-
-    QNetworkRequest request((QUrl(resolveUrl)));
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-
-    QNetworkReply* reply = m_manager->get(request);
-
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        if (reply->error() == QNetworkReply::NoError) {
-            QJsonDocument json = QJsonDocument::fromJson(reply->readAll());
-            QJsonObject obj = json.object();
-
-            if (obj.contains("id")) {
-                m_userId = std::to_string(obj["id"].toInt());
-                Logger::Log(LogLevel::INFO, "SoundCloud: Resolved user ID: " + m_userId);
-
-                FetchAllUserAudio(0, 50);
-            } else {
-                emit ApiError("Could not find user ID in resolve response.");
-            }
-        } else {
-            QString errStr = reply->errorString();
-            QByteArray errBody = reply->readAll();
-            Logger::Log(LogLevel::ERROR, "SC Resolve Error: " + errStr.toStdString());
-            Logger::Log(LogLevel::ERROR, "SC Resolve Body: " + errBody.toStdString());
-
-            emit ApiError("Failed to resolve profile: " + errStr.toStdString());
-        }
-        reply->deleteLater();
-    });
+void SoundCloudClient::SetAccessToken(const std::string& token) {
+    m_accessToken = token;
 }
-
-void SoundCloudClient::SetAccessToken(const std::string&) {}
 
 void SoundCloudClient::FetchAllUserAudio(int offset, int count) {
     QString url;
@@ -134,6 +100,7 @@ void SoundCloudClient::FetchAllUserAudio(int offset, int count) {
     }
 
     QNetworkRequest request((QUrl(url)));
+    request.setRawHeader("Authorization", QByteArray("OAuth ") + QByteArray::fromStdString(m_accessToken));
     QNetworkReply* reply = m_manager->get(request);
 
     connect(reply, &QNetworkReply::finished, this, [this, reply, offset, count]() {
@@ -262,6 +229,26 @@ void SoundCloudClient::FetchTrackUrl(const std::string& trackId, std::function<v
             cdnReply->deleteLater();
         });
 
+        reply->deleteLater();
+    });
+}
+
+void SoundCloudClient::FetchMe() {
+    QNetworkRequest request((QUrl("https://api-v2.soundcloud.com/me")));
+    request.setRawHeader("Authorization", QByteArray("OAuth ") + QByteArray::fromStdString(m_accessToken));
+
+    QNetworkReply* reply = m_manager->get(request);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        if (reply->error() == QNetworkReply::NoError) {
+            QJsonDocument json = QJsonDocument::fromJson(reply->readAll());
+            m_userId = std::to_string(json.object()["id"].toInt());
+            Logger::Log(LogLevel::INFO, "SoundCloud: Welcome back! User ID: " + m_userId);
+
+            FetchAllUserAudio(0, 50);
+        } else {
+            emit ApiError("Failed to fetch profile info. Token might be invalid.");
+        }
         reply->deleteLater();
     });
 }

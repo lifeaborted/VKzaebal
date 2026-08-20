@@ -17,6 +17,7 @@ public:
     void ClearSavedToken(const QString& service = "VK") const;
 
     Q_INVOKABLE void onUrlIntercepted(const QString& urlStr);
+    Q_INVOKABLE void onScTokenIntercepted(const QString& tokenStr);
 
     signals:
         void TokenReceived(const std::string& token);

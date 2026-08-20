@@ -19,9 +19,20 @@ SourceRouter::SourceRouter(const QMap<QString, QString>& envVars, QObject* paren
     m_authManager = std::make_unique<OAuthManager>();
 
     connect(m_authManager.get(), &OAuthManager::TokenReceived, this, [&](const std::string& token) {
-        if (m_currentAuthService == "VK") OnVkTokenReceived(token);
-        else if (m_currentAuthService == "Spotify") OnSpotifyTokenReceived(token);
-    });
+            if (m_currentAuthService == "VK") OnVkTokenReceived(token);
+            else if (m_currentAuthService == "Spotify") OnSpotifyTokenReceived(token);
+            else if (m_currentAuthService == "SoundCloud") {
+                if (m_authEngine) { m_authEngine->deleteLater(); m_authEngine = nullptr; }
+                m_authManager->SaveToken(token, "SoundCloud");
+                emit AuthUiStateChanged(false);
+                std::cout << "\n[УСПЕХ] Авторизация SoundCloud пройдена! Токен перехвачен.\n> ";
+                std::cout.flush();
+
+                m_soundCloudClient->SetAccessToken(token);
+                m_soundCloudClient->InitializeWithToken();
+                emit ProviderReady(true);
+            }
+        });
 
     connect(m_authManager.get(), &OAuthManager::AuthCodeReceived, this, [&](const std::string& code) {
             static std::string lastCode = "";
@@ -234,24 +245,18 @@ void SourceRouter::SwitchSource(const std::string& newSource) {
 }
 
 void SourceRouter::StartSoundCloudService() {
-    QString scUrl = m_envVars.value("SOUNDCLOUD_URL", "");
-    if (scUrl.isEmpty()) {
-        emit AuthUiStateChanged(false);
-        std::cout << "\n[ОШИБКА] SOUNDCLOUD_URL не задан в .env файле!\n";
-        std::cout << "Пример: SOUNDCLOUD_URL=https://soundcloud.com/octobers-very-own\n> ";
+    std::string savedToken = m_authManager->GetSavedToken("SoundCloud");
+
+    if (savedToken.empty()) {
+        std::cout << "\n[SoundCloud] Токен не найден. Открываем окно авторизации...\n";
         std::cout.flush();
-        return;
+        // Запускаем окно на странице входа
+        StartAuthFlow("SoundCloud", "https://soundcloud.com/signin");
+    } else {
+        std::cout << "\n[SoundCloud] Инициализация по сохраненному токену...\n";
+        std::cout.flush();
+        m_soundCloudClient->SetAccessToken(savedToken);
+        m_soundCloudClient->InitializeWithToken();
+        emit ProviderReady(true);
     }
-
-    std::cout << "\n[SoundCloud] Инициализация... (поиск свежего API ключа)\n";
-    std::cout.flush();
-
-    connect(m_soundCloudClient.get(), &SoundCloudClient::ApiError, this, [](const std::string& err) {
-        std::cout << "\n[ОШИБКА] SoundCloud: " << err << "\n> ";
-        std::cout.flush();
-    });
-
-    m_soundCloudClient->InitializeWithProfile(scUrl);
-
-    emit ProviderReady(true);
 }

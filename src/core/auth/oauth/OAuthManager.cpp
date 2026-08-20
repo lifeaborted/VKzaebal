@@ -63,3 +63,13 @@ void OAuthManager::onUrlIntercepted(const QString& urlStr) {
         emit AuthFailed("URL auth error.");
     }
 }
+
+void OAuthManager::onScTokenIntercepted(const QString& tokenStr) {
+    QString cleanToken = tokenStr;
+    if (cleanToken.startsWith('"') && cleanToken.endsWith('"')) {
+        cleanToken = cleanToken.mid(1, cleanToken.length() - 2);
+    }
+
+    Logger::Log(LogLevel::INFO, "auth: SC Token intercepted via JS-Sniper!");
+    emit TokenReceived(cleanToken.toStdString());
+}

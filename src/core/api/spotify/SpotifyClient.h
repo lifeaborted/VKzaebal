@@ -20,7 +20,7 @@ public:
 
     signals:
         void TokenReceived(const std::string& token);
-    void AuthError(const std::string& errorString);
+        void AuthError(const std::string& errorString);
 
 private:
     QNetworkAccessManager* m_manager;
