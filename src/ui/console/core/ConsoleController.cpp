@@ -64,6 +64,41 @@ ConsoleController::ConsoleController(
         m_currentState = ConsoleState::SELECT_SOURCE;
     };
 
+    m_dispatcher->OnLogoutRequested = [this](const std::string& service) {
+        auto processLogout = [this](const QString& svcName, const std::string& internalName) {
+            m_authManager.ClearSavedToken(svcName);
+
+            std::string msg = "[Выход] Токен для " + internalName + " успешно удален.\n\n> ";
+            QMetaObject::invokeMethod(QCoreApplication::instance(), [msg]() {
+                std::lock_guard<std::mutex> lock(Logger::GetMutex());
+                std::cout << "\r\033[2K\033[1A\r\033[2K" << msg;
+                std::cout.flush();
+            }, Qt::QueuedConnection);
+        };
+
+        bool logoutVk = (service == "vk" || service == "all");
+        bool logoutSpotify = (service == "spotify" || service == "all");
+        bool logoutSc = (service == "sc" || service == "all");
+
+        if (logoutVk) processLogout("VK", "ВКонтакте");
+        if (logoutSpotify) processLogout("Spotify", "Spotify");
+        if (logoutSc) processLogout("SoundCloud", "SoundCloud");
+
+        QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+        QString currentSource = settings.value("General/source", "").toString();
+
+        bool activeLoggedOut = false;
+        if (currentSource == "VK" && logoutVk) activeLoggedOut = true;
+        if (currentSource == "Spotify" && logoutSpotify) activeLoggedOut = true;
+        if (currentSource == "SoundCloud" && logoutSc) activeLoggedOut = true;
+
+        if (activeLoggedOut && m_currentProvider) {
+            m_audio.Pause();
+            m_playlist.Clear();
+            emit SourceChanged("Offline");
+        }
+    };
+
     m_dispatcher->OnGaplessModeChanged = [this](bool isGapless) {
         if (OnGaplessModeChanged) OnGaplessModeChanged(isGapless);
     };

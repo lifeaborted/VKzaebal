@@ -360,6 +360,18 @@ void CommandDispatcher::RegisterCommands() {
         }
     };
 
+    m_commands["logout"] = [this](const std::string& arg) {
+        if (arg == "vk" || arg == "spotify" || arg == "sc" || arg == "all") {
+            if (OnLogoutRequested) {
+                QMetaObject::invokeMethod(QCoreApplication::instance(), [this, arg]() {
+                    OnLogoutRequested(arg);
+                }, Qt::QueuedConnection);
+            }
+        } else {
+            Print("[Ошибка] Укажите сервис: logout vk | logout spotify | logout sc | logout all\n\n> ");
+        }
+    };
+
     m_commands["i"] = [this](const std::string&) {
         QMetaObject::invokeMethod(QCoreApplication::instance(), [this]() {
             Track current = m_playlist.GetCurrentTrack();
@@ -386,6 +398,7 @@ void CommandDispatcher::RegisterCommands() {
                   + " [mode <0/1>] 0 - Standard, 1 - Gapless transition\n"
                   + " [search <text>] Search tracks in playlist\n"
                   + " [ly] Show lyrics for current track\n"
+                  + " [logout <service>] Logout from choosen service\n"
                   + " [source] Select audio source\n"
                   + " [tl] Export tracklist to TXT\n"
                   + " [dl] / [dl <num>] Download track\n"

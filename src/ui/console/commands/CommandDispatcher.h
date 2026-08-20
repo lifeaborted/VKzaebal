@@ -23,6 +23,7 @@ public:
     std::function<void(bool)> OnGaplessModeChanged;
     std::function<void()> OnVisualizerToggled;
     std::function<void()> OnQuitRequested;
+    std::function<void(const std::string&)> OnLogoutRequested;
 
     void Dispatch(const std::string& input);
 
