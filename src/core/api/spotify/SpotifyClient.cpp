@@ -51,31 +51,32 @@ void SpotifyClient::FetchTrackUrl(const std::string& trackId, std::function<void
 }
 
 void SpotifyClient::FetchAllUserAudio(int offset, int count) {
-    // Ускоренная сборка URL без QUrlQuery
-    QByteArray urlBytes = "https://api.spotify.com/v1/me/tracks?limit=50&offset=" + QByteArray::number(offset);
-    QUrl url = QUrl(QString::fromUtf8(urlBytes));
+    QUrl url(QString("https://api.spotify.com/v1/me/tracks?limit=50&offset=%1").arg(offset));
 
     QNetworkRequest request(url);
     request.setRawHeader("Authorization", QByteArray("Bearer ") + QByteArray::fromStdString(m_accessToken));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+    request.setRawHeader("Accept", "*/*");
+    request.setRawHeader("App-Platform", "WebPlayer");
 
     QNetworkReply* reply = m_manager->get(request);
 
     connect(reply, &QNetworkReply::finished, this, [this, reply, offset]() {
         if (reply->error() != QNetworkReply::NoError) {
             QByteArray errBody = reply->readAll();
-                        Logger::Log(LogLevel::ERROR, "Spotify API Error: " + reply->errorString().toStdString());
-                        Logger::Log(LogLevel::ERROR, "Spotify Error Body: " + errBody.toStdString());
+            Logger::Log(LogLevel::ERROR, "Spotify API Error: " + reply->errorString().toStdString());
+            Logger::Log(LogLevel::ERROR, "Spotify Error Body: " + errBody.toStdString());
 
             if (reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 401) {
-                emit TokenExpired();
+                emit AuthError("Token expired (401)");
             }
             reply->deleteLater();
             return;
         }
 
-        QByteArray response_data = reply->readAll();
-        QJsonDocument json = QJsonDocument::fromJson(response_data);
-
+        QJsonDocument json = QJsonDocument::fromJson(reply->readAll());
         if (json.isNull() || !json.isObject()) {
             Logger::Log(LogLevel::ERROR, "Spotify API: Received invalid JSON");
             emit FinishedFetching();
@@ -84,43 +85,67 @@ void SpotifyClient::FetchAllUserAudio(int offset, int count) {
         }
 
         QJsonObject root = json.object();
-        QJsonArray items = root["items"].toArray();
 
+        if (!root.contains("items") || !root["items"].isArray()) {
+            Logger::Log(LogLevel::WARNING, "Spotify API: 'items' array missing or empty");
+            emit FinishedFetching();
+            reply->deleteLater();
+            return;
+        }
+
+        QJsonArray items = root["items"].toArray();
         std::vector<Track> chunkTracks;
         chunkTracks.reserve(items.size());
 
         for (const QJsonValue& val : items) {
-            QJsonObject trackObj = val.toObject()["track"].toObject();
+            if (!val.isObject()) continue;
+            QJsonObject itemObj = val.toObject();
+
+            if (!itemObj.contains("track") || !itemObj["track"].isObject()) continue;
+
+            QJsonObject trackObj = itemObj["track"].toObject();
             Track track;
 
+            // Извлекаем мета данные
             track.id = trackObj["id"].toString().toStdString();
             track.source = "Spotify";
-            track.title = trackObj["name"].toString().toStdString();
-            track.duration = trackObj["duration_ms"].toInt() / 1000;
+            track.title = trackObj.value("name").toString().toStdString();
+            track.duration = trackObj.value("duration_ms").toInt(0) / 1000;
             track.ownerId = "spotify";
             track.url = "";
 
-            QJsonArray artistsArray = trackObj["artists"].toArray();
-            QString artistName;
-            for (int i = 0; i < artistsArray.size(); ++i) {
-                if (i > 0) artistName += ", ";
-                artistName += artistsArray[i].toObject()["name"].toString();
-            }
-            track.artist = artistName.toStdString();
-
-            QJsonArray imagesArray = trackObj["album"].toObject()["images"].toArray();
-            if (!imagesArray.isEmpty()) {
-                track.coverUrl = imagesArray[0].toObject()["url"].toString().toStdString();
+            // парсинг артистов
+            if (trackObj.contains("artists") && trackObj["artists"].isArray()) {
+                QJsonArray artistsArray = trackObj["artists"].toArray();
+                QString artistName;
+                for (int i = 0; i < artistsArray.size(); ++i) {
+                    if (i > 0) artistName += ", ";
+                    artistName += artistsArray[i].toObject().value("name").toString();
+                }
+                track.artist = artistName.toStdString();
             }
 
-            chunkTracks.push_back(std::move(track));
+            // парсинг обложки
+            if (trackObj.contains("album") && trackObj["album"].isObject()) {
+                QJsonObject albumObj = trackObj["album"].toObject();
+                if (albumObj.contains("images") && albumObj["images"].isArray()) {
+                    QJsonArray imagesArray = albumObj["images"].toArray();
+                    if (!imagesArray.isEmpty()) {
+                        track.coverUrl = imagesArray[0].toObject().value("url").toString().toStdString();
+                    }
+                }
+            }
+
+            if (!track.id.empty() && !track.title.empty()) {
+                chunkTracks.push_back(std::move(track));
+            }
         }
 
         if (!chunkTracks.empty()) {
             emit AudioFetched(chunkTracks);
         }
 
-        int total = root["total"].toInt();
+        int total = root.value("total").toInt(0);
         Logger::Log(LogLevel::INFO, "Spotify: Fetched chunk offset " + std::to_string(offset) + ", items: " + std::to_string(items.size()));
 
         if (offset + items.size() < total && !items.isEmpty()) {
@@ -189,7 +214,9 @@ void SpotifyClient::ExchangeCodeForToken(const std::string& code) {
             }
         } else {
             std::string err = reply->errorString().toStdString();
+            std::string errBody = reply->readAll().toStdString();
             Logger::Log(LogLevel::ERROR, "Spotify PKCE Token Exchange failed: " + err);
+            Logger::Log(LogLevel::ERROR, "Spotify Exchange Body: " + errBody);
             emit AuthError(err);
         }
         reply->deleteLater();
@@ -231,7 +258,9 @@ void SpotifyClient::AuthWithSpDc(const QString& spDcCookie) {
             }
         } else {
             std::string err = reply->errorString().toStdString();
+            std::string errBody = reply->readAll().toStdString();
             Logger::Log(LogLevel::ERROR, "Spotify Web Auth failed: " + err);
+            Logger::Log(LogLevel::ERROR, "Spotify Web Auth Body: " + errBody);
             emit AuthError(err);
         }
         reply->deleteLater();
