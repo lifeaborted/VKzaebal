@@ -332,7 +332,7 @@ void CommandDispatcher::RegisterCommands() {
 
     // --- Настройки системы ---
     m_commands["source"] = [this](const std::string&) {
-        Print("\n=== Выбор источника ===\n1 - ВКонтакте\n2 - Spotify\n3 - SoundCloud\n4 - Оффлайн режим\n\nВведите номер: ");
+        Print("\n=== Выбор источника ===\n1 - ВКонтакте\n2 - Spotify\n3 - SoundCloud\n4 - Yandex\n5 - Оффлайн режим\n\nВведите номер: ");
         if (OnSourceChangeRequested) OnSourceChangeRequested("SELECT");
     };
 
@@ -361,14 +361,14 @@ void CommandDispatcher::RegisterCommands() {
     };
 
     m_commands["logout"] = [this](const std::string& arg) {
-        if (arg == "vk" || arg == "spotify" || arg == "sc" || arg == "all") {
+        if (arg == "vk" || arg == "spotify" || arg == "sc" || arg == "yandex" || arg == "all") {
             if (OnLogoutRequested) {
                 QMetaObject::invokeMethod(QCoreApplication::instance(), [this, arg]() {
                     OnLogoutRequested(arg);
                 }, Qt::QueuedConnection);
             }
         } else {
-            Print("[Ошибка] Укажите сервис: logout vk | logout spotify | logout sc | logout all\n\n> ");
+            Print("[Ошибка] Укажите сервис: logout vk | logout spotify | logout sc | logout yandex | logout all\n\n> ");
         }
     };
 

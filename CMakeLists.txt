@@ -35,6 +35,9 @@ set(PROJECT_SOURCES
         src/core/api/vk/VkClient.h
         src/core/api/vk/VkClient.cpp
 
+        src/core/api/yandex/YandexClient.cpp
+        src/core/api/yandex/YandexClient.h
+
         # Audio
         src/core/audio/bass/BassEngine.h
         src/core/audio/bass/BassEngine.cpp

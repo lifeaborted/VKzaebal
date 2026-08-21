@@ -79,10 +79,12 @@ ConsoleController::ConsoleController(
         bool logoutVk = (service == "vk" || service == "all");
         bool logoutSpotify = (service == "spotify" || service == "all");
         bool logoutSc = (service == "sc" || service == "all");
+        bool logoutYandex = (service == "yandex" || service == "all");
 
         if (logoutVk) processLogout("VK", "ВКонтакте");
         if (logoutSpotify) processLogout("Spotify", "Spotify");
         if (logoutSc) processLogout("SoundCloud", "SoundCloud");
+        if (logoutYandex) processLogout("Yandex", "Yandex");
 
         QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
         QString currentSource = settings.value("General/source", "").toString();
@@ -91,6 +93,7 @@ ConsoleController::ConsoleController(
         if (currentSource == "VK" && logoutVk) activeLoggedOut = true;
         if (currentSource == "Spotify" && logoutSpotify) activeLoggedOut = true;
         if (currentSource == "SoundCloud" && logoutSc) activeLoggedOut = true;
+        if (currentSource == "Yandex" && logoutYandex) activeLoggedOut = true;
 
         if (activeLoggedOut && m_currentProvider) {
             m_audio.Pause();
@@ -210,9 +213,11 @@ void ConsoleController::InputLoop() {
             } else if (input == "3") {
                 emit SourceChanged("SoundCloud");
             } else if (input == "4") {
+                emit SourceChanged("Yandex");
+            } else if (input == "5") {
                 emit SourceChanged("Offline");
             } else {
-                syncPrint("[Ошибка] Неверный выбор. Введите 1-4:\n> ");
+                syncPrint("[Ошибка] Неверный выбор. Введите 1-5:\n> ");
                 continue;
             }
             m_currentState = ConsoleState::COMMAND_MODE;

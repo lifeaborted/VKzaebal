@@ -78,8 +78,10 @@ void OAuthManager::onUrlIntercepted(const QString& urlStr) {
 
     bool isSpotifyCallback = urlStr.startsWith("http://127.0.0.1:8080/callback");
 
-    if (!isVkCallback && !isSpotifyCallback) {
-        // Игнорируем внутренние редиректы
+    bool isYandexCallback = urlStr.startsWith("https://music.yandex.ru/") ||
+                            urlStr.startsWith("https://oauth.yandex.ru/");
+
+    if (!isVkCallback && !isSpotifyCallback && !isYandexCallback) {
         return;
     }
 

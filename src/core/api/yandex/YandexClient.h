@@ -1,0 +1,27 @@
+#pragma once
+#include "core/api/IAudioProvider.h"
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QString>
+#include <string>
+
+class YandexClient : public IAudioProvider {
+    Q_OBJECT
+public:
+    explicit YandexClient(QObject* parent = nullptr);
+    ~YandexClient() override;
+
+    void SetAccessToken(const std::string& token) override;
+
+    void FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) override;
+    void FetchAllUserAudio(int offset = 0, int count = 200) override;
+
+private:
+    void FetchUserId();
+    void FetchLikesIds(int offset, int count);
+    void FetchTracksMetadata(const QStringList& trackIds);
+
+    QNetworkAccessManager* m_manager;
+    std::string m_accessToken;
+    std::string m_userId;
+};

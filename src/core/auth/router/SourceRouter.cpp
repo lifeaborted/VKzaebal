@@ -16,13 +16,19 @@ SourceRouter::SourceRouter(const QMap<QString, QString>& envVars, QObject* paren
     m_vkClient = std::make_unique<VkClient>();
     m_spotifyClient = std::make_unique<SpotifyClient>();
     m_soundCloudClient = std::make_unique<SoundCloudClient>();
+    m_yandexClient = std::make_unique<YandexClient>();
+
     m_authManager = std::make_unique<OAuthManager>();
 
     connect(m_authManager.get(), &OAuthManager::TokenReceived, this, [&](const std::string& token) {
+
             if (m_currentAuthService == "VK") OnVkTokenReceived(token);
+
             else if (m_currentAuthService == "Spotify") OnSpotifyTokenReceived(token);
+
             else if (m_currentAuthService == "SoundCloud") {
                 if (m_authEngine) { m_authEngine->deleteLater(); m_authEngine = nullptr; }
+
                 m_authManager->SaveToken(token, "SoundCloud");
                 emit AuthUiStateChanged(false);
                 std::cout << "\n[УСПЕХ] Авторизация SoundCloud пройдена! Токен перехвачен.\n> ";
@@ -31,6 +37,18 @@ SourceRouter::SourceRouter(const QMap<QString, QString>& envVars, QObject* paren
                 m_soundCloudClient->SetAccessToken(token);
                 m_soundCloudClient->InitializeWithToken();
                 emit ProviderReady(true);
+            }
+
+            else if (m_currentAuthService == "Yandex") {
+                if (m_authEngine) { m_authEngine->deleteLater(); m_authEngine = nullptr; }
+                m_authManager->SaveToken(token, "Yandex");
+                emit AuthUiStateChanged(false);
+                std::cout << "\n[УСПЕХ] Авторизация Yandex пройдена!\n> ";
+                std::cout.flush();
+
+                m_yandexClient->SetAccessToken(token);
+                emit ProviderReady(true);
+                m_yandexClient->FetchAllUserAudio(0, 200);
             }
         });
 
@@ -180,7 +198,7 @@ void SourceRouter::StartSoundCloudService() {
 void SourceRouter::StartSpotifyService() {
     QString spDc = m_envVars.value("SPOTIFY_SP_DC", "");
     QString clientId = m_envVars.value("SPOTIFY_CLIENT_ID", "");
-    
+
     m_authManager->GetSavedToken("Spotify", [this, spDc, clientId](const std::string& savedToken) {
 
         // --- РЕЖИМ 1: Обход через sp_dc ---
@@ -241,6 +259,22 @@ void SourceRouter::StartSpotifyService() {
     });
 }
 
+void SourceRouter::StartYandexService() {
+    m_authManager->GetSavedToken("Yandex", [this](const std::string& savedToken) {
+        if (savedToken.empty()) {
+            std::cout << "\n[Yandex] Токен не найден. Открываем окно авторизации...\n";
+            std::cout.flush();
+            StartAuthFlow("Yandex", "https://oauth.yandex.ru/authorize?response_type=token&client_id=23cabbbdc6cd418abb4b39c32c41195d");
+        } else {
+            std::cout << "\n[Yandex] Инициализация по сохраненному токену...\n";
+            std::cout.flush();
+            m_yandexClient->SetAccessToken(savedToken);
+            emit ProviderReady(true);
+            m_yandexClient->FetchAllUserAudio(0, 200);
+        }
+    });
+}
+
 void SourceRouter::SwitchSource(const std::string& newSource) {
     Logger::Log(LogLevel::INFO, "SourceRouter: Switching audio source to " + newSource);
 
@@ -250,6 +284,8 @@ void SourceRouter::SwitchSource(const std::string& newSource) {
         m_currentProvider = m_spotifyClient.get();
     } else if (newSource == "SoundCloud") {
         m_currentProvider = m_soundCloudClient.get();
+    } else if (newSource == "Yandex") {
+        m_currentProvider = m_yandexClient.get();
     } else if (newSource == "Offline") {
         m_currentProvider = nullptr;
     }
@@ -262,6 +298,8 @@ void SourceRouter::SwitchSource(const std::string& newSource) {
         StartSpotifyService();
     } else if (newSource == "SoundCloud") {
         StartSoundCloudService();
+    } else if (newSource == "Yandex") {
+        StartYandexService();
     } else if (newSource == "Offline") {
         emit AuthUiStateChanged(false);
         emit ProviderReady(false);

@@ -253,6 +253,13 @@ int main(int argc, char *argv[]) {
             if (router.GetCurrentProvider() == router.GetSoundCloudClient()) onFinishedFetching();
         });
 
+    QObject::connect(router.GetYandexClient(), &IAudioProvider::AudioFetched, [&](const std::vector<Track>& tracks) {
+        if (router.GetCurrentProvider() == router.GetYandexClient()) onAudioFetched(tracks);
+    });
+    QObject::connect(router.GetYandexClient(), &IAudioProvider::FinishedFetching, [&]() {
+        if (router.GetCurrentProvider() == router.GetYandexClient()) onFinishedFetching();
+    });
+
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [&]() {
         Logger::Log(LogLevel::INFO, "Main: Saving session state...");
