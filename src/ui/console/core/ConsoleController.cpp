@@ -29,7 +29,6 @@
 #include "ui/console/commands/CommandDispatcher.h"
 #include "ui/console/view/ConsoleRenderer.h"
 
-
 ConsoleController::ConsoleController(
     IAudioEngine& audio, PlaylistManager& playlist, OAuthManager& authManager,
     DatabaseManager& dbManager, TrackDownloader& downloader, LyricsFetcher& lyricsFetcher
@@ -44,7 +43,8 @@ ConsoleController::ConsoleController(
         if (!m_isRunning || !QCoreApplication::instance()) return;
         QMetaObject::invokeMethod(QCoreApplication::instance(), [text]() {
             std::lock_guard<std::mutex> lock(Logger::GetMutex());
-            std::cout << "\r\033[2K\033[1A\r\033[2K" << text;
+            // Убрали \033[1A, теперь логи просто пишутся в свободное пространство
+            std::cout << "\r\033[2K" << text;
             std::cout.flush();
         }, Qt::QueuedConnection);
     });
@@ -60,6 +60,10 @@ ConsoleController::ConsoleController(
         s.sync();
     };
 
+    m_dispatcher->OnReloadUiRequested = [this]() {
+        m_renderer->ReloadConfig();
+    };
+
     m_dispatcher->OnSourceChangeRequested = [this](const std::string&) {
         m_currentState = ConsoleState::SELECT_SOURCE;
     };
@@ -71,7 +75,7 @@ ConsoleController::ConsoleController(
             std::string msg = "[Выход] Токен для " + internalName + " успешно удален.\n\n> ";
             QMetaObject::invokeMethod(QCoreApplication::instance(), [msg]() {
                 std::lock_guard<std::mutex> lock(Logger::GetMutex());
-                std::cout << "\r\033[2K\033[1A\r\033[2K" << msg;
+                std::cout << "\r\033[2K" << msg;
                 std::cout.flush();
             }, Qt::QueuedConnection);
         };
@@ -113,7 +117,6 @@ ConsoleController::ConsoleController(
     };
 }
 
-
 ConsoleController::~ConsoleController() {
     Stop();
 }
@@ -125,8 +128,8 @@ void ConsoleController::SetState(ConsoleState state) {
 void ConsoleController::Start() {
     if (m_isRunning) return;
 
-    // Прячем курсор (ANSI escape code)
-    std::cout << "\033[?25l";
+    // Включаем изолированный буфер экрана (Alternate Buffer)
+    std::cout << "\033[?1049h";
     std::cout.flush();
 
     m_isRunning = true;
@@ -137,7 +140,8 @@ void ConsoleController::Start() {
 void ConsoleController::Stop() {
     m_isRunning = false;
 
-    std::cout << "\033[?25h";
+    // Выключаем изолированный буфер экрана и возвращаем курсор
+    std::cout << "\033[?1049l\033[?25h";
     std::cout.flush();
 
 #ifdef _WIN32
@@ -159,7 +163,7 @@ void ConsoleController::InputLoop() {
 
         QMetaObject::invokeMethod(QCoreApplication::instance(), [text]() {
             std::lock_guard<std::mutex> lock(Logger::GetMutex());
-            std::cout << "\r\033[2K\033[1A\r\033[2K" << text;
+            std::cout << "\r\033[2K" << text;
             std::cout.flush();
         }, Qt::QueuedConnection);
     };
@@ -171,13 +175,10 @@ void ConsoleController::InputLoop() {
             continue;
         }
 
-        // === РЕЖИМ ОЖИДАНИЯ ТОКЕНА ===
         if (m_currentState == ConsoleState::WAITING_TOKEN_URL) {
             size_t start = rawInput.find_first_not_of(" \t\r\n");
             if (start == std::string::npos) {
-                std::cout << "> ";
-                std::cout.flush();
-                continue;
+                std::cout << "> "; std::cout.flush(); continue;
             }
             std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
 
@@ -188,9 +189,6 @@ void ConsoleController::InputLoop() {
             }
 
             QString urlStr = QString::fromStdString(input);
-            std::cout << "Обработка ссылки...\n\n> ";
-            std::cout.flush();
-
             QMetaObject::invokeMethod(&m_authManager, [&, urlStr]() {
                 m_authManager.onUrlIntercepted(urlStr);
             }, Qt::QueuedConnection);
@@ -199,7 +197,6 @@ void ConsoleController::InputLoop() {
             continue;
         }
 
-        // === РЕЖИМ ВЫБОРА ИСТОЧНИКА ===
         if (m_currentState == ConsoleState::SELECT_SOURCE) {
             size_t start = rawInput.find_first_not_of(" \t\r\n");
             if (start == std::string::npos) {
@@ -207,33 +204,20 @@ void ConsoleController::InputLoop() {
             }
             std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
 
-            if (input == "1") {
-                emit SourceChanged("VK");
-            } else if (input == "2") {
-                emit SourceChanged("Spotify");
-            } else if (input == "3") {
-                emit SourceChanged("SoundCloud");
-            } else if (input == "4") {
-                emit SourceChanged("Yandex");
-            } else if (input == "5") {
-                emit SourceChanged("Offline");
-            } else {
-                syncPrint("[Ошибка] Неверный выбор. Введите 1-5:\n> ");
-                continue;
-            }
+            if (input == "1") emit SourceChanged("VK");
+            else if (input == "2") emit SourceChanged("Spotify");
+            else if (input == "3") emit SourceChanged("SoundCloud");
+            else if (input == "4") emit SourceChanged("Yandex");
+            else if (input == "5") emit SourceChanged("Offline");
+            else { syncPrint("[Ошибка] Неверный выбор. Введите 1-5:\n> "); continue; }
+
             m_currentState = ConsoleState::COMMAND_MODE;
             continue;
         }
 
-        // === РЕЖИМ ПЛЕЕРА (COMMAND_MODE) ===
-        std::cout << "\033[1A\r\033[2K";
-        std::cout.flush();
-
         size_t start = rawInput.find_first_not_of(" \t\r\n");
         if (start == std::string::npos) {
-            std::cout << "> ";
-            std::cout.flush();
-            continue;
+            std::cout << "> "; std::cout.flush(); continue;
         }
         std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
 
@@ -254,7 +238,7 @@ void ConsoleController::UiLoop() {
         if (m_currentState == ConsoleState::COMMAND_MODE) {
             m_renderer->Render();
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(m_renderer->IsVisualizerEnabled() ? 50 : 500));
+        std::this_thread::sleep_for(std::chrono::milliseconds(m_renderer->IsVisualizerEnabled() ? 16 : 50)); // ФПС
     }
 }
 

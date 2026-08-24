@@ -24,6 +24,7 @@ public:
     std::function<void()> OnVisualizerToggled;
     std::function<void()> OnQuitRequested;
     std::function<void(const std::string&)> OnLogoutRequested;
+    std::function<void()> OnReloadUiRequested;
 
     void Dispatch(const std::string& input);
 

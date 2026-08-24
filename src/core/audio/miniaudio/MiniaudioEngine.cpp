@@ -87,12 +87,27 @@ void MiniaudioEngine::SetPositionSeconds(double pos) {
 
     if (m_decoder) {
         ma_uint64 targetFrame = static_cast<ma_uint64>(pos * static_cast<double>(SAMPLE_RATE));
-        if (ma_decoder_seek_to_pcm_frame(m_decoder.get(), targetFrame) == MA_SUCCESS) {
-            m_playbackFrameCount = targetFrame;
-            m_nearEndTriggered = false;
-            m_finishedTriggered = false;
-            Logger::Log(LogLevel::INFO, "Miniaudio: Seeked to " + std::to_string(pos) + "s");
+        
+        ma_decoder_seek_to_pcm_frame(m_decoder.get(), 0);
+
+        ma_uint64 framesToRead = targetFrame;
+        std::vector<int16_t> dumpBuf(8192 * 2);
+
+        while (framesToRead > 0) {
+            ma_uint64 toRead = (framesToRead > 8192) ? 8192 : framesToRead;
+            ma_uint64 read = 0;
+            if (ma_decoder_read_pcm_frames(m_decoder.get(), dumpBuf.data(), toRead, &read) != MA_SUCCESS || read == 0) {
+                break;
+            }
+            framesToRead -= read;
         }
+
+        m_playbackFrameCount = targetFrame - framesToRead;
+        m_nearEndTriggered = false;
+        m_finishedTriggered = false;
+
+        std::memset(m_mainBuffer.data(), 0, m_mainBuffer.size() * sizeof(int16_t));
+        Logger::Log(LogLevel::INFO, "Miniaudio: Exact seeked to " + std::to_string(pos) + "s");
     } else {
         m_playbackFrameCount = static_cast<ma_uint64>(pos * static_cast<double>(SAMPLE_RATE));
         m_nearEndTriggered = false;
@@ -277,8 +292,23 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
         double totalSec = static_cast<double>(engine->m_currentDurationSec);
         double crossfadeSec = engine->m_crossfadeDurationMs / 1000.0;
 
-        if (totalSec > 0.0) {
-            if (!engine->m_nearEndTriggered && currentSec >= totalSec - 10.0) {
+        // --- ДЕТЕКТОР ФИЗИЧЕСКОГО КОНЦА (EOF) ---
+        if (framesRead == 0 && frameCount > 0) {
+            bool isEof = false;
+            if (engine->m_decoder) {
+                isEof = true; // Локальный файл точно закончился
+            } else if (totalSec > 0.0 && currentSec >= totalSec - 15.0) {
+                isEof = true; // Сетевой буфер пуст, и мы находимся в конце трека
+            }
+
+            if (isEof) {
+                currentSec = totalSec; // Искусственно мотаем таймер до конца, чтобы 100% пробить триггеры
+            }
+        }
+
+        if (totalSec > 0.0 || (framesRead == 0 && engine->m_decoder)) {
+            // Триггер предзагрузки URL следующего трека
+            if (totalSec > 0.0 && !engine->m_nearEndTriggered && currentSec >= totalSec - 10.0) {
                 engine->m_nearEndTriggered = true;
                 if (engine->OnTrackNearEnd) {
                     QMetaObject::invokeMethod(QCoreApplication::instance(), [engine]() {
@@ -287,11 +317,13 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
                 }
             }
 
+            // Учитываем кроссфейд ТОЛЬКО если он реально включен!
             double endTriggerSec = totalSec;
-            if (engine->m_crossfadeDurationMs > 0) {
+            if (engine->m_isCrossfadeEnabled && engine->m_crossfadeDurationMs > 0 && totalSec > 0.0) {
                 endTriggerSec = totalSec - crossfadeSec;
             }
 
+            // Триггер фактического переключения
             if (!engine->m_finishedTriggered && currentSec >= endTriggerSec) {
                 engine->m_finishedTriggered = true;
                 if (engine->OnTrackFinished) {
@@ -306,6 +338,7 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
 
 bool MiniaudioEngine::PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId) {
     m_currentTrackId = trackId;
+    m_isCrossfadeEnabled = crossfade; // Запоминаем флаг для DataCallback
 
     QString localPath = PathManager::GetDownloadFilePath(trackId, "mp3");
 
@@ -336,8 +369,8 @@ bool MiniaudioEngine::PlayStream(const std::string& url, int durationSec, bool c
     m_decoder.reset(new ma_decoder);
 
 #ifdef _WIN32
-    // ИСПРАВЛЕНО: Используем правильную функцию для Win32 и добавляем .get()
-    if (ma_decoder_init_file_w(reinterpret_cast<const wchar_t*>(localPath.utf16()), &decoderConfig, m_decoder.get()) != MA_SUCCESS) {
+    std::wstring wPath = localPath.toStdWString();
+    if (ma_decoder_init_file_w(wPath.c_str(), &decoderConfig, m_decoder.get()) != MA_SUCCESS) {
 #else
     if (ma_decoder_init_file(localPath.toStdString().c_str(), &decoderConfig, m_decoder.get()) != MA_SUCCESS) {
 #endif
@@ -438,7 +471,7 @@ void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSiz
         if (err == AAC_DEC_NOT_ENOUGH_BITS) break;
         if (err != AAC_DEC_OK) {
             Logger::Log(LogLevel::WARNING, "AAC decode error: " + std::to_string(err));
-            
+
             if (OnPlaybackError) {
                 QMetaObject::invokeMethod(QCoreApplication::instance(), [this, err]() {
                     OnPlaybackError("AAC Decode Error: " + std::to_string(err));

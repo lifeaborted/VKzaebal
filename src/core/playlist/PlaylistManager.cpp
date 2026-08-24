@@ -225,6 +225,9 @@ std::vector<Track> PlaylistManager::GetAllTracks() const {
 
 void PlaylistManager::InsertTrack(int position, const Track& track) {
     std::lock_guard<std::mutex> lock(m_mutex);
+    
+    bool wasEmpty = m_playQueue.empty();
+
     if (position < 0) position = 0;
     if (position > m_tracks.size()) position = m_tracks.size();
 
@@ -241,7 +244,7 @@ void PlaylistManager::InsertTrack(int position, const Track& track) {
     } else {
         m_playQueue.insert(m_playQueue.begin() + position, position);
 
-        if (position <= m_queueIndex) {
+        if (!wasEmpty && position <= m_queueIndex) {
             m_queueIndex++;
         }
     }

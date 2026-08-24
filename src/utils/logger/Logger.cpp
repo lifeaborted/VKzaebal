@@ -1,5 +1,5 @@
 #define _CRT_SECURE_NO_WARNINGS
-#include "Logger.h"
+#include "Logger.h" // Обязательно подключаем заголовок
 #include "utils/path/PathManager.h"
 #include <iostream>
 #include <fstream>
@@ -13,6 +13,9 @@ namespace fs = std::filesystem;
 static std::ofstream logFile;
 std::mutex Logger::s_mutex;
 
+// Инициализация минимального уровня логов (по умолчанию выводим всё)
+LogLevel Logger::s_minLogLevel = LogLevel::ERROR;
+
 void Logger::Init() {
     PathManager::Init();
     std::string logPath = PathManager::GetLogFilePath().toStdString();
@@ -25,10 +28,24 @@ void Logger::Init() {
     }
 }
 
+void Logger::SetMinLogLevel(LogLevel level) {
+    s_minLogLevel = level;
+}
+
 void Logger::Log(LogLevel level, const std::string& message) {
-#ifdef NDEBUG
-    if (level == LogLevel::DEBUG) return;
-#endif
+    // --- 1. Ограничение вывода через макросы (Compile-time) ---
+    // Если собираем в Release (NDEBUG) и хотим видеть только ошибки:
+    #ifdef NDEBUG
+        if (level != LogLevel::ERROR) return;
+    #endif
+
+    // --- 2. Ограничение вывода через переменную (Runtime) ---
+    // Так как enum: DEBUG=0, INFO=1, WARNING=2, ERROR=3
+    // Если текущий уровень меньше установленного порога, просто выходим
+    if (level < s_minLogLevel) {
+        return;
+    }
+
     // Получаем текущее время
     auto now = std::chrono::system_clock::now();
     auto in_time_t = std::chrono::system_clock::to_time_t(now);
@@ -40,6 +57,7 @@ void Logger::Log(LogLevel level, const std::string& message) {
 
     std::string levelStr;
     switch (level) {
+        case LogLevel::DEBUG:   levelStr = "[DEBUG] "; break; // Добавлен case для DEBUG
         case LogLevel::INFO:    levelStr = "[INFO] "; break;
         case LogLevel::WARNING: levelStr = "[WARN] "; break;
         case LogLevel::ERROR:   levelStr = "[ERROR] "; break;
@@ -58,6 +76,7 @@ void Logger::Log(LogLevel level, const std::string& message) {
         std::cout.flush();
     }
 
+    // В файл логируем всё, что прошло фильтр
     if (logFile.is_open()) {
         logFile << fullMessage << std::endl;
         logFile.flush();

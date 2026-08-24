@@ -428,6 +428,14 @@ void CommandDispatcher::RegisterCommands() {
         }
     };
 
+    m_commands["reload"] = [this](const std::string&) {
+        if (OnReloadUiRequested) {
+            QMetaObject::invokeMethod(QCoreApplication::instance(), [this]() {
+                OnReloadUiRequested();
+            }, Qt::QueuedConnection);
+        }
+    };
+
     m_commands["logout"] = [this](const std::string& arg) {
         if (arg == "vk" || arg == "spotify" || arg == "sc" || arg == "yandex" || arg == "all") {
             if (OnLogoutRequested) {

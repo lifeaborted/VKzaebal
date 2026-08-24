@@ -3,6 +3,7 @@
 #include <QSettings>
 #include <string>
 #include <QtWebView>
+#include <cmath>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -51,10 +52,46 @@ int main(int argc, char *argv[]) {
     Logger::Log(LogLevel::INFO, "DB Path: " + PathManager::GetDbPath().toStdString());
 
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
-    if (!settings.contains("Audio/CrossfadeDurationMs")) {
+
+    // Если нет базовой настройки - значит файл девственно чист, прописываем ВСЕ дефолты
+    if (!settings.contains("Session/Volume")) {
         settings.setValue("Audio/CrossfadeDurationMs", 3000);
+        settings.setValue("Audio/CrossfadePlayback", false);
+        settings.setValue("Session/Volume", 1.0f);
+        settings.setValue("Session/Shuffle", false);
+        settings.setValue("Session/AutoPlay", false);
+        settings.setValue("Session/Position", 0.0);
+        settings.setValue("Session/Repeat", 1);
+        settings.setValue("Session/CurrentTrackIndex", -1);
+        settings.setValue("General/source", "VK");
+        settings.setValue("Ui/ShowVisualizer", true);
+        settings.setValue("Visualizer/Mode", 1); // Включаем CAVA по умолчанию
         settings.sync();
+        Logger::Log(LogLevel::INFO, "Main: Created default config.ini configuration");
     }
+
+    // --- ИНИЦИАЛИЗАЦИЯ CAVA.INI ПРИ ЗАПУСКЕ ---
+    QString cavaPath = PathManager::GetCavaConfigPath();
+    if (!QFile::exists(cavaPath)) {
+        QSettings defaultCava(cavaPath, QSettings::IniFormat);
+        defaultCava.setValue("Visualizer/Height", 10);
+        defaultCava.setValue("Visualizer/Width", 0);
+        defaultCava.setValue("Visualizer/BarWidth", 2);
+        defaultCava.setValue("Visualizer/BarSpacing", 1);
+        defaultCava.setValue("Visualizer/BlockSpacing", 1);
+        defaultCava.setValue("Visualizer/DrawBorders", true);
+        defaultCava.setValue("Visualizer/Layout", "Visualizer,ProgressBar,TrackInfo");
+        defaultCava.setValue("Visualizer/PaddingLeft", 2);
+        defaultCava.setValue("Visualizer/Color", "gradient");
+
+        // ПАРАМЕТРЫ ФИЗИКИ И FPS:
+        defaultCava.setValue("Visualizer/Framerate", 30);
+        defaultCava.setValue("Visualizer/Smoothing", 0.5);
+
+        defaultCava.sync();
+        Logger::Log(LogLevel::INFO, "Main: Created default cava.ini configuration");
+    }
+    // ------------------------------------------
 
     std::string activeSource = settings.value("General/source", "VK").toString().toStdString();
     bool crossfadeEnabled = settings.value("Audio/CrossfadePlayback", false).toBool();
@@ -62,7 +99,7 @@ int main(int argc, char *argv[]) {
     bool autoPlay = settings.value("Session/AutoPlay", false).toBool();
     float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
     int savedTrackIndex = settings.value("Session/CurrentTrackIndex", -1).toInt();
-    double savedPosition = settings.value("Session/Position", 0.0).toDouble();
+    double savedPosition = std::round(settings.value("Session/Position", 0.0).toDouble());
     int savedRepeatMode = settings.value("Session/Repeat", 1).toInt();
 
     DatabaseManager dbManager;
@@ -89,6 +126,7 @@ int main(int argc, char *argv[]) {
 
     playbackCtrl.SetCrossfadeEnabled(crossfadeEnabled);
     playbackCtrl.SetSavedPosition(savedPosition);
+    playbackCtrl.SetStartPaused(!autoPlay);
 
     // --- Связи компонентов (Внутренняя логика плеера) ---
     QObject::connect(&streamer, &NetworkStreamer::DataReceived, [&](const QByteArray& data) {
@@ -162,7 +200,6 @@ int main(int argc, char *argv[]) {
                 playlist.OnTrackRequested(playlist.GetCurrentTrack());
             }
 
-            if (!autoPlay) audio.Pause();
         } else {
             std::cout << "\n[Оффлайн] Нет скачанных треков. Плеер пуст.\n> ";
             std::cout.flush();
@@ -262,14 +299,14 @@ int main(int argc, char *argv[]) {
 
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [&]() {
-        Logger::Log(LogLevel::INFO, "Main: Saving session state...");
-        settings.setValue("Session/Volume", audio.GetVolume());
-        settings.setValue("Session/CurrentTrackIndex", playlist.GetCurrentAbsoluteIndex());
-        settings.setValue("Session/Position", audio.GetPositionSeconds());
-        settings.setValue("Session/Shuffle", playlist.IsShuffle());
-        settings.setValue("Session/Repeat", playlist.GetRepeatMode());
-        settings.sync();
-    });
+            Logger::Log(LogLevel::INFO, "Main: Saving session state...");
+            settings.setValue("Session/Volume", audio.GetVolume());
+            settings.setValue("Session/CurrentTrackIndex", playlist.GetCurrentAbsoluteIndex());
+            settings.setValue("Session/Position", std::round(audio.GetPositionSeconds()));
+            settings.setValue("Session/Shuffle", playlist.IsShuffle());
+            settings.setValue("Session/Repeat", playlist.GetRepeatMode());
+            settings.sync();
+        });
 
     router.SwitchSource(activeSource);
     console.Start();

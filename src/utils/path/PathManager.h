@@ -19,6 +19,8 @@ public:
     static QString GetDownloadFilePath(const std::string& safeFilename, const QString& ext);
     static QString GetLyricsFilePath(const std::string& artist, const std::string& title, bool isNewFile = false);
 
+    static QString GetCavaConfigPath();
+
 private:
     static QString s_appDataDir;
     static QString s_downloadsDir;

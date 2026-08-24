@@ -75,6 +75,7 @@ private:
     std::atomic<ma_uint64> m_playbackFrameCount{0};
 
     // --- ПЕРЕМЕННЫЕ КРОССФЕЙДА И ТАЙМИНГОВ ---
+    bool m_isCrossfadeEnabled = false;
     int m_crossfadeDurationMs = 3000;
     int m_currentDurationSec = 0;
     bool m_nearEndTriggered = false;

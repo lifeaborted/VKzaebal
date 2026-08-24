@@ -1,22 +1,41 @@
 #include "ConsoleRenderer.h"
+#include "UltimateRenderer.h"
 #include "core/audio/IAudioEngine.h"
 #include "core/playlist/PlaylistManager.h"
 #include "utils/logger/Logger.h"
+#include "utils/path/PathManager.h"
 
 #include <QCoreApplication>
 #include <QMetaObject>
+#include <QSettings>
 #include <iostream>
 #include <cmath>
 #include <vector>
 
 ConsoleRenderer::ConsoleRenderer(IAudioEngine& audio, PlaylistManager& playlist)
-    : m_audio(audio), m_playlist(playlist) {}
+    : m_audio(audio), m_playlist(playlist) {
+
+    m_cavaRenderer = std::make_unique<UltimateRenderer>(audio, playlist);
+
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    m_mode = settings.value("Visualizer/Mode", 0).toInt();
+}
+
+ConsoleRenderer::~ConsoleRenderer() = default;
 
 void ConsoleRenderer::SetVisualizerEnabled(bool enabled) {
     m_showVisualizer = enabled;
 }
 
 void ConsoleRenderer::Render() {
+    if (m_mode == 1) {
+        m_cavaRenderer->Render();
+    } else {
+        RenderBasic();
+    }
+}
+
+void ConsoleRenderer::RenderBasic() {
     if (!m_audio.IsPlaying()) return;
 
     double current = m_audio.GetPositionSeconds();
@@ -60,12 +79,9 @@ void ConsoleRenderer::Render() {
                     float peak = 0.0f;
                     int startBin = static_cast<int>(std::pow(2.0, i * 7.0 / numBands));
                     int endBin = static_cast<int>(std::pow(2.0, (i + 1) * 7.0 / numBands));
-                    
-                    if (endBin <= startBin) endBin = startBin + 1;
 
-                    if (endBin > static_cast<int>(fft.size())) {
-                        endBin = static_cast<int>(fft.size());
-                    }
+                    if (endBin <= startBin) endBin = startBin + 1;
+                    if (endBin > static_cast<int>(fft.size())) endBin = static_cast<int>(fft.size());
 
                     for (int b = startBin; b < endBin; ++b) {
                         if (fft[b] > peak) peak = fft[b];
@@ -112,4 +128,12 @@ void ConsoleRenderer::Render() {
             }, Qt::QueuedConnection);
         }
     }
+}
+
+void ConsoleRenderer::ReloadConfig() {
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    m_mode = settings.value("Visualizer/Mode", 0).toInt();
+
+    m_lastPrintedStr = "";
+    m_cavaRenderer->ReloadConfig();
 }
