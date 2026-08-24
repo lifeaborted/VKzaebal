@@ -62,6 +62,11 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
     }
     bool isDownloaded = QFile::exists(localPath);
 
+    if (m_startPaused) {
+        m_audio.Pause();
+        m_startPaused = false;
+    }
+
     if (attempt == 1 && !m_cachedNextUrl.empty() && m_preloadedTrack.id == track.id && !isDownloaded) {
         if (m_audio.PlayStream(m_cachedNextUrl, track.duration, m_crossfadeEnabled, track.GetSafeFilename())) {
             m_cachedNextUrl = "";
@@ -121,6 +126,11 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
             m_streamer.SetTrackDuration(track.duration);
             m_streamer.StartDownload(freshUrl);
             m_audio.Resume();
+
+            if (m_startPaused) {
+                m_audio.Pause();
+                m_startPaused = false;
+            }
 
             if (m_savedPosition > 0.0) {
                 m_audio.SetPositionSeconds(m_savedPosition);

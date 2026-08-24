@@ -107,6 +107,7 @@ ConsoleController::ConsoleController(
     };
 
     m_dispatcher->OnQuitRequested = [this]() {
+        m_audio.Pause();
         emit QuitRequested();
         m_isRunning = false;
     };

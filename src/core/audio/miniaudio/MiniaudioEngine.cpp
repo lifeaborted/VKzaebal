@@ -189,8 +189,6 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
             frameCount = engine->m_mainBuffer.size() / 2;
         }
 
-        engine->m_playbackFrameCount += frameCount;
-
         std::memset(engine->m_mainBuffer.data(), 0, frameCount * 2 * sizeof(int16_t));
         std::memset(engine->m_fadeOutBuffer.data(), 0, frameCount * 2 * sizeof(int16_t));
 
@@ -206,6 +204,7 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
             framesRead = bytesRead / (2 * sizeof(int16_t));
         }
 
+        engine->m_playbackFrameCount += framesRead;
         ma_uint32 fadeOutFramesRead = 0;
 
         if (engine->m_isCrossfading) {

@@ -17,6 +17,7 @@ public:
     void SetCurrentProvider(IAudioProvider* provider);
     void SetCrossfadeEnabled(bool enabled);
     void SetSavedPosition(double pos);
+    void SetStartPaused(bool paused) { m_startPaused = paused; }
 
     void AttemptPlay(const Track& track, int attempt = 1);
     void HandleTrackFinished();
@@ -37,4 +38,6 @@ private:
 
     Track m_preloadedTrack;
     std::string m_cachedNextUrl = "";
+
+    bool m_startPaused = false;
 };
