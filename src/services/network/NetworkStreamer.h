@@ -34,6 +34,8 @@ public:
     void StartDownload(const std::string& url);
     void StopDownload();
     void SeekTo(double targetSeconds);
+    
+    void SetTrackDuration(int durationSec) { m_trackDurationSec = durationSec; }
 
 signals:
     void DataReceived(const QByteArray& data);

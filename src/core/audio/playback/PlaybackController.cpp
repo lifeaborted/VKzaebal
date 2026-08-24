@@ -118,6 +118,7 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
         if (!freshUrl.empty()) {
             m_streamer.StopDownload();
             m_audio.ClearBuffers(m_crossfadeEnabled, track.duration);
+            m_streamer.SetTrackDuration(track.duration);
             m_streamer.StartDownload(freshUrl);
             m_audio.Resume();
 

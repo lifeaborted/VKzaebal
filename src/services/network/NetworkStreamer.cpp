@@ -19,6 +19,7 @@ NetworkStreamer::~NetworkStreamer() {
 void NetworkStreamer::StartDownload(const std::string& urlString) {
     Logger::Log(LogLevel::INFO, "Starting network stream from: " + urlString);
     m_pendingSeekPos = -1.0;
+    m_totalFileSize = 0;
 
     if (m_reply) {
         StopDownload();
@@ -211,6 +212,17 @@ void NetworkStreamer::DownloadNextChunk() {
 
 void NetworkStreamer::OnReadyRead() {
     if (!m_reply || m_isPaused) return;
+
+    if (m_streamType == StreamType::DirectHttp && m_totalFileSize == 0) {
+        m_totalFileSize = m_reply->header(QNetworkRequest::ContentLengthHeader).toLongLong();
+
+        if (m_pendingSeekPos > 0.0 && m_totalFileSize > 0 && m_trackDurationSec > 0) {
+            double pos = m_pendingSeekPos;
+            m_pendingSeekPos = -1.0;
+            SeekTo(pos);
+            return;
+        }
+    }
     m_currentChunkData.append(m_reply->readAll());
 }
 
