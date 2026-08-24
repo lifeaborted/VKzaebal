@@ -92,6 +92,9 @@ set(PROJECT_SOURCES
         src/ui/console/view/ConsoleRenderer.cpp
         src/ui/console/view/ConsoleRenderer.h
 
+        src/ui/console/view/UltimateRenderer.cpp
+        src/ui/console/view/UltimateRenderer.h
+
         # --- Utils ---
         src/utils/buffer/RingBuffer.h
         src/utils/buffer/RingBuffer.cpp
@@ -107,6 +110,7 @@ set(PROJECT_SOURCES
 
         src/utils/path/PathManager.h
         src/utils/path/PathManager.cpp
+        src/ui/console/view/UltimateRenderer.cpp
 )
 
 # --- Подключаем внешние библиотеки ---
