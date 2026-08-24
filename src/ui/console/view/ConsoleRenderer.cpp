@@ -15,7 +15,7 @@
 ConsoleRenderer::ConsoleRenderer(IAudioEngine& audio, PlaylistManager& playlist)
     : m_audio(audio), m_playlist(playlist) {
 
-    m_cavaRenderer = std::make_unique<UltimateRenderer>(audio, playlist);
+    m_ultimateRenderer = std::make_unique<UltimateRenderer>(audio, playlist);
 
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
     m_mode = settings.value("Visualizer/Mode", 0).toInt();
@@ -29,7 +29,7 @@ void ConsoleRenderer::SetVisualizerEnabled(bool enabled) {
 
 void ConsoleRenderer::Render() {
     if (m_mode == 1) {
-        m_cavaRenderer->Render();
+        m_ultimateRenderer->Render();
     } else {
         RenderBasic();
     }
@@ -135,5 +135,21 @@ void ConsoleRenderer::ReloadConfig() {
     m_mode = settings.value("Visualizer/Mode", 0).toInt();
 
     m_lastPrintedStr = "";
-    m_cavaRenderer->ReloadConfig();
+    m_ultimateRenderer->ReloadConfig();
+}
+
+int ConsoleRenderer::GetFramerate() const {
+    return m_ultimateRenderer->GetFramerate();
+}
+
+void ConsoleRenderer::RequestFullRedraw() {
+    m_ultimateRenderer->RequestFullRedraw();
+}
+
+void ConsoleRenderer::SetStatusMessage(const std::string& msg) {
+    m_ultimateRenderer->SetStatusMessage(msg);
+}
+
+void ConsoleRenderer::SetOverlay(const std::string& msg) {
+    m_ultimateRenderer->SetOverlay(msg);
 }

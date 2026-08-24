@@ -40,14 +40,21 @@ ConsoleController::ConsoleController(
     m_renderer = std::make_unique<ConsoleRenderer>(audio, playlist);
 
     m_dispatcher->SetPrintCallback([this](const std::string& text) {
-        if (!m_isRunning || !QCoreApplication::instance()) return;
-        QMetaObject::invokeMethod(QCoreApplication::instance(), [text]() {
-            std::lock_guard<std::mutex> lock(Logger::GetMutex());
-            // Убрали \033[1A, теперь логи просто пишутся в свободное пространство
-            std::cout << "\r\033[2K" << text;
-            std::cout.flush();
-        }, Qt::QueuedConnection);
-    });
+            if (!m_isRunning || !QCoreApplication::instance()) return;
+            QMetaObject::invokeMethod(QCoreApplication::instance(), [this, text]() {
+                std::string cleanText = text;
+                size_t pos = cleanText.find("\n\n> ");
+                if (pos != std::string::npos) cleanText.erase(pos);
+
+                // Если текст длинный (например, меню Help или Search) - кидаем в Оверлей
+                int newlines = std::count(cleanText.begin(), cleanText.end(), '\n');
+                if (newlines > 2) {
+                    m_renderer->SetOverlay(cleanText);
+                } else {
+                    m_renderer->SetStatusMessage(cleanText);
+                }
+            }, Qt::QueuedConnection);
+        });
 
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
     m_renderer->SetVisualizerEnabled(settings.value("Ui/ShowVisualizer", true).toBool());
@@ -71,12 +78,9 @@ ConsoleController::ConsoleController(
     m_dispatcher->OnLogoutRequested = [this](const std::string& service) {
         auto processLogout = [this](const QString& svcName, const std::string& internalName) {
             m_authManager.ClearSavedToken(svcName);
-
-            std::string msg = "[Выход] Токен для " + internalName + " успешно удален.\n\n> ";
-            QMetaObject::invokeMethod(QCoreApplication::instance(), [msg]() {
-                std::lock_guard<std::mutex> lock(Logger::GetMutex());
-                std::cout << "\r\033[2K" << msg;
-                std::cout.flush();
+            std::string msg = "[Выход] Токен для " + internalName + " удален.";
+            QMetaObject::invokeMethod(QCoreApplication::instance(), [this, msg]() {
+                m_renderer->SetStatusMessage(msg);
             }, Qt::QueuedConnection);
         };
 
@@ -89,21 +93,6 @@ ConsoleController::ConsoleController(
         if (logoutSpotify) processLogout("Spotify", "Spotify");
         if (logoutSc) processLogout("SoundCloud", "SoundCloud");
         if (logoutYandex) processLogout("Yandex", "Yandex");
-
-        QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
-        QString currentSource = settings.value("General/source", "").toString();
-
-        bool activeLoggedOut = false;
-        if (currentSource == "VK" && logoutVk) activeLoggedOut = true;
-        if (currentSource == "Spotify" && logoutSpotify) activeLoggedOut = true;
-        if (currentSource == "SoundCloud" && logoutSc) activeLoggedOut = true;
-        if (currentSource == "Yandex" && logoutYandex) activeLoggedOut = true;
-
-        if (activeLoggedOut && m_currentProvider) {
-            m_audio.Pause();
-            m_playlist.Clear();
-            emit SourceChanged("Offline");
-        }
     };
 
     m_dispatcher->OnGaplessModeChanged = [this](bool isGapless) {
@@ -127,11 +116,6 @@ void ConsoleController::SetState(ConsoleState state) {
 
 void ConsoleController::Start() {
     if (m_isRunning) return;
-
-    // Включаем изолированный буфер экрана (Alternate Buffer)
-    std::cout << "\033[?1049h";
-    std::cout.flush();
-
     m_isRunning = true;
     m_inputThread = std::thread(&ConsoleController::InputLoop, this);
     m_uiThread = std::thread(&ConsoleController::UiLoop, this);
@@ -139,10 +123,6 @@ void ConsoleController::Start() {
 
 void ConsoleController::Stop() {
     m_isRunning = false;
-
-    // Выключаем изолированный буфер экрана и возвращаем курсор
-    std::cout << "\033[?1049l\033[?25h";
-    std::cout.flush();
 
 #ifdef _WIN32
     HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
@@ -157,16 +137,6 @@ void ConsoleController::Stop() {
 
 void ConsoleController::InputLoop() {
     std::string rawInput;
-
-    auto syncPrint = [this](const std::string& text) {
-        if (!m_isRunning || !QCoreApplication::instance()) return;
-
-        QMetaObject::invokeMethod(QCoreApplication::instance(), [text]() {
-            std::lock_guard<std::mutex> lock(Logger::GetMutex());
-            std::cout << "\r\033[2K" << text;
-            std::cout.flush();
-        }, Qt::QueuedConnection);
-    };
 
     while (m_isRunning) {
         if (!std::getline(std::cin, rawInput)) {
@@ -209,19 +179,23 @@ void ConsoleController::InputLoop() {
             else if (input == "3") emit SourceChanged("SoundCloud");
             else if (input == "4") emit SourceChanged("Yandex");
             else if (input == "5") emit SourceChanged("Offline");
-            else { syncPrint("[Ошибка] Неверный выбор. Введите 1-5:\n> "); continue; }
 
             m_currentState = ConsoleState::COMMAND_MODE;
             continue;
         }
 
-        size_t start = rawInput.find_first_not_of(" \t\r\n");
-        if (start == std::string::npos) {
-            std::cout << "> "; std::cout.flush(); continue;
-        }
-        std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
-
+        // РЕЖИМ ПЛЕЕРА
         if (m_currentState == ConsoleState::COMMAND_MODE) {
+            // При нажатии Enter всегда просим перерисовать экран, чтобы убрать сдвиг скролла
+            m_renderer->RequestFullRedraw();
+            m_renderer->SetOverlay(""); // ВСЕГДА прячем оверлей Help/Search
+
+            size_t start = rawInput.find_first_not_of(" \t\r\n");
+            if (start == std::string::npos) {
+                continue; // Пустой Enter просто закрыл оверлей и обновил кадр
+            }
+
+            std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
             m_dispatcher->Dispatch(input);
             continue;
         }
@@ -238,7 +212,11 @@ void ConsoleController::UiLoop() {
         if (m_currentState == ConsoleState::COMMAND_MODE) {
             m_renderer->Render();
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(m_renderer->IsVisualizerEnabled() ? 16 : 50)); // ФПС
+
+        // ЧИТАЕМ ДИНАМИЧЕСКИЙ FPS ИЗ РЕНДЕРЕРА
+        int fps = m_renderer->IsVisualizerEnabled() ? m_renderer->GetFramerate() : 2;
+        int delay = (fps > 0) ? (1000 / fps) : 33;
+        std::this_thread::sleep_for(std::chrono::milliseconds(delay));
     }
 }
 

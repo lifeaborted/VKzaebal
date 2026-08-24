@@ -3,7 +3,7 @@
 #include <QSettings>
 #include <string>
 #include <QtWebView>
-#include <cmath>
+#include <cmath> // Для std::round
 
 #ifdef _WIN32
 #include <windows.h>
@@ -53,7 +53,6 @@ int main(int argc, char *argv[]) {
 
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
 
-    // Если нет базовой настройки - значит файл девственно чист, прописываем ВСЕ дефолты
     if (!settings.contains("Session/Volume")) {
         settings.setValue("Audio/CrossfadeDurationMs", 3000);
         settings.setValue("Audio/CrossfadePlayback", false);
@@ -65,13 +64,13 @@ int main(int argc, char *argv[]) {
         settings.setValue("Session/CurrentTrackIndex", -1);
         settings.setValue("General/source", "VK");
         settings.setValue("Ui/ShowVisualizer", true);
-        settings.setValue("Visualizer/Mode", 1); // Включаем CAVA по умолчанию
+        settings.setValue("Visualizer/Mode", 1);
         settings.sync();
         Logger::Log(LogLevel::INFO, "Main: Created default config.ini configuration");
     }
 
     // --- ИНИЦИАЛИЗАЦИЯ CAVA.INI ПРИ ЗАПУСКЕ ---
-    QString cavaPath = PathManager::GetCavaConfigPath();
+    QString cavaPath = PathManager::GetUltimateConfigPath();
     if (!QFile::exists(cavaPath)) {
         QSettings defaultCava(cavaPath, QSettings::IniFormat);
         defaultCava.setValue("Visualizer/Height", 10);
@@ -84,7 +83,7 @@ int main(int argc, char *argv[]) {
         defaultCava.setValue("Visualizer/PaddingLeft", 2);
         defaultCava.setValue("Visualizer/Color", "gradient");
 
-        // ПАРАМЕТРЫ ФИЗИКИ И FPS:
+        // НОВЫЕ ПАРАМЕТРЫ ФИЗИКИ И FPS:
         defaultCava.setValue("Visualizer/Framerate", 30);
         defaultCava.setValue("Visualizer/Smoothing", 0.5);
 
@@ -99,6 +98,8 @@ int main(int argc, char *argv[]) {
     bool autoPlay = settings.value("Session/AutoPlay", false).toBool();
     float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
     int savedTrackIndex = settings.value("Session/CurrentTrackIndex", -1).toInt();
+
+    // ОКРУГЛЯЕМ ПОЗИЦИЮ ЧТОБЫ ИЗБЕЖАТЬ СМЕЩЕНИЙ MP3
     double savedPosition = std::round(settings.value("Session/Position", 0.0).toDouble());
     int savedRepeatMode = settings.value("Session/Repeat", 1).toInt();
 
@@ -117,7 +118,6 @@ int main(int argc, char *argv[]) {
     PlaybackController playbackCtrl(audio, playlist, streamer);
     SourceRouter router(envVars);
 
-    // Заглушка для конструктора консоли (позже нужно убрать authManager оттуда)
     ConsoleController console(audio, playlist, *router.GetAuthManager(), dbManager, downloader, lyricsFetcher);
 
     audio.SetVolume(savedVolume);
@@ -128,7 +128,6 @@ int main(int argc, char *argv[]) {
     playbackCtrl.SetSavedPosition(savedPosition);
     playbackCtrl.SetStartPaused(!autoPlay);
 
-    // --- Связи компонентов (Внутренняя логика плеера) ---
     QObject::connect(&streamer, &NetworkStreamer::DataReceived, [&](const QByteArray& data) {
         audio.PushNetworkData(reinterpret_cast<const uint8_t*>(data.constData()), data.size());
     });
@@ -156,7 +155,6 @@ int main(int argc, char *argv[]) {
         Logger::Log(LogLevel::INFO, std::string("Main: Crossfade transition set to ") + (isCrossfade ? "ON" : "OFF"));
     };
 
-    // --- Функции инициализации ---
     auto initPlaylistAndStart = [&](bool isOnline) {
         if (isPlaybackStarted) return;
 
@@ -238,7 +236,6 @@ int main(int argc, char *argv[]) {
         dbManager.ExportQueueToTxt(playlist.GetQueueTracks(), "playlist.txt", playlist.IsShuffle());
     };
 
-    // --- Связи с роутером ---
     QObject::connect(&console, &ConsoleController::OfflineModeRequested, &app, [&]() {
         initPlaylistAndStart(false);
     }, Qt::QueuedConnection);

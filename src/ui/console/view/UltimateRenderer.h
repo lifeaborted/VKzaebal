@@ -13,6 +13,11 @@ public:
     void Render();
     void ReloadConfig();
 
+    int GetFramerate() const { return m_fps; }
+    void RequestFullRedraw() { m_needsFullRedraw = true; }
+    void SetStatusMessage(const std::string& msg);
+    void SetOverlay(const std::string& msg);
+
 private:
     IAudioEngine& m_audio;
     PlaylistManager& m_playlist;
