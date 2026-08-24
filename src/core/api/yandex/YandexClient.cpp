@@ -234,7 +234,7 @@ void YandexClient::FetchTrackUrl(const std::string& trackId, std::function<void(
 
             // Формируем MD5 подпись
             QString magicStr = "XGRlBW9FXlekgbPrRHuAle";
-            QString signData = magicStr + path.mid(1) + s; // path.mid(1) убирает ведущий слэш '/'
+            QString signData = magicStr + path.mid(1) + s;
 
             QByteArray hash = QCryptographicHash::hash(signData.toUtf8(), QCryptographicHash::Md5);
             QString sign = hash.toHex();

@@ -7,6 +7,7 @@
 #include "core/api/IAudioProvider.h"
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
+#include "core/shazam/ShazamFFI.h"
 
 #include <QCoreApplication>
 #include <QMetaObject>
@@ -16,6 +17,9 @@
 #include <QUrl>
 #include <cmath>
 #include <QSettings>
+#include <QJsonObject>
+#include <QUuid>
+#include <QtConcurrent>
 
 CommandDispatcher::CommandDispatcher(IAudioEngine& audio, PlaylistManager& playlist,
                                      DatabaseManager& db, TrackDownloader& downloader, LyricsFetcher& lyrics)
@@ -44,7 +48,7 @@ void CommandDispatcher::Dispatch(const std::string& input) {
     std::string cmd;
     std::string arg;
     size_t spacePos = lowerInput.find(' ');
-    
+
     if (spacePos != std::string::npos) {
         cmd = lowerInput.substr(0, spacePos);
         arg = lowerInput.substr(spacePos + 1);
@@ -329,6 +333,70 @@ void CommandDispatcher::RegisterCommands() {
     };
     m_commands["ly"] = lyricsHandler;
     m_commands["lyrics"] = lyricsHandler;
+
+    m_commands["shazam"] = [this](const std::string& arg) {
+        if (arg.empty()) {
+            Print("[Shazam] Использование: shazam <путь_к_файлу>\n\n> ");
+            return;
+        }
+
+        std::string argStr = arg;
+        Print("[Shazam] Анализ трека через нативное Rust-ядро...\n> ");
+
+        QtConcurrent::run([this, argStr]() {
+            // 1. Делегируем всю DSP-математику в Rust
+            char* raw_base64 = generate_shazam_signature(argStr.c_str());
+
+            if (!raw_base64) {
+                Print("\n[Shazam] Ошибка генерации подписи в Rust-ядре.\n> ");
+                return;
+            }
+
+            // 2. Забираем готовую строку и корректно чистим память
+            QString base64Sig = QString::fromUtf8(raw_base64);
+            free_shazam_string(raw_base64);
+
+            QMetaObject::invokeMethod(QCoreApplication::instance(), [this, base64Sig]() {
+                // 3. Формируем JSON-пакет для Apple
+                QJsonObject sigObj;
+                sigObj["uri"] = base64Sig;
+                sigObj["samplems"] = 12000;
+
+                QJsonObject rootObj;
+                rootObj["signature"] = sigObj;
+                QByteArray jsonPayload = QJsonDocument(rootObj).toJson(QJsonDocument::Compact);
+
+                QNetworkAccessManager* manager = new QNetworkAccessManager();
+                QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+                QUrl url("https://amp.shazam.com/discovery/v5/ru/RU/android/-/tag/" + uuid + "/" + uuid);
+
+                QNetworkRequest request(url);
+                request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+                request.setRawHeader("User-Agent", "Shazam Android/13.7.0");
+
+                QNetworkReply* reply = manager->post(request, jsonPayload);
+
+                QObject::connect(reply, &QNetworkReply::finished, [this, reply, manager]() {
+                    if (reply->error() == QNetworkReply::NoError) {
+                        QJsonDocument json = QJsonDocument::fromJson(reply->readAll());
+                        QJsonObject trackObj = json.object()["track"].toObject();
+
+                        if (trackObj.isEmpty()) {
+                            Print("\n[Shazam] Трек не распознан :( Возможно, его нет в базе.\n> ");
+                        } else {
+                            QString title = trackObj["title"].toString();
+                            QString artist = trackObj["subtitle"].toString();
+                            Print("\n[Shazam] 🎵 УСПЕХ! Найдено: " + artist.toStdString() + " - " + title.toStdString() + "\n> ");
+                        }
+                    } else {
+                        Print("\n[Shazam] Ошибка сети: " + reply->errorString().toStdString() + "\n> ");
+                    }
+                    reply->deleteLater();
+                    manager->deleteLater();
+                });
+            }, Qt::QueuedConnection);
+        });
+    };
 
     // --- Настройки системы ---
     m_commands["source"] = [this](const std::string&) {
