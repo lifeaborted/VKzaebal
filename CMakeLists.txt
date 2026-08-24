@@ -167,3 +167,22 @@ elseif (UNIX AND NOT APPLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/libbasshls.so
     )
 endif()
+
+# --- Автоматическое копирование DLL в папку сборки ---
+if (WIN32)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            # Копируем DLL Шазама
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/shazam_ffi/target/release/shazam_ffi.dll"
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>
+
+            # Заодно копируем DLL BASS (пока ты его не вырезал)
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/bass.dll"
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>
+
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/basshls.dll"
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>
+    )
+endif()
