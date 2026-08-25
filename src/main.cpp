@@ -70,25 +70,33 @@ int main(int argc, char *argv[]) {
     }
 
     // --- ИНИЦИАЛИЗАЦИЯ CAVA.INI ПРИ ЗАПУСКЕ ---
-    QString cavaPath = PathManager::GetUltimateConfigPath();
-    if (!QFile::exists(cavaPath)) {
-        QSettings defaultCava(cavaPath, QSettings::IniFormat);
-        defaultCava.setValue("Visualizer/Height", 10);
-        defaultCava.setValue("Visualizer/Width", 0);
-        defaultCava.setValue("Visualizer/BarWidth", 2);
-        defaultCava.setValue("Visualizer/BarSpacing", 1);
-        defaultCava.setValue("Visualizer/BlockSpacing", 1);
-        defaultCava.setValue("Visualizer/DrawBorders", true);
-        defaultCava.setValue("Visualizer/Layout", "Visualizer,ProgressBar,TrackInfo");
-        defaultCava.setValue("Visualizer/PaddingLeft", 2);
-        defaultCava.setValue("Visualizer/Color", "gradient");
+    QString ultimatePath = PathManager::GetUltimateConfigPath();
+    if (!QFile::exists(ultimatePath)) {
+        QSettings defaultUltimate(ultimatePath, QSettings::IniFormat);
+        defaultUltimate.setValue("Visualizer/Height", 10);
+        defaultUltimate.setValue("Visualizer/Width", 0);
+        defaultUltimate.setValue("Visualizer/BarWidth", 2);
+        defaultUltimate.setValue("Visualizer/BarSpacing", 1);
+        defaultUltimate.setValue("Visualizer/BlockSpacing", 1);
+        defaultUltimate.setValue("Visualizer/DrawBorders", true);
+        defaultUltimate.setValue("Visualizer/Layout", "Visualizer,ProgressBar,TrackInfo");
+        defaultUltimate.setValue("Visualizer/PaddingLeft", 2);
 
-        // НОВЫЕ ПАРАМЕТРЫ ФИЗИКИ И FPS:
-        defaultCava.setValue("Visualizer/Framerate", 30);
-        defaultCava.setValue("Visualizer/Smoothing", 0.5);
+        // Цвета визуализатора
+        defaultUltimate.setValue("Visualizer/Color", "gradient");
+        defaultUltimate.setValue("Visualizer/GradientColors", "#32FF96,#F0B432,#FF5050");
 
-        defaultCava.sync();
-        Logger::Log(LogLevel::INFO, "Main: Created default cava.ini configuration");
+        // Настройки фона
+        defaultUltimate.setValue("Background/Enabled", false);
+        defaultUltimate.setValue("Background/Color", "gradient");
+        defaultUltimate.setValue("Background/GradientColors", "#1E1E1E,#000000");
+
+        // Физика
+        defaultUltimate.setValue("Visualizer/Framerate", 30);
+        defaultUltimate.setValue("Visualizer/Smoothing", 0.5);
+
+        defaultUltimate.sync();
+        Logger::Log(LogLevel::INFO, "Main: Created default ultimate.ini configuration");
     }
     // ------------------------------------------
 
@@ -155,6 +163,8 @@ int main(int argc, char *argv[]) {
         Logger::Log(LogLevel::INFO, std::string("Main: Crossfade transition set to ") + (isCrossfade ? "ON" : "OFF"));
     };
 
+    int uiMode = settings.value("Visualizer/Mode", 0).toInt(); // Читаем текущий режим
+
     auto initPlaylistAndStart = [&](bool isOnline) {
         if (isPlaybackStarted) return;
 
@@ -183,11 +193,13 @@ int main(int argc, char *argv[]) {
         }
 
         if (playlist.HasTracks()) {
-            std::cout << "\r\033[2K=== ПЛЕЕР ГОТОВ К РАБОТЕ ===\nРежим очереди: " << (isShuffle ? "Шафл" : "Стандартный")
-                      << "\nАвтостарт: " << (autoPlay ? "ВКЛ" : "ВЫКЛ") << "\n"
-                      << (isOnline ? "" : "[ОФФЛАЙН] Загружены только скачанные треки.\n")
-                      << "Введите 'h' для вывода списка команд\n\n> ";
-            std::cout.flush();
+            if (uiMode == 0) {
+                std::cout << "\r\033[2K=== ПЛЕЕР ГОТОВ К РАБОТЕ ===\nРежим очереди: " << (isShuffle ? "Шафл" : "Стандартный")
+                          << "\nАвтостарт: " << (autoPlay ? "ВКЛ" : "ВЫКЛ") << "\n"
+                          << (isOnline ? "" : "[ОФФЛАЙН] Загружены только скачанные треки.\n")
+                          << "Введите 'h' для вывода списка команд\n\n> ";
+                std::cout.flush();
+            }
 
             isPlaybackStarted = true;
 
@@ -199,8 +211,7 @@ int main(int argc, char *argv[]) {
             }
 
         } else {
-            std::cout << "\n[Оффлайн] Нет скачанных треков. Плеер пуст.\n> ";
-            std::cout.flush();
+            Logger::Log(LogLevel::WARNING, "[Оффлайн] Нет скачанных треков. Плеер пуст.");
         }
     };
 

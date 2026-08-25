@@ -47,22 +47,69 @@ static std::string safeTruncate(const std::string& str, int maxChars) {
     return result;
 }
 
-static std::string GetGradientColor(float t) {
-    int r, g, b;
-    if (t < 0.5f) {
-        float t2 = t * 2.0f;
-        r = static_cast<int>(50 * (1 - t2) + 240 * t2);
-        g = static_cast<int>(255 * (1 - t2) + 180 * t2);
-        b = static_cast<int>(150 * (1 - t2) + 50 * t2);
-    } else {
-        float t2 = (t - 0.5f) * 2.0f;
-        r = static_cast<int>(240 * (1 - t2) + 255 * t2);
-        g = static_cast<int>(180 * (1 - t2) + 80 * t2);
-        b = static_cast<int>(50 * (1 - t2) + 80 * t2);
+// Парсер списка HEX цветов (напр. "#FF0000,#00FF00")
+static std::vector<RGB> ParseColorsList(const std::string& str) {
+    std::vector<RGB> res;
+    std::stringstream ss(str);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        item.erase(0, item.find_first_not_of(" \t\"\'"));
+        item.erase(item.find_last_not_of(" \t\"\'") + 1);
+        if (item.length() == 7 && item[0] == '#') {
+            try {
+                int r = std::stoi(item.substr(1, 2), nullptr, 16);
+                int g = std::stoi(item.substr(3, 2), nullptr, 16);
+                int b = std::stoi(item.substr(5, 2), nullptr, 16);
+                res.push_back({r, g, b});
+            } catch(...) {}
+        }
     }
-    char buf[32];
-    snprintf(buf, sizeof(buf), "\033[38;2;%d;%d;%dm", r, g, b);
-    return std::string(buf);
+    return res;
+}
+
+// Умный конвертер HEX в ANSI
+static std::string HexToAnsiStr(const std::string& hex, bool isBg) {
+    if (hex.length() == 7 && hex[0] == '#') {
+        try {
+            int r = std::stoi(hex.substr(1, 2), nullptr, 16);
+            int g = std::stoi(hex.substr(3, 2), nullptr, 16);
+            int b = std::stoi(hex.substr(5, 2), nullptr, 16);
+            return "\033[" + std::to_string(isBg ? 48 : 38) + ";2;" + std::to_string(r) + ";" + std::to_string(g) + ";" + std::to_string(b) + "m";
+        } catch(...) {}
+    }
+    // Если пользователь всё-таки ввел сырой ANSI код
+    std::string s = hex;
+    size_t pos = 0;
+    while ((pos = s.find("\\033", pos)) != std::string::npos) {
+        s.replace(pos, 4, "\033");
+        pos += 1;
+    }
+    return s;
+}
+
+// Математическая интерполяция градиента (Lerp) по массиву точек
+static std::string GetInterpolatedColor(float t, const std::vector<RGB>& stops, bool isBg) {
+    if (stops.empty()) return "";
+    if (stops.size() == 1 || t <= 0.0f) {
+        return "\033[" + std::to_string(isBg ? 48 : 38) + ";2;" + std::to_string(stops[0].r) + ";" + std::to_string(stops[0].g) + ";" + std::to_string(stops[0].b) + "m";
+    }
+    if (t >= 1.0f) {
+        auto& last = stops.back();
+        return "\033[" + std::to_string(isBg ? 48 : 38) + ";2;" + std::to_string(last.r) + ";" + std::to_string(last.g) + ";" + std::to_string(last.b) + "m";
+    }
+
+    float scaled_t = t * (stops.size() - 1);
+    int idx = static_cast<int>(scaled_t);
+    float fract = scaled_t - idx;
+
+    const auto& c1 = stops[idx];
+    const auto& c2 = stops[idx + 1];
+
+    int r = c1.r + (c2.r - c1.r) * fract;
+    int g = c1.g + (c2.g - c1.g) * fract;
+    int b = c1.b + (c2.b - c1.b) * fract;
+
+    return "\033[" + std::to_string(isBg ? 48 : 38) + ";2;" + std::to_string(r) + ";" + std::to_string(g) + ";" + std::to_string(b) + "m";
 }
 
 static void GetConsoleSize(int& width, int& height) {
@@ -106,30 +153,36 @@ void UltimateRenderer::SetOverlay(const std::string& msg) {
 void UltimateRenderer::ReloadConfig() {
     std::lock_guard<std::mutex> lock(m_renderMutex);
     QSettings settings(PathManager::GetUltimateConfigPath(), QSettings::IniFormat);
-    
+
     m_height = settings.value("Visualizer/Height", 8).toInt();
-    m_width = settings.value("Visualizer/Width", 0).toInt(); 
-    m_barWidth = settings.value("Visualizer/BarWidth", 1).toInt(); 
-    m_barSpacing = settings.value("Visualizer/BarSpacing", 0).toInt(); 
-    
+    m_width = settings.value("Visualizer/Width", 0).toInt();
+    m_barWidth = settings.value("Visualizer/BarWidth", 1).toInt();
+    m_barSpacing = settings.value("Visualizer/BarSpacing", 0).toInt();
+
     m_fps = settings.value("Visualizer/Framerate", 30).toInt();
     if (m_fps < 1) m_fps = 30;
-    
+
     m_smoothing = settings.value("Visualizer/Smoothing", 0.5f).toFloat();
     if (m_smoothing < 0.0f) m_smoothing = 0.0f;
     if (m_smoothing > 0.99f) m_smoothing = 0.99f;
-    
+
     int padLeft = settings.value("Visualizer/PaddingLeft", 2).toInt();
     m_paddingLeft = std::string(padLeft, ' ');
 
-    QString colorStr = settings.value("Visualizer/Color", "gradient").toString();
-    colorStr.replace("\\\\033", "\033");
-    colorStr.replace("\\033", "\033");
-    colorStr.replace("\\\\x1b", "\x1b", Qt::CaseInsensitive);
-    colorStr.replace("\\x1b", "\x1b", Qt::CaseInsensitive);
-    m_colorCode = colorStr.toStdString();
+    // Чтение цветов визуала
+    std::string fgColor = settings.value("Visualizer/Color", "gradient").toString().toStdString();
+    if (!fgColor.empty() && fgColor[0] == '#') m_colorCode = HexToAnsiStr(fgColor, false);
+    else m_colorCode = HexToAnsiStr(fgColor, false);
+    m_gradientColors = ParseColorsList(settings.value("Visualizer/GradientColors", "#32FF96,#F0B432,#FF5050").toString().toStdString());
 
-    m_needsFullRedraw = true; 
+    // Чтение фона
+    m_bgEnabled = settings.value("Background/Enabled", false).toBool();
+    std::string bgColor = settings.value("Background/Color", "gradient").toString().toStdString();
+    if (!bgColor.empty() && bgColor[0] == '#') m_bgColorCode = HexToAnsiStr(bgColor, true);
+    else m_bgColorCode = HexToAnsiStr(bgColor, true);
+    m_bgGradientColors = ParseColorsList(settings.value("Background/GradientColors", "#1E1E1E,#000000").toString().toStdString());
+
+    m_needsFullRedraw = true;
 }
 
 void UltimateRenderer::Render() {
@@ -141,7 +194,7 @@ void UltimateRenderer::Render() {
         fft.assign(256, 0.0f);
     }
 
-    std::lock_guard<std::mutex> lock(m_renderMutex); 
+    std::lock_guard<std::mutex> lock(m_renderMutex);
 
     int consoleWidth, consoleHeight;
     GetConsoleSize(consoleWidth, consoleHeight);
@@ -152,8 +205,8 @@ void UltimateRenderer::Render() {
         s_lastConsoleWidth = consoleWidth;
     }
 
-    int fixedLines = 14;
-    int availableForDynamic = consoleHeight - fixedLines - 2;
+    int fixedLines = 13;
+    int availableForDynamic = (consoleHeight - 1) - fixedLines;
 
     int currentHeight = m_height;
     int playlistLines = 5;
@@ -195,7 +248,6 @@ void UltimateRenderer::Render() {
             if (fft[b] > peak) peak = fft[b];
         }
 
-        // --- ФИЗИКА ПАДЕНИЯ ---
         if (peak < m_previousPeaks[x]) {
             m_previousPeaks[x] = m_previousPeaks[x] * m_smoothing + peak * (1.0f - m_smoothing);
         } else {
@@ -210,40 +262,60 @@ void UltimateRenderer::Render() {
     }
 
     std::string frame = "";
-    int linesCount = 0;
+    int drawnLines = 0;
+
+    // Умная лямбда для добавления строк с заливкой фона
+    auto addLine = [&](std::string content) {
+        std::string bg = "";
+        if (m_bgEnabled) {
+            if (m_bgColorCode == "gradient") {
+                bg = GetInterpolatedColor((float)drawnLines / std::max(1, consoleHeight - 1), m_bgGradientColors, true);
+            } else {
+                bg = m_bgColorCode;
+            }
+
+            // Если внутри контента есть \033[0m (сброс стилей), нам нужно восстановить фон!
+            std::string resetStr = "\033[0m" + bg;
+            size_t pos = 0;
+            while ((pos = content.find("\033[0m", pos)) != std::string::npos) {
+                content.replace(pos, 4, resetStr);
+                pos += resetStr.length();
+            }
+        }
+
+        // \033[K чистит до конца строки ТЕКУЩИМ фоном
+        frame += bg + m_paddingLeft + content + "\033[0m" + bg + "\033[K\n";
+        drawnLines++;
+    };
+
+    addLine("");
 
     // ==========================================
     // ЕСЛИ АКТИВЕН ОВЕРЛЕЙ (Меню Help/Search)
     // ==========================================
     if (!m_overlayText.empty()) {
-        frame += m_paddingLeft + "\033[38;2;80;255;150mC L I A M P   O V E R L A Y\033[0m\033[K\n";
-        linesCount++;
-        frame += "\033[K\n";
-        linesCount++;
+        addLine("\033[38;2;80;255;150mC L I A M P   O V E R L A Y\033[0m");
+        addLine("");
 
         std::stringstream ss(m_overlayText);
         std::string line;
         while(std::getline(ss, line)) {
-            frame += m_paddingLeft + line + "\033[K\n";
-            linesCount++;
+            addLine(line);
         }
     }
     // ==========================================
     // ИНАЧЕ РИСУЕМ СТАНДАРТНЫЙ ИНТЕРФЕЙС
     // ==========================================
     else {
-        frame += m_paddingLeft + "\033[38;2;80;255;150mV K   A U D I O   P L A Y E R\033[0m\033[K\n";
-        linesCount++;
+        addLine("\033[38;2;80;255;150mV K   A U D I O   P L A Y E R\033[0m");
 
         Track currentTrack = m_playlist.GetCurrentTrack();
         std::string trackTitle = currentTrack.artist + " - " + currentTrack.title;
         if (trackTitle == " - ") trackTitle = "No Track Loaded";
         trackTitle = safeTruncate(trackTitle, consoleWidth - 20);
-        frame += m_paddingLeft + "\033[38;2;250;250;250m🎵 \033[1m" + trackTitle + "\033[0m\033[K\n";
-        linesCount++;
+        addLine("\033[38;2;250;250;250m🎵 \033[1m" + trackTitle + "\033[0m");
 
-        frame += m_paddingLeft + "\033[K\n";
-        linesCount++;
+        addLine("");
 
         double currentSec = m_audio.GetPositionSeconds();
         double totalSec = m_audio.GetLengthSeconds();
@@ -257,23 +329,21 @@ void UltimateRenderer::Render() {
         snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d / %02d:%02d", curMin, curSecInt, totMin, totSecInt);
 
         std::string statusStr = m_audio.IsPlaying() ? "\033[38;2;80;255;150m▶ Playing\033[0m" : "\033[38;2;150;150;150m■ Paused\033[0m";
-        frame += m_paddingLeft + "\033[38;2;150;150;150m" + timeBuf + "\033[0m        " + statusStr + "\033[K\n";
-        linesCount++;
+        addLine("\033[38;2;150;150;150m" + std::string(timeBuf) + "\033[0m        " + statusStr);
 
-        frame += m_paddingLeft + "\033[K\n";
-        linesCount++;
+        addLine("");
 
         const char* blocks[] = {" ", " ", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
         bool useGradient = (m_colorCode == "gradient");
 
         for (int y = currentHeight - 1; y >= 0; --y) {
-            frame += m_paddingLeft;
+            std::string lineContent = "";
 
             if (useGradient) {
                 float t = static_cast<float>(y) / static_cast<float>(currentHeight > 1 ? currentHeight - 1 : 1);
-                frame += GetGradientColor(t);
+                lineContent += GetInterpolatedColor(t, m_gradientColors, false);
             } else {
-                frame += m_colorCode;
+                lineContent += m_colorCode;
             }
 
             for (int x = 0; x < currentWidth; ++x) {
@@ -283,13 +353,12 @@ void UltimateRenderer::Render() {
                 if (ticks >= 8) barChar = blocks[8];
                 else if (ticks > 0) barChar = blocks[ticks];
 
-                for(int bw = 0; bw < m_barWidth; ++bw) frame += barChar;
+                for(int bw = 0; bw < m_barWidth; ++bw) lineContent += barChar;
                 if (x < currentWidth - 1) {
-                    for(int bs = 0; bs < m_barSpacing; ++bs) frame += " ";
+                    for(int bs = 0; bs < m_barSpacing; ++bs) lineContent += " ";
                 }
             }
-            frame += "\033[0m\033[K\n";
-            linesCount++;
+            addLine(lineContent);
         }
 
         int barInnerLength = innerWidth;
@@ -306,11 +375,9 @@ void UltimateRenderer::Render() {
         } else {
             for (int i = 0; i < barInnerLength; ++i) barStr += "\033[38;2;80;80;80m━\033[0m";
         }
-        frame += m_paddingLeft + barStr + "\033[K\n";
-        linesCount++;
+        addLine(barStr);
 
-        frame += m_paddingLeft + "\033[K\n";
-        linesCount++;
+        addLine("");
 
         int volPercent = static_cast<int>(std::round(m_audio.GetVolume() * 100));
         int volBars = (volPercent * 25) / 100;
@@ -320,12 +387,10 @@ void UltimateRenderer::Render() {
             if (i < volBars) volStr += "█";
             else volStr += "\033[38;2;80;80;80m▒\033[38;2;80;255;150m";
         }
-        volStr += "\033[0m \033[38;2;150;150;150m" + std::to_string(volPercent) + "%\033[K\n";
-        frame += m_paddingLeft + volStr;
-        linesCount++;
+        volStr += "\033[0m \033[38;2;150;150;150m" + std::to_string(volPercent) + "%\033[0m";
+        addLine(volStr);
 
-        frame += m_paddingLeft + "\033[K\n";
-        linesCount++;
+        addLine("");
 
         std::vector<Track> queue = m_playlist.GetQueueTracks();
         int trackIndex = 0;
@@ -337,8 +402,7 @@ void UltimateRenderer::Render() {
         int repMode = m_playlist.GetRepeatMode();
         std::string repStr = (repMode == 1) ? "[Repeat: All]" : (repMode == 2 ? "[Repeat: One]" : "[Repeat: Off]");
 
-        frame += m_paddingLeft + "\033[38;2;255;180;80m▶ Playlist\033[0m \033[38;2;100;100;100m—\033[0m " + shufStr + " \033[38;2;150;150;150m" + repStr + " [" + std::to_string(trackIndex + 1) + "/" + std::to_string(queue.size()) + "]\033[0m\033[K\n";
-        linesCount++;
+        addLine("\033[38;2;255;180;80m▶ Playlist\033[0m \033[38;2;100;100;100m—\033[0m " + shufStr + " \033[38;2;150;150;150m" + repStr + " [" + std::to_string(trackIndex + 1) + "/" + std::to_string(queue.size()) + "]\033[0m");
 
         int half = (playlistLines - 1) / 2;
         int startIdx = std::max(0, trackIndex - half);
@@ -350,54 +414,66 @@ void UltimateRenderer::Render() {
         for (int i = startIdx; i <= endIdx; ++i) {
             std::string tName = safeTruncate(queue[i].artist + " - " + queue[i].title, consoleWidth - 15);
             if (i == trackIndex) {
-                frame += m_paddingLeft + "\033[38;2;80;255;150m▶ " + std::to_string(i + 1) + ". " + tName + "\033[0m\033[K\n";
+                addLine("\033[38;2;80;255;150m▶ " + std::to_string(i + 1) + ". " + tName + "\033[0m");
             } else {
-                frame += m_paddingLeft + "  \033[38;2;150;150;150m" + std::to_string(i + 1) + ". " + tName + "\033[0m\033[K\n";
+                addLine("  \033[38;2;150;150;150m" + std::to_string(i + 1) + ". " + tName + "\033[0m");
             }
-            linesCount++;
         }
     }
 
     // 7. СТАТУС БАР И ФУТЕР
+    while (drawnLines < consoleHeight - 4) {
+        addLine("");
+    }
+
     if (!m_statusMessage.empty() && m_overlayText.empty()) {
         std::string cleanMsg = m_statusMessage;
         cleanMsg.erase(std::remove(cleanMsg.begin(), cleanMsg.end(), '\n'), cleanMsg.end());
         cleanMsg.erase(std::remove(cleanMsg.begin(), cleanMsg.end(), '\r'), cleanMsg.end());
-        frame += "\033[K\n" + m_paddingLeft + "\033[38;2;255;180;80mℹ " + cleanMsg + "\033[0m\033[K\n";
-        linesCount += 2;
+        addLine("\033[38;2;255;180;80mℹ " + cleanMsg + "\033[0m");
+    } else {
+        addLine("");
     }
 
-    frame += m_paddingLeft + "\033[38;2;80;80;80m" + std::string(innerWidth, '-') + "\033[0m\033[K\n";
-    linesCount++;
-    frame += m_paddingLeft + "\033[1;37m[P]\033[0m Play   \033[1;37m[N]\033[0m Next   \033[1;37m[B]\033[0m Prev   \033[1;37m[SH]\033[0m Shuffle   \033[1;37m[V 50]\033[0m Vol   \033[1;37m[H]\033[0m Help   \033[1;37m[Q]\033[0m Quit\033[K";
-    linesCount++; // Заметь, в конце НЕТ переноса строки!
+    addLine("\033[38;2;80;80;80m" + std::string(innerWidth, '-') + "\033[0m");
+
+    // Внимание! Последнюю строку добавляем вручную без \n, чтобы курсор остался на ней
+    std::string footer = "\033[1;37m[P]\033[0m Play   \033[1;37m[N]\033[0m Next   \033[1;37m[B]\033[0m Prev   \033[1;37m[SH]\033[0m Shuffle   \033[1;37m[V 50]\033[0m Vol   \033[1;37m[H]\033[0m Help   \033[1;37m[Q]\033[0m Quit";
+
+    std::string bg = "";
+    if (m_bgEnabled) {
+        bg = m_bgColorCode == "gradient" ? GetInterpolatedColor((float)drawnLines / std::max(1, consoleHeight - 1), m_bgGradientColors, true) : m_bgColorCode;
+        std::string resetStr = "\033[0m" + bg;
+        size_t pos = 0;
+        while ((pos = footer.find("\033[0m", pos)) != std::string::npos) {
+            footer.replace(pos, 4, resetStr);
+            pos += resetStr.length();
+        }
+    }
+    frame += bg + m_paddingLeft + footer + "\033[0m" + bg + "\033[K";
 
     // ==========================================
-    // ИДЕАЛЬНАЯ ОТРИСОВКА (Без мерцания и скрытия курсора)
+    // ОТРИСОВКА
     // ==========================================
     if (m_needsFullRedraw || frame != m_lastPrintedStr) {
         m_lastPrintedStr = frame;
         bool isFullRedraw = m_needsFullRedraw;
         m_needsFullRedraw = false;
 
-        QMetaObject::invokeMethod(QCoreApplication::instance(), [frame, linesCount, isFullRedraw]() {
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [frame, consoleHeight, isFullRedraw]() {
             std::lock_guard<std::mutex> qLock(Logger::GetMutex());
+            std::string out = "\033[?25l";
 
             if (isFullRedraw) {
-                // Если был ресайз окна или нажат Enter - чистим терминал и выделяем место
-                printf("\r\033[2J\033[H");
-                for (int i = 0; i < linesCount + 2; ++i) printf("\n");
-                printf("> ");
+                out += "\033[2J";
+                out += "\033[" + std::to_string(consoleHeight) + ";1H> \033[K";
             }
 
-            // МАГИЯ: Запоминаем каретку на промпте ввода `> ` (\033[s)
-            // Поднимаемся ровно над ним (\033[%dA)
-            // Печатаем кадр (он заканчивается прямо над промптом)
-            // Возвращаем каретку на промпт (\033[u)
-            std::string out = "\033[s";
-            out += "\r\033[" + std::to_string(linesCount + 1) + "A";
+            out += "\033[s";
+            out += "\033[H";
             out += frame;
             out += "\033[u";
+            out += "\033[?25h";
 
             printf("%s", out.c_str());
             fflush(stdout);

@@ -116,6 +116,15 @@ void ConsoleController::SetState(ConsoleState state) {
 
 void ConsoleController::Start() {
     if (m_isRunning) return;
+
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    int mode = settings.value("Visualizer/Mode", 0).toInt();
+
+    if (mode == 1) {
+        std::cout << "\033[?1049h\033[2J\033[999;1H> ";
+        std::cout.flush();
+    }
+
     m_isRunning = true;
     m_inputThread = std::thread(&ConsoleController::InputLoop, this);
     m_uiThread = std::thread(&ConsoleController::UiLoop, this);
@@ -123,6 +132,16 @@ void ConsoleController::Start() {
 
 void ConsoleController::Stop() {
     m_isRunning = false;
+
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    int mode = settings.value("Visualizer/Mode", 0).toInt();
+
+    if (mode == 1) {
+        std::cout << "\033[?1049l\033[?25h";
+    } else {
+        std::cout << "\033[?25h";
+    }
+    std::cout.flush();
 
 #ifdef _WIN32
     HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);

@@ -3,6 +3,10 @@
 #include <vector>
 #include <mutex>
 
+struct RGB {
+    int r, g, b;
+};
+
 class IAudioEngine;
 class PlaylistManager;
 
@@ -38,6 +42,12 @@ private:
     bool m_needsFullRedraw = false;
 
     std::string m_colorCode = "gradient";
+    std::vector<RGB> m_gradientColors;
+
+    bool m_bgEnabled = false;
+    std::string m_bgColorCode = "gradient";
+    std::vector<RGB> m_bgGradientColors;
+
     std::string m_layout = "Visualizer,ProgressBar,TrackInfo";
     std::string m_paddingLeft = "";
 
