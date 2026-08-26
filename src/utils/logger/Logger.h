@@ -15,9 +15,10 @@ public:
     static void Close();
     static std::mutex& GetMutex() { return s_mutex; }
 
-    // Добавляем метод для изменения минимального уровня вывода
     static void SetMinLogLevel(LogLevel level);
+    static void SetConsoleOutputEnabled(bool enabled);
 private:
     static std::mutex s_mutex;
-    static LogLevel s_minLogLevel; // Переменная для хранения текущего порога
+    static LogLevel s_minLogLevel;
+    static bool s_consoleOutputEnabled;
 };

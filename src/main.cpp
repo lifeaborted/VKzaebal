@@ -107,8 +107,7 @@ int main(int argc, char *argv[]) {
     float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
     int savedTrackIndex = settings.value("Session/CurrentTrackIndex", -1).toInt();
 
-    // ОКРУГЛЯЕМ ПОЗИЦИЮ ЧТОБЫ ИЗБЕЖАТЬ СМЕЩЕНИЙ MP3
-    double savedPosition = std::round(settings.value("Session/Position", 0.0).toDouble());
+    double savedPosition = settings.value("Session/Position", 0.0).toDouble();
     int savedRepeatMode = settings.value("Session/Repeat", 1).toInt();
 
     DatabaseManager dbManager;
@@ -164,6 +163,8 @@ int main(int argc, char *argv[]) {
     };
 
     int uiMode = settings.value("Visualizer/Mode", 0).toInt(); // Читаем текущий режим
+
+    Logger::SetConsoleOutputEnabled(uiMode == 0);
 
     auto initPlaylistAndStart = [&](bool isOnline) {
         if (isPlaybackStarted) return;
@@ -310,7 +311,7 @@ int main(int argc, char *argv[]) {
             Logger::Log(LogLevel::INFO, "Main: Saving session state...");
             settings.setValue("Session/Volume", audio.GetVolume());
             settings.setValue("Session/CurrentTrackIndex", playlist.GetCurrentAbsoluteIndex());
-            settings.setValue("Session/Position", std::round(audio.GetPositionSeconds()));
+            settings.setValue("Session/Position", audio.GetPositionSeconds());
             settings.setValue("Session/Shuffle", playlist.IsShuffle());
             settings.setValue("Session/Repeat", playlist.GetRepeatMode());
             settings.sync();

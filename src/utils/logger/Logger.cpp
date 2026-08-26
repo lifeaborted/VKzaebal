@@ -13,8 +13,9 @@ namespace fs = std::filesystem;
 static std::ofstream logFile;
 std::mutex Logger::s_mutex;
 
-// Инициализация минимального уровня логов (по умолчанию выводим всё)
+// Инициализация минимального уровня логов
 LogLevel Logger::s_minLogLevel = LogLevel::ERROR;
+bool Logger::s_consoleOutputEnabled = true;
 
 void Logger::Init() {
     PathManager::Init();
@@ -57,7 +58,7 @@ void Logger::Log(LogLevel level, const std::string& message) {
 
     std::string levelStr;
     switch (level) {
-        case LogLevel::DEBUG:   levelStr = "[DEBUG] "; break; // Добавлен case для DEBUG
+        case LogLevel::DEBUG:   levelStr = "[DEBUG] "; break;
         case LogLevel::INFO:    levelStr = "[INFO] "; break;
         case LogLevel::WARNING: levelStr = "[WARN] "; break;
         case LogLevel::ERROR:   levelStr = "[ERROR] "; break;
@@ -68,12 +69,14 @@ void Logger::Log(LogLevel level, const std::string& message) {
 
     std::lock_guard<std::mutex> lock(s_mutex);
 
-    if (level == LogLevel::ERROR) {
-        std::cerr << clearUi << fullMessage << "\n\n> ";
-        std::cerr.flush();
-    } else {
-        std::cout << clearUi << fullMessage << "\n\n> ";
-        std::cout.flush();
+    if (s_consoleOutputEnabled) {
+        if (level == LogLevel::ERROR) {
+            std::cerr << clearUi << fullMessage << "\n\n> ";
+            std::cerr.flush();
+        } else {
+            std::cout << clearUi << fullMessage << "\n\n> ";
+            std::cout.flush();
+        }
     }
 
     // В файл логируем всё, что прошло фильтр
@@ -81,6 +84,10 @@ void Logger::Log(LogLevel level, const std::string& message) {
         logFile << fullMessage << std::endl;
         logFile.flush();
     }
+}
+
+void Logger::SetConsoleOutputEnabled(bool enabled) {
+    s_consoleOutputEnabled = enabled;
 }
 
 void Logger::Close() {

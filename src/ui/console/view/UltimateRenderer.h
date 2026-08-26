@@ -34,7 +34,7 @@ private:
     int m_barSpacing = 1;
     int m_blockSpacing = 0;
 
-    int m_fps = 30;
+    int m_fps = 60;
     float m_smoothing = 0.5f;
     std::vector<float> m_previousPeaks;
 

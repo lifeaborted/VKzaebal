@@ -102,11 +102,17 @@ void ConsoleRenderer::RenderBasic() {
         spectrum += "]";
 
         Track currentTrack = m_playlist.GetCurrentTrack();
-        std::vector<Track> queue = m_playlist.GetQueueTracks();
-        int trackIndex = 0;
 
-        for (size_t i = 0; i < queue.size(); ++i) {
-            if (queue[i].id == currentTrack.id) {
+        static std::vector<Track> cachedQueue;
+        static std::string lastTrackId = "";
+        if (cachedQueue.empty() || currentTrack.id != lastTrackId) {
+            cachedQueue = m_playlist.GetQueueTracks();
+            lastTrackId = currentTrack.id;
+        }
+
+        int trackIndex = 0;
+        for (size_t i = 0; i < cachedQueue.size(); ++i) {
+            if (cachedQueue[i].id == currentTrack.id) {
                 trackIndex = i + 1;
                 break;
             }
@@ -121,11 +127,12 @@ void ConsoleRenderer::RenderBasic() {
 
         if (currentStr != m_lastPrintedStr) {
             m_lastPrintedStr = currentStr;
-            QMetaObject::invokeMethod(QCoreApplication::instance(), [currentStr]() {
-                std::lock_guard<std::mutex> lock(Logger::GetMutex());
-                printf("\033[s\033[1A\r\033[2K%s\033[u", currentStr.c_str());
-                fflush(stdout);
-            }, Qt::QueuedConnection);
+
+            std::lock_guard<std::mutex> lock(Logger::GetMutex());
+            std::string out = "\033[?2026h\033[s\033[1A\r\033[2K" + currentStr + "\033[u\033[?2026l";
+
+            fwrite(out.data(), 1, out.size(), stdout);
+            fflush(stdout);
         }
     }
 }

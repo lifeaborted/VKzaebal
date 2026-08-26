@@ -232,8 +232,17 @@ void ConsoleController::UiLoop() {
             m_renderer->Render();
         }
 
-        // ЧИТАЕМ ДИНАМИЧЕСКИЙ FPS ИЗ РЕНДЕРЕРА
-        int fps = m_renderer->IsVisualizerEnabled() ? m_renderer->GetFramerate() : 2;
+        // ДИНАМИЧЕСКИЙ FPS В ЗАВИСИМОСТИ ОТ РЕЖИМА
+        QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+        int mode = settings.value("Visualizer/Mode", 0).toInt();
+
+        int fps = 2;
+        if (mode == 1) {
+            fps = m_renderer->GetFramerate();
+        } else {
+            fps = m_renderer->IsVisualizerEnabled() ? 15 : 2;
+        }
+
         int delay = (fps > 0) ? (1000 / fps) : 33;
         std::this_thread::sleep_for(std::chrono::milliseconds(delay));
     }

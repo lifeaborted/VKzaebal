@@ -100,11 +100,7 @@ void TrackDownloader::Download(const Track& track, const std::string& urlStr) {
     QString filePath = PathManager::GetDownloadFilePath(safeName, "mp3");
     QString aacPath = PathManager::GetDownloadFilePath(safeName, "aac");
     auto syncPrint = [](const std::string& text) {
-        QMetaObject::invokeMethod(QCoreApplication::instance(), [text]() {
-            std::lock_guard<std::mutex> lock(Logger::GetMutex());
-            std::cout << "\r\033[2K\033[1A\r\033[2K" << text << "\n\n> ";
-            std::cout.flush();
-        }, Qt::QueuedConnection);
+        Logger::Log(LogLevel::INFO, text);
     };
 
     if (QFile::exists(filePath) || QFile::exists(aacPath)) {

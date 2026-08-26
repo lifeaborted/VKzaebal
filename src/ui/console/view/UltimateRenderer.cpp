@@ -199,14 +199,17 @@ void UltimateRenderer::Render() {
     int consoleWidth, consoleHeight;
     GetConsoleSize(consoleWidth, consoleHeight);
     static int s_lastConsoleWidth = 0;
+    static int s_lastConsoleHeight = 0;
 
-    if (consoleWidth != s_lastConsoleWidth) {
+    if (consoleWidth != s_lastConsoleWidth || consoleHeight != s_lastConsoleHeight) {
         if (s_lastConsoleWidth != 0) m_needsFullRedraw = true;
         s_lastConsoleWidth = consoleWidth;
+        s_lastConsoleHeight = consoleHeight;
     }
 
-    int fixedLines = 13;
-    int availableForDynamic = (consoleHeight - 1) - fixedLines;
+    // Увеличиваем базу, чтобы всегда оставлять 2 строки внизу (для инпута и буфера от скролла)
+    int fixedLines = 18;
+    int availableForDynamic = consoleHeight - fixedLines;
 
     int currentHeight = m_height;
     int playlistLines = 5;
@@ -266,6 +269,9 @@ void UltimateRenderer::Render() {
 
     // Умная лямбда для добавления строк с заливкой фона
     auto addLine = [&](std::string content) {
+        // ГЛАВНАЯ ЗАЩИТА: Никогда не рисуем на последних двух строках (зарезервировано под инпут)
+        if (drawnLines >= consoleHeight - 2) return;
+
         std::string bg = "";
         if (m_bgEnabled) {
             if (m_bgColorCode == "gradient") {
@@ -274,7 +280,6 @@ void UltimateRenderer::Render() {
                 bg = m_bgColorCode;
             }
 
-            // Если внутри контента есть \033[0m (сброс стилей), нам нужно восстановить фон!
             std::string resetStr = "\033[0m" + bg;
             size_t pos = 0;
             while ((pos = content.find("\033[0m", pos)) != std::string::npos) {
@@ -283,7 +288,6 @@ void UltimateRenderer::Render() {
             }
         }
 
-        // \033[K чистит до конца строки ТЕКУЩИМ фоном
         frame += bg + m_paddingLeft + content + "\033[0m" + bg + "\033[K\n";
         drawnLines++;
     };
@@ -334,6 +338,7 @@ void UltimateRenderer::Render() {
         addLine("");
 
         const char* blocks[] = {" ", " ", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
+
         bool useGradient = (m_colorCode == "gradient");
 
         for (int y = currentHeight - 1; y >= 0; --y) {
@@ -391,28 +396,37 @@ void UltimateRenderer::Render() {
         addLine(volStr);
 
         addLine("");
+        addLine("");
 
-        std::vector<Track> queue = m_playlist.GetQueueTracks();
+        // УМНЫЙ КЭШ: Копируем 2000 треков только если трек сменился!
+        static std::vector<Track> cachedQueue;
+        static std::string lastTrackId = "";
+
+        if (cachedQueue.empty() || currentTrack.id != lastTrackId) {
+            cachedQueue = m_playlist.GetQueueTracks();
+            lastTrackId = currentTrack.id;
+        }
+
         int trackIndex = 0;
-        for (size_t i = 0; i < queue.size(); ++i) {
-            if (queue[i].id == currentTrack.id) { trackIndex = i; break; }
+        for (size_t i = 0; i < cachedQueue.size(); ++i) {
+            if (cachedQueue[i].id == currentTrack.id) { trackIndex = i; break; }
         }
 
         std::string shufStr = m_playlist.IsShuffle() ? "\033[38;2;255;180;80m[Shuffle]\033[0m" : "\033[38;2;150;150;150m[Ordered]\033[0m";
         int repMode = m_playlist.GetRepeatMode();
         std::string repStr = (repMode == 1) ? "[Repeat: All]" : (repMode == 2 ? "[Repeat: One]" : "[Repeat: Off]");
 
-        addLine("\033[38;2;255;180;80m▶ Playlist\033[0m \033[38;2;100;100;100m—\033[0m " + shufStr + " \033[38;2;150;150;150m" + repStr + " [" + std::to_string(trackIndex + 1) + "/" + std::to_string(queue.size()) + "]\033[0m");
+        addLine("\033[38;2;255;180;80m▶ Playlist\033[0m \033[38;2;100;100;100m—\033[0m " + shufStr + " \033[38;2;150;150;150m" + repStr + " [" + std::to_string(trackIndex + 1) + "/" + std::to_string(cachedQueue.size()) + "]\033[0m");
 
         int half = (playlistLines - 1) / 2;
         int startIdx = std::max(0, trackIndex - half);
-        int endIdx = std::min(static_cast<int>(queue.size()) - 1, startIdx + playlistLines - 1);
+        int endIdx = std::min(static_cast<int>(cachedQueue.size()) - 1, startIdx + playlistLines - 1);
         if (endIdx - startIdx < playlistLines - 1) {
             startIdx = std::max(0, endIdx - (playlistLines - 1));
         }
 
         for (int i = startIdx; i <= endIdx; ++i) {
-            std::string tName = safeTruncate(queue[i].artist + " - " + queue[i].title, consoleWidth - 15);
+            std::string tName = safeTruncate(cachedQueue[i].artist + " - " + cachedQueue[i].title, consoleWidth - 15);
             if (i == trackIndex) {
                 addLine("\033[38;2;80;255;150m▶ " + std::to_string(i + 1) + ". " + tName + "\033[0m");
             } else {
@@ -422,7 +436,11 @@ void UltimateRenderer::Render() {
     }
 
     // 7. СТАТУС БАР И ФУТЕР
-    while (drawnLines < consoleHeight - 4) {
+    // Резервируем 4 строки для футера.
+    int targetLines = consoleHeight - 6;
+    if (targetLines < 10) targetLines = 10;
+
+    while (drawnLines < targetLines) {
         addLine("");
     }
 
@@ -437,7 +455,6 @@ void UltimateRenderer::Render() {
 
     addLine("\033[38;2;80;80;80m" + std::string(innerWidth, '-') + "\033[0m");
 
-    // Внимание! Последнюю строку добавляем вручную без \n, чтобы курсор остался на ней
     std::string footer = "\033[1;37m[P]\033[0m Play   \033[1;37m[N]\033[0m Next   \033[1;37m[B]\033[0m Prev   \033[1;37m[SH]\033[0m Shuffle   \033[1;37m[V 50]\033[0m Vol   \033[1;37m[H]\033[0m Help   \033[1;37m[Q]\033[0m Quit";
 
     std::string bg = "";
@@ -450,33 +467,47 @@ void UltimateRenderer::Render() {
             pos += resetStr.length();
         }
     }
-    frame += bg + m_paddingLeft + footer + "\033[0m" + bg + "\033[K";
+
+    addLine(footer);
+    addLine("");
 
     // ==========================================
-    // ОТРИСОВКА
+    // ОТРИСОВКА С ДВОЙНОЙ БУФЕРИЗАЦИЕЙ
     // ==========================================
     if (m_needsFullRedraw || frame != m_lastPrintedStr) {
         m_lastPrintedStr = frame;
-        bool isFullRedraw = m_needsFullRedraw;
+        bool forceFullRedraw = m_needsFullRedraw;
         m_needsFullRedraw = false;
 
-        QMetaObject::invokeMethod(QCoreApplication::instance(), [frame, consoleHeight, isFullRedraw]() {
-            std::lock_guard<std::mutex> qLock(Logger::GetMutex());
-            std::string out = "\033[?25l";
+        std::lock_guard<std::mutex> qLock(Logger::GetMutex());
 
-            if (isFullRedraw) {
-                out += "\033[2J";
-                out += "\033[" + std::to_string(consoleHeight) + ";1H> \033[K";
-            }
+        std::string out = "\033[?2026h\033[?25l";
 
-            out += "\033[s";
-            out += "\033[H";
-            out += frame;
-            out += "\033[u";
-            out += "\033[?25h";
+        std::string promptBg = "";
+        std::string promptFg = "\033[38;2;255;255;255m"; // Ярко-белый цвет для вводимого текста!
 
-            printf("%s", out.c_str());
-            fflush(stdout);
-        }, Qt::QueuedConnection);
+        if (m_bgEnabled) {
+            promptBg = m_bgColorCode == "gradient" ? GetInterpolatedColor(1.0f, m_bgGradientColors, true) : m_bgColorCode;
+        }
+
+        if (forceFullRedraw) {
+            out += "\033[2J";
+            // Закрашиваем предпоследнюю строку фоном, ставим белый текст и значок >
+            out += "\033[" + std::to_string(consoleHeight - 1) + ";1H" + promptBg + promptFg + "> \033[K";
+            // Очищаем самую последнюю строку (защита от скролла)
+            out += "\033[" + std::to_string(consoleHeight) + ";1H" + promptBg + "\033[K";
+            // Фиксируем курсор ввода после >
+            out += "\033[" + std::to_string(consoleHeight - 1) + ";3H";
+        }
+
+        out += "\033[s"; // Сохраняем позицию каретки
+        out += "\033[H"; // Прыгаем в верх экрана
+        out += frame;    // Рисуем основной интерфейс
+
+        // Восстанавливаем каретку, возвращаем белый текст и фон для ввода
+        out += "\033[u" + promptBg + promptFg + "\033[?25h\033[?2026l";
+
+        fwrite(out.data(), 1, out.size(), stdout);
+        fflush(stdout);
     }
 }

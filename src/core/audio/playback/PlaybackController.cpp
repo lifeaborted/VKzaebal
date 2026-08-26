@@ -8,7 +8,6 @@
 
 #include <QFile>
 #include <QTimer>
-#include <iostream>
 #include <QCoreApplication>
 
 PlaybackController::PlaybackController(IAudioEngine& audio, PlaylistManager& playlist, NetworkStreamer& streamer, QObject* parent)
@@ -73,14 +72,10 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
             }
 
             if (m_startPaused) { m_audio.Pause(); m_startPaused = false; }
-            std::cout << "\r\033[2K\033[1A\r\033[2K\n> ";
-            std::cout.flush();
             return;
         }
     } else if (attempt == 1) {
-        std::cout << "\r\033[2K\033[1A\r\033[2K";
-        std::cout << "[Загрузка] " << track.artist << " - " << track.title << "...\n\n> ";
-        std::cout.flush();
+        Logger::Log(LogLevel::INFO, "[Загрузка] " + track.artist + " - " + track.title + "...");
     }
 
     if (isDownloaded) {
@@ -93,8 +88,6 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
             }
 
             if (m_startPaused) { m_audio.Pause(); m_startPaused = false; }
-            std::cout << "\r\033[2K\033[1A\r\033[2K\033[1A\r\033[2K\n> ";
-            std::cout.flush();
         } else {
             m_playlist.Next();
         }
@@ -107,10 +100,8 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
         if (!isNetworkError && freshUrl.empty()) {
             m_skipCount++;
             if (m_skipCount >= 5) {
-                Logger::Log(LogLevel::ERROR, "Too many unplayable tracks. Stopping loop.");
+                Logger::Log(LogLevel::ERROR, "Слишком много ошибок подряд. Остановка.");
                 m_skipCount = 0;
-                std::cout << "\r\033[2K\033[1A\r\033[2K[Внимание] Ошибка сети/токена. Воспроизведение остановлено.\n\n> ";
-                std::cout.flush();
                 return;
             }
 
@@ -141,9 +132,6 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
                 m_audio.Pause();
                 m_startPaused = false;
             }
-
-            std::cout << "\r\033[2K\033[1A\r\033[2K\033[1A\r\033[2K\n> ";
-            std::cout.flush();
             return;
         }
 
