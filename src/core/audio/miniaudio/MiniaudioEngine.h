@@ -41,6 +41,11 @@ public:
         m_networkDiscardFrames = static_cast<ma_uint64>(seconds * SAMPLE_RATE);
     }
 
+    void SetNetworkStreamFinished() override {
+        m_isNetworkFinished = true;
+        m_decodeCv.notify_all();
+    }
+
     static constexpr int SAMPLE_RATE = 44100;
 
 private:
@@ -108,4 +113,6 @@ private:
 
     std::string m_currentTrackId;
     std::atomic<ma_uint64> m_networkDiscardFrames{0};
+
+    std::atomic<bool> m_isNetworkFinished{false};
 };

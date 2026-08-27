@@ -140,6 +140,13 @@ void ApplicationCore::WireConnections() {
         m_audio->SetNetworkSkipSeconds(skipSeconds);
     });
 
+    connect(m_streamer.get(), &NetworkStreamer::DownloadFinished, [&]() {
+        m_audio->SetNetworkStreamFinished();
+    });
+    connect(m_streamer.get(), &NetworkStreamer::DownloadError, [&](const std::string&) {
+        m_audio->SetNetworkStreamFinished();
+    });
+
     // Аудио -> Воспроизведение
     m_audio->OnNetworkSeekRequested = [&](double targetSeconds) {
         QMetaObject::invokeMethod(QCoreApplication::instance(), [&, targetSeconds]() {

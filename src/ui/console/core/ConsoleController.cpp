@@ -80,6 +80,7 @@ ConsoleController::ConsoleController(
 
     // Таймер для отрисовки интерфейса (Главный поток)
     m_uiTimer = new QTimer(this);
+    m_uiTimer->setTimerType(Qt::PreciseTimer);
     connect(m_uiTimer, &QTimer::timeout, this, &ConsoleController::OnUiTick);
 }
 
@@ -216,7 +217,10 @@ void ConsoleController::OnUiTick() {
     if (mode == 1) fps = m_renderer->GetFramerate();
     else fps = m_renderer->IsVisualizerEnabled() ? 15 : 2;
 
-    int newInterval = (fps > 0) ? (1000 / fps) : 33;
+    if (fps < 1) fps = 1;
+
+    int newInterval = (fps >= 1000) ? 0 : (1000 / fps);
+
     if (m_uiTimer->interval() != newInterval) {
         m_uiTimer->setInterval(newInterval);
     }

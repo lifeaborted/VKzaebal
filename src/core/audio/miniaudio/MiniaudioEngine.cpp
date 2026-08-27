@@ -19,19 +19,27 @@ typedef std::complex<double> Complex;
 static void SimpleFFT(std::vector<Complex>& a) {
     size_t n = a.size();
     if (n <= 1) return;
-    std::vector<Complex> a0(n / 2), a1(n / 2);
-    for (size_t i = 0; i < n / 2; i++) {
-        a0[i] = a[i * 2];
-        a1[i] = a[i * 2 + 1];
+
+    for (size_t i = 1, j = 0; i < n; i++) {
+        size_t bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) std::swap(a[i], a[j]);
     }
-    SimpleFFT(a0);
-    SimpleFFT(a1);
-    double ang = 2 * PI / n;
-    Complex w(1), wn(cos(ang), sin(ang));
-    for (size_t i = 0; i < n / 2; i++) {
-        a[i] = a0[i] + w * a1[i];
-        a[i + n / 2] = a0[i] - w * a1[i];
-        w *= wn;
+
+    for (size_t len = 2; len <= n; len <<= 1) {
+        double ang = 2 * PI / len;
+        Complex wlen(cos(ang), sin(ang));
+        for (size_t i = 0; i < n; i += len) {
+            Complex w(1);
+            for (size_t j = 0; j < len / 2; j++) {
+                Complex u = a[i + j];
+                Complex v = a[i + j + len / 2] * w;
+                a[i + j] = u + v;
+                a[i + j + len / 2] = u - v;
+                w *= wlen;
+            }
+        }
     }
 }
 
@@ -75,6 +83,7 @@ float MiniaudioEngine::GetVolume() const { return m_volume; }
 bool MiniaudioEngine::IsPlaying() const { return m_isPlaying; }
 
 void MiniaudioEngine::SetPositionSeconds(double pos) {
+    m_isNetworkFinished = false;
     if (m_currentDurationSec <= 0) return;
     if (pos < 0.0) pos = 0.0;
     if (pos > static_cast<double>(m_currentDurationSec)) pos = static_cast<double>(m_currentDurationSec);
@@ -323,15 +332,19 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
         double totalSec = static_cast<double>(engine->m_currentDurationSec);
         double crossfadeSec = engine->m_crossfadeDurationMs / 1000.0;
 
+        // --- ДЕТЕКТОР EOF ---
         if (framesRead == 0 && frameCount > 0) {
             bool isEof = false;
             if (engine->m_decoder) {
+                isEof = true;
+            } else if (engine->m_isNetworkFinished) {
                 isEof = true;
             } else if (totalSec > 0.0 && currentSec >= totalSec - 15.0) {
                 isEof = true;
             }
 
             if (isEof) {
+                engine->m_playbackFrameCount = static_cast<ma_uint64>(totalSec * static_cast<double>(SAMPLE_RATE));
                 currentSec = totalSec;
             }
         }
@@ -451,11 +464,18 @@ void MiniaudioEngine::DecodeLoop() {
         {
             std::unique_lock<std::mutex> lock(m_networkMutex);
             m_decodeCv.wait(lock, [this]() {
-                return !m_isDecoding || (m_aacBuffer.size() >= 188);
+                return !m_isDecoding || (m_aacBuffer.size() >= 188) || m_isNetworkFinished;
             });
         }
 
         if (!m_isDecoding) break;
+
+        if (m_aacBuffer.size() < 188) {
+            if (m_isNetworkFinished) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            continue;
+        }
 
         if (m_pcmBuffer.GetAvailableWrite() < 176400) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -583,6 +603,8 @@ void MiniaudioEngine::DecodeMp3Payload(const uint8_t* payload, size_t payloadSiz
 
 void MiniaudioEngine::ClearBuffers(bool crossfade, int nextDurationSec) {
     {
+        m_isNetworkFinished = false;
+
         std::lock_guard<std::mutex> lock(m_audioMutex);
 
         m_currentDurationSec = nextDurationSec;

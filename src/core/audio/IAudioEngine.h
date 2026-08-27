@@ -24,6 +24,8 @@ public:
     virtual void ClearBuffers(bool crossfade = false, int nextDurationSec = 0) = 0;
     virtual void SetNetworkSkipSeconds(double seconds) {}
 
+    virtual void SetNetworkStreamFinished() {}
+
     std::function<void()> OnTrackNearEnd;
     std::function<void()> OnTrackFinished;
     std::function<void(double)> OnNetworkSeekRequested;
