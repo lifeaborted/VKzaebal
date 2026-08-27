@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <chrono>
 
 struct RGB {
     int r, g, b;
@@ -56,4 +57,15 @@ private:
 
     std::string m_lastPrintedStr = "";
     int m_lastLinesCount = 0;
+
+    int m_uiFps = 5;
+    std::chrono::steady_clock::time_point m_lastUiUpdate;
+
+    // --- КЭШ ТЕКСТА ---
+    std::string m_cTrackTitle;
+    std::string m_cTimeStatus;
+    std::string m_cProgressBar;
+    std::string m_cVolumeEq;
+    std::vector<std::string> m_cPlaylistLines;
+    std::string m_cStatusMsg;
 };

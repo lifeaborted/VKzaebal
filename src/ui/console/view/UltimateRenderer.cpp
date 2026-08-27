@@ -162,6 +162,9 @@ void UltimateRenderer::ReloadConfig() {
     m_fps = settings.value("Visualizer/Framerate", 30).toInt();
     if (m_fps < 1) m_fps = 30;
 
+    m_uiFps = settings.value("Interface/Framerate", 5).toInt();
+    if (m_uiFps < 1) m_uiFps = 1;
+
     m_smoothing = settings.value("Visualizer/Smoothing", 0.5f).toFloat();
     if (m_smoothing < 0.0f) m_smoothing = 0.0f;
     if (m_smoothing > 0.99f) m_smoothing = 0.99f;
@@ -207,7 +210,14 @@ void UltimateRenderer::Render() {
         s_lastConsoleHeight = consoleHeight;
     }
 
-    // Увеличиваем базу, чтобы всегда оставлять 2 строки внизу (для инпута и буфера от скролла)
+    // --- ТАЙМЕР РАЗДЕЛЬНОГО ФРЕЙМРЕЙТА ---
+    auto now = std::chrono::steady_clock::now();
+    bool updateUi = false;
+    if (m_needsFullRedraw || std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastUiUpdate).count() >= (1000 / m_uiFps)) {
+        updateUi = true;
+        m_lastUiUpdate = now;
+    }
+
     int fixedLines = 18;
     int availableForDynamic = consoleHeight - fixedLines;
 
@@ -264,6 +274,102 @@ void UltimateRenderer::Render() {
         columns[x] = totalTicks;
     }
 
+    // --- ОБНОВЛЕНИЕ КЭША ИНТЕРФЕЙСА (Срабатывает только updateUi раз в секунду) ---
+    if (updateUi) {
+        Track currentTrack = m_playlist.GetCurrentTrack();
+
+        std::string trackTitle = currentTrack.artist + " - " + currentTrack.title;
+        if (trackTitle == " - ") trackTitle = "No Track Loaded";
+        m_cTrackTitle = safeTruncate(trackTitle, consoleWidth - 20);
+
+        double currentSec = m_audio.GetPositionSeconds();
+        double totalSec = m_audio.GetLengthSeconds();
+        if (totalSec <= 0.0) totalSec = static_cast<double>(currentTrack.duration);
+        if (currentSec < 0.0) currentSec = 0.0;
+
+        int curMin = static_cast<int>(currentSec) / 60, curSecInt = static_cast<int>(currentSec) % 60;
+        int totMin = static_cast<int>(totalSec) / 60, totSecInt = static_cast<int>(totalSec) % 60;
+
+        char timeBuf[128];
+        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d / %02d:%02d", curMin, curSecInt, totMin, totSecInt);
+
+        std::string statusStr = m_audio.IsPlaying() ? "\033[38;2;80;255;150m▶ Playing\033[0m" : "\033[38;2;150;150;150m■ Paused\033[0m";
+        m_cTimeStatus = "\033[38;2;150;150;150m" + std::string(timeBuf) + "\033[0m        " + statusStr;
+
+        int barInnerLength = innerWidth;
+        std::string barStr = "";
+
+        if (totalSec > 0.0) {
+            int filled = static_cast<int>((currentSec / totalSec) * barInnerLength);
+            if (filled > barInnerLength) filled = barInnerLength;
+
+            for (int i = 0; i < barInnerLength; ++i) {
+                if (i < filled) barStr += "\033[38;2;80;255;150m━\033[0m";
+                else barStr += "\033[38;2;80;80;80m━\033[0m";
+            }
+        } else {
+            for (int i = 0; i < barInnerLength; ++i) barStr += "\033[38;2;80;80;80m━\033[0m";
+        }
+        m_cProgressBar = barStr;
+
+        int volPercent = static_cast<int>(std::round(m_audio.GetVolume() * 100));
+        int volBars = (volPercent * 25) / 100;
+        std::string volStr = "\033[38;2;150;150;150mEQ [\033[38;2;255;180;80m Flat \033[38;2;150;150;150m]     VOL \033[38;2;80;255;150m";
+
+        for(int i = 0; i < 25; i++) {
+            if (i < volBars) volStr += "█";
+            else volStr += "\033[38;2;80;80;80m▒\033[38;2;80;255;150m";
+        }
+        volStr += "\033[0m \033[38;2;150;150;150m" + std::to_string(volPercent) + "%\033[0m";
+        m_cVolumeEq = volStr;
+
+        m_cPlaylistLines.clear();
+        static std::vector<Track> cachedQueue;
+        static std::string lastTrackId = "";
+
+        if (cachedQueue.empty() || currentTrack.id != lastTrackId) {
+            cachedQueue = m_playlist.GetQueueTracks();
+            lastTrackId = currentTrack.id;
+        }
+
+        int trackIndex = 0;
+        for (size_t i = 0; i < cachedQueue.size(); ++i) {
+            if (cachedQueue[i].id == currentTrack.id) { trackIndex = i; break; }
+        }
+
+        std::string shufStr = m_playlist.IsShuffle() ? "\033[38;2;255;180;80m[Shuffle]\033[0m" : "\033[38;2;150;150;150m[Ordered]\033[0m";
+        int repMode = m_playlist.GetRepeatMode();
+        std::string repStr = (repMode == 1) ? "[Repeat: All]" : (repMode == 2 ? "[Repeat: One]" : "[Repeat: Off]");
+
+        m_cPlaylistLines.push_back("\033[38;2;255;180;80m▶ Playlist\033[0m \033[38;2;100;100;100m—\033[0m " + shufStr + " \033[38;2;150;150;150m" + repStr + " [" + std::to_string(trackIndex + 1) + "/" + std::to_string(cachedQueue.size()) + "]\033[0m");
+
+        int half = (playlistLines - 1) / 2;
+        int startIdx = std::max(0, trackIndex - half);
+        int endIdx = std::min(static_cast<int>(cachedQueue.size()) - 1, startIdx + playlistLines - 1);
+        if (endIdx - startIdx < playlistLines - 1) {
+            startIdx = std::max(0, endIdx - (playlistLines - 1));
+        }
+
+        for (int i = startIdx; i <= endIdx; ++i) {
+            std::string tName = safeTruncate(cachedQueue[i].artist + " - " + cachedQueue[i].title, consoleWidth - 15);
+            if (i == trackIndex) {
+                m_cPlaylistLines.push_back("\033[38;2;80;255;150m▶ " + std::to_string(i + 1) + ". " + tName + "\033[0m");
+            } else {
+                m_cPlaylistLines.push_back("  \033[38;2;150;150;150m" + std::to_string(i + 1) + ". " + tName + "\033[0m");
+            }
+        }
+
+        if (!m_statusMessage.empty() && m_overlayText.empty()) {
+            std::string cleanMsg = m_statusMessage;
+            cleanMsg.erase(std::remove(cleanMsg.begin(), cleanMsg.end(), '\n'), cleanMsg.end());
+            cleanMsg.erase(std::remove(cleanMsg.begin(), cleanMsg.end(), '\r'), cleanMsg.end());
+            m_cStatusMsg = "\033[38;2;255;180;80mℹ " + cleanMsg + "\033[0m";
+        } else {
+            m_cStatusMsg = "";
+        }
+    }
+
+    // --- ФОРМИРОВАНИЕ КАДРА (Вызывается каждый тик FPS) ---
     std::string frame;
     frame.reserve(consoleWidth * consoleHeight * 2);
     int drawnLines = 0;
@@ -293,9 +399,6 @@ void UltimateRenderer::Render() {
 
     addLine("");
 
-    // ==========================================
-    // ЕСЛИ АКТИВЕН ОВЕРЛЕЙ (Меню Help/Search)
-    // ==========================================
     if (!m_overlayText.empty()) {
         addLine("\033[38;2;80;255;150mC L I A M P   O V E R L A Y\033[0m");
         addLine("");
@@ -305,39 +408,15 @@ void UltimateRenderer::Render() {
         while(std::getline(ss, line)) {
             addLine(line);
         }
-    }
-    // ==========================================
-    // ИНАЧЕ РИСУЕМ СТАНДАРТНЫЙ ИНТЕРФЕЙС
-    // ==========================================
-    else {
+    } else {
         addLine("\033[38;2;80;255;150mV K   A U D I O   P L A Y E R\033[0m");
-
-        Track currentTrack = m_playlist.GetCurrentTrack();
-        std::string trackTitle = currentTrack.artist + " - " + currentTrack.title;
-        if (trackTitle == " - ") trackTitle = "No Track Loaded";
-        trackTitle = safeTruncate(trackTitle, consoleWidth - 20);
-        addLine("\033[38;2;250;250;250m🎵 \033[1m" + trackTitle + "\033[0m");
+        addLine("\033[38;2;250;250;250m🎵 \033[1m" + m_cTrackTitle + "\033[0m");
 
         addLine("");
-
-        double currentSec = m_audio.GetPositionSeconds();
-        double totalSec = m_audio.GetLengthSeconds();
-        if (totalSec <= 0.0) totalSec = static_cast<double>(currentTrack.duration);
-        if (currentSec < 0.0) currentSec = 0.0;
-
-        int curMin = static_cast<int>(currentSec) / 60, curSecInt = static_cast<int>(currentSec) % 60;
-        int totMin = static_cast<int>(totalSec) / 60, totSecInt = static_cast<int>(totalSec) % 60;
-
-        char timeBuf[128];
-        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d / %02d:%02d", curMin, curSecInt, totMin, totSecInt);
-
-        std::string statusStr = m_audio.IsPlaying() ? "\033[38;2;80;255;150m▶ Playing\033[0m" : "\033[38;2;150;150;150m■ Paused\033[0m";
-        addLine("\033[38;2;150;150;150m" + std::string(timeBuf) + "\033[0m        " + statusStr);
-
+        addLine(m_cTimeStatus);
         addLine("");
 
         const char* blocks[] = {" ", " ", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
-
         bool useGradient = (m_colorCode == "gradient");
 
         for (int y = currentHeight - 1; y >= 0; --y) {
@@ -365,77 +444,17 @@ void UltimateRenderer::Render() {
             addLine(lineContent);
         }
 
-        int barInnerLength = innerWidth;
-        std::string barStr = "";
-
-        if (totalSec > 0.0) {
-            int filled = static_cast<int>((currentSec / totalSec) * barInnerLength);
-            if (filled > barInnerLength) filled = barInnerLength;
-
-            for (int i = 0; i < barInnerLength; ++i) {
-                if (i < filled) barStr += "\033[38;2;80;255;150m━\033[0m";
-                else barStr += "\033[38;2;80;80;80m━\033[0m";
-            }
-        } else {
-            for (int i = 0; i < barInnerLength; ++i) barStr += "\033[38;2;80;80;80m━\033[0m";
-        }
-        addLine(barStr);
-
+        addLine(m_cProgressBar);
         addLine("");
-
-        int volPercent = static_cast<int>(std::round(m_audio.GetVolume() * 100));
-        int volBars = (volPercent * 25) / 100;
-        std::string volStr = "\033[38;2;150;150;150mEQ [\033[38;2;255;180;80m Flat \033[38;2;150;150;150m]     VOL \033[38;2;80;255;150m";
-
-        for(int i = 0; i < 25; i++) {
-            if (i < volBars) volStr += "█";
-            else volStr += "\033[38;2;80;80;80m▒\033[38;2;80;255;150m";
-        }
-        volStr += "\033[0m \033[38;2;150;150;150m" + std::to_string(volPercent) + "%\033[0m";
-        addLine(volStr);
-
+        addLine(m_cVolumeEq);
         addLine("");
         addLine("");
 
-        // УМНЫЙ КЭШ: Копируем 2000 треков только если трек сменился!
-        static std::vector<Track> cachedQueue;
-        static std::string lastTrackId = "";
-
-        if (cachedQueue.empty() || currentTrack.id != lastTrackId) {
-            cachedQueue = m_playlist.GetQueueTracks();
-            lastTrackId = currentTrack.id;
-        }
-
-        int trackIndex = 0;
-        for (size_t i = 0; i < cachedQueue.size(); ++i) {
-            if (cachedQueue[i].id == currentTrack.id) { trackIndex = i; break; }
-        }
-
-        std::string shufStr = m_playlist.IsShuffle() ? "\033[38;2;255;180;80m[Shuffle]\033[0m" : "\033[38;2;150;150;150m[Ordered]\033[0m";
-        int repMode = m_playlist.GetRepeatMode();
-        std::string repStr = (repMode == 1) ? "[Repeat: All]" : (repMode == 2 ? "[Repeat: One]" : "[Repeat: Off]");
-
-        addLine("\033[38;2;255;180;80m▶ Playlist\033[0m \033[38;2;100;100;100m—\033[0m " + shufStr + " \033[38;2;150;150;150m" + repStr + " [" + std::to_string(trackIndex + 1) + "/" + std::to_string(cachedQueue.size()) + "]\033[0m");
-
-        int half = (playlistLines - 1) / 2;
-        int startIdx = std::max(0, trackIndex - half);
-        int endIdx = std::min(static_cast<int>(cachedQueue.size()) - 1, startIdx + playlistLines - 1);
-        if (endIdx - startIdx < playlistLines - 1) {
-            startIdx = std::max(0, endIdx - (playlistLines - 1));
-        }
-
-        for (int i = startIdx; i <= endIdx; ++i) {
-            std::string tName = safeTruncate(cachedQueue[i].artist + " - " + cachedQueue[i].title, consoleWidth - 15);
-            if (i == trackIndex) {
-                addLine("\033[38;2;80;255;150m▶ " + std::to_string(i + 1) + ". " + tName + "\033[0m");
-            } else {
-                addLine("  \033[38;2;150;150;150m" + std::to_string(i + 1) + ". " + tName + "\033[0m");
-            }
+        for (const auto& line : m_cPlaylistLines) {
+            addLine(line);
         }
     }
 
-    // 7. СТАТУС БАР И ФУТЕР
-    // Резервируем 4 строки для футера.
     int targetLines = consoleHeight - 6;
     if (targetLines < 10) targetLines = 10;
 
@@ -443,11 +462,8 @@ void UltimateRenderer::Render() {
         addLine("");
     }
 
-    if (!m_statusMessage.empty() && m_overlayText.empty()) {
-        std::string cleanMsg = m_statusMessage;
-        cleanMsg.erase(std::remove(cleanMsg.begin(), cleanMsg.end(), '\n'), cleanMsg.end());
-        cleanMsg.erase(std::remove(cleanMsg.begin(), cleanMsg.end(), '\r'), cleanMsg.end());
-        addLine("\033[38;2;255;180;80mℹ " + cleanMsg + "\033[0m");
+    if (!m_cStatusMsg.empty() && m_overlayText.empty()) {
+        addLine(m_cStatusMsg);
     } else {
         addLine("");
     }
@@ -470,9 +486,7 @@ void UltimateRenderer::Render() {
     addLine(footer);
     addLine("");
 
-    // ==========================================
-    // ОТРИСОВКА С ДВОЙНОЙ БУФЕРИЗАЦИЕЙ
-    // ==========================================
+    // --- ВЫВОД В КОНСОЛЬ ---
     if (m_needsFullRedraw || frame != m_lastPrintedStr) {
         m_lastPrintedStr = frame;
         bool forceFullRedraw = m_needsFullRedraw;
@@ -483,7 +497,7 @@ void UltimateRenderer::Render() {
         std::string out = "\033[?2026h\033[?25l";
 
         std::string promptBg = "";
-        std::string promptFg = "\033[38;2;255;255;255m"; // Ярко-белый цвет для вводимого текста!
+        std::string promptFg = "\033[38;2;255;255;255m";
 
         if (m_bgEnabled) {
             promptBg = m_bgColorCode == "gradient" ? GetInterpolatedColor(1.0f, m_bgGradientColors, true) : m_bgColorCode;
@@ -491,19 +505,15 @@ void UltimateRenderer::Render() {
 
         if (forceFullRedraw) {
             out += "\033[2J";
-            // Закрашиваем предпоследнюю строку фоном, ставим белый текст и значок >
             out += "\033[" + std::to_string(consoleHeight - 1) + ";1H" + promptBg + promptFg + "> \033[K";
-            // Очищаем самую последнюю строку (защита от скролла)
             out += "\033[" + std::to_string(consoleHeight) + ";1H" + promptBg + "\033[K";
-            // Фиксируем курсор ввода после >
             out += "\033[" + std::to_string(consoleHeight - 1) + ";3H";
         }
 
-        out += "\033[s"; // Сохраняем позицию каретки
-        out += "\033[H"; // Прыгаем в верх экрана
-        out += frame;    // Рисуем основной интерфейс
+        out += "\033[s";
+        out += "\033[H";
+        out += frame;
 
-        // Восстанавливаем каретку, возвращаем белый текст и фон для ввода
         out += "\033[u" + promptBg + promptFg + "\033[?25h\033[?2026l";
 
         fwrite(out.data(), 1, out.size(), stdout);
