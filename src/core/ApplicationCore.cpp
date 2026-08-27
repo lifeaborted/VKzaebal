@@ -109,7 +109,9 @@ void ApplicationCore::RestoreSession() {
     m_audio->SetVolume(settings.value("Session/Volume", 1.0f).toFloat());
     
     m_playbackCtrl->SetCrossfadeEnabled(settings.value("Audio/CrossfadePlayback", false).toBool());
-    m_playbackCtrl->SetSavedPosition(std::round(settings.value("Session/Position", 0.0).toDouble()));
+
+    m_playbackCtrl->SetSavedPosition(settings.value("Session/Position", 0.0).toDouble());
+
     m_playbackCtrl->SetStartPaused(!settings.value("Session/AutoPlay", false).toBool());
 }
 
@@ -239,7 +241,7 @@ void ApplicationCore::InitPlaylistAndStart(bool isOnline) {
 void ApplicationCore::OnAudioFetched(const std::vector<Track>& tracks) {
     bool hasNewTracks = false;
     auto allTracks = m_playlist->GetAllTracks();
-    
+
     std::unordered_set<std::string> existingIds;
     existingIds.reserve(allTracks.size());
     for (const auto& c : allTracks) {

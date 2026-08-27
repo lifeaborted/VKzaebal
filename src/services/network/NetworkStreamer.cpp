@@ -444,7 +444,6 @@ void NetworkStreamer::SeekTo(double targetSeconds) {
     m_currentChunkData.clear();
 
     if (m_streamType == StreamType::DirectHttp) {
-        // --- СТРАТЕГИЯ 1: HTTP Range Request ---
         if (m_totalFileSize > 0 && m_trackDurationSec > 0) {
             qint64 targetByte = static_cast<qint64>((targetSeconds / m_trackDurationSec) * m_totalFileSize);
             Logger::Log(LogLevel::INFO, "NetworkStreamer: [Direct HTTP] Requesting bytes=" + std::to_string(targetByte) + "-");
@@ -460,7 +459,6 @@ void NetworkStreamer::SeekTo(double targetSeconds) {
         }
     }
     else if (m_streamType == StreamType::HlsEncrypted || m_streamType == StreamType::HlsUnencrypted) {
-        // --- СТРАТЕГИЯ 2: Прыжок по чанкам HLS с точным позиционированием ---
         double accumulatedTime = 0.0;
         int targetIndex = 0;
 
@@ -469,7 +467,16 @@ void NetworkStreamer::SeekTo(double targetSeconds) {
                 targetIndex = i;
                 break;
             }
+
+            if (i == m_hlsChunks.size() - 1) {
+                targetIndex = i;
+                break;
+            }
             accumulatedTime += m_hlsChunks[i].durationSec;
+        }
+
+        if (targetSeconds > accumulatedTime + m_hlsChunks[targetIndex].durationSec) {
+            targetSeconds = accumulatedTime + m_hlsChunks[targetIndex].durationSec - 0.1;
         }
 
         if (m_streamType == StreamType::HlsEncrypted) {
@@ -481,8 +488,9 @@ void NetworkStreamer::SeekTo(double targetSeconds) {
             m_chunkQueue.enqueue(m_hlsChunks[i].url);
         }
 
-        // Высчитываем разницу для отбрасывания мусорных фреймов
         double skipSeconds = targetSeconds - accumulatedTime;
+        if (skipSeconds < 0.0) skipSeconds = 0.0;
+
         emit ExactSeekOffset(skipSeconds);
 
         Logger::Log(LogLevel::INFO, "NetworkStreamer: Jumping to chunk " + std::to_string(targetIndex) + ". Skip PCM: " + std::to_string(skipSeconds) + "s");
