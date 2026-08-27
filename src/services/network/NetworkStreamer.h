@@ -41,6 +41,7 @@ signals:
     void DataReceived(const QByteArray& data);
     void DownloadFinished();
     void DownloadError(const std::string& errorString);
+    void ExactSeekOffset(double skipSeconds);
 
 public slots:
     void PauseDownload();

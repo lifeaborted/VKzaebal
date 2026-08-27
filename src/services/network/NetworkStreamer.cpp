@@ -1,10 +1,14 @@
 #include "NetworkStreamer.h"
 #include "utils/logger/Logger.h"
+
 #include <QNetworkRequest>
 #include <QUrl>
 #include <QStringList>
 #include <QRegularExpression>
 #include <QUrlQuery>
+#include <QThreadPool>
+#include <QPointer>
+#include <QCoreApplication>
 
 NetworkStreamer::NetworkStreamer(QObject* parent)
     : QObject(parent), m_manager(new QNetworkAccessManager(this)), m_reply(nullptr) {
@@ -223,31 +227,126 @@ void NetworkStreamer::OnReadyRead() {
             return;
         }
     }
-    m_currentChunkData.append(m_reply->readAll());
+
+    QByteArray newData = m_reply->readAll();
+
+    // Если трек зашифрован (AES) - копим чанк целиком
+    if (m_isEncrypted) {
+        m_currentChunkData.append(newData);
+    } else {
+        // Иначе стримим напрямую в аудио-движок
+        if (!newData.isEmpty()) {
+            emit DataReceived(newData);
+        }
+    }
 }
 
 void NetworkStreamer::OnChunkFinished() {
-    if (m_reply && m_reply->error() == QNetworkReply::NoError) {
-        m_currentChunkData.append(m_reply->readAll());
+    bool shouldDownloadNextImmediately = false;
 
-        if (m_currentChunkData.size() > 0) {
+    if (m_reply && m_reply->error() == QNetworkReply::NoError) {
+        QByteArray newData = m_reply->readAll();
+
+        if (m_isEncrypted) {
+            m_currentChunkData.append(newData);
+
+            // Защита от мусорных HTML-страниц от ВК
             if (m_currentChunkData.startsWith("<!DOCTYPE") || m_currentChunkData.startsWith("<html")) {
-                Logger::Log(LogLevel::ERROR, "VK returned an HTML error page instead of an audio chunk!");
-            }
-            else if (m_isEncrypted) {
-                DecryptAndPushChunk();
+                Logger::Log(LogLevel::ERROR, "NetworkStreamer: Returned HTML instead of audio!");
+                shouldDownloadNextImmediately = true;
             } else {
-                emit DataReceived(m_currentChunkData);
+                QByteArray chunkData = m_currentChunkData;
+                QByteArray key = m_aesKey;
+                QByteArray iv = m_aesIV;
+                uint64_t seq = m_mediaSequence++;
+                QPointer<NetworkStreamer> safeThis(this);
+
+                m_currentChunkData.clear();
+
+                // Отправляем чанк на расшифровку
+                QThreadPool::globalInstance()->start([safeThis, chunkData, key, iv, seq]() mutable {
+                    if (chunkData.isEmpty()) return;
+
+                    uint8_t firstByte = static_cast<uint8_t>(chunkData[0]);
+                    if (!(firstByte == 0x47 && chunkData.size() % 188 == 0)) {
+                        int id3Size = 0;
+                        if (chunkData.size() >= 10 && chunkData.startsWith("ID3")) {
+                            const uint8_t* d = reinterpret_cast<const uint8_t*>(chunkData.constData());
+                            id3Size = 10 + ((d[6] << 21) | (d[7] << 14) | (d[8] << 7) | d[9]);
+                            if (id3Size > chunkData.size()) id3Size = 0;
+                        }
+
+                        int cipherSize = chunkData.size() - id3Size;
+                        if (cipherSize > 0) {
+                            if (cipherSize % 16 != 0) {
+                                int padding = 16 - (cipherSize % 16);
+                                chunkData.append(QByteArray(padding, 0));
+                                cipherSize += padding;
+                            }
+
+                            if (key.size() == 16) {
+                                QByteArray currentIV = iv;
+                                if (currentIV.isEmpty()) {
+                                    currentIV = QByteArray(16, 0);
+                                    uint64_t tempSeq = seq;
+                                    for (int i = 15; i >= 8; --i) {
+                                        currentIV[i] = tempSeq & 0xFF;
+                                        tempSeq >>= 8;
+                                    }
+                                }
+
+                                struct AES_ctx ctx;
+                                AES_init_ctx_iv(&ctx, reinterpret_cast<const uint8_t*>(key.constData()),
+                                                      reinterpret_cast<const uint8_t*>(currentIV.constData()));
+
+                                uint8_t* cipherDataPtr = reinterpret_cast<uint8_t*>(chunkData.data()) + id3Size;
+                                AES_CBC_decrypt_buffer(&ctx, cipherDataPtr, cipherSize);
+                            } else {
+                                chunkData.clear(); // Ключ битый, сбрасываем чанк
+                            }
+                        }
+                    }
+
+                    QMetaObject::invokeMethod(QCoreApplication::instance(), [safeThis, chunkData]() {
+                        if (!safeThis) return;
+
+                        if (!chunkData.isEmpty()) {
+                            emit safeThis->DataReceived(chunkData);
+                        }
+
+                        safeThis->DownloadNextChunk();
+
+                    }, Qt::QueuedConnection);
+                });
+
+                // Удаляем текущий сетевой ответ
+                if (m_reply) {
+                    m_reply->deleteLater();
+                    m_reply = nullptr;
+                }
+
+                return;
             }
+            m_currentChunkData.clear();
+        } else {
+            if (!newData.isEmpty()) {
+                emit DataReceived(newData);
+            }
+            shouldDownloadNextImmediately = true;
         }
+    } else {
+        shouldDownloadNextImmediately = true;
     }
 
+    // Очистка для синхронных веток
     if (m_reply) {
         m_reply->deleteLater();
         m_reply = nullptr;
     }
 
-    DownloadNextChunk();
+    if (shouldDownloadNextImmediately) {
+        DownloadNextChunk();
+    }
 }
 
 void NetworkStreamer::DecryptAndPushChunk() {
@@ -344,14 +443,11 @@ void NetworkStreamer::SeekTo(double targetSeconds) {
     StopDownload();
     m_currentChunkData.clear();
 
-    if (m_streamType == StreamType::DirectHttp || m_streamType == StreamType::HlsUnencrypted) {
+    if (m_streamType == StreamType::DirectHttp) {
         // --- СТРАТЕГИЯ 1: HTTP Range Request ---
-        std::string typeStr = (m_streamType == StreamType::DirectHttp) ? "Direct HTTP" : "HLS Unencrypted";
-
         if (m_totalFileSize > 0 && m_trackDurationSec > 0) {
             qint64 targetByte = static_cast<qint64>((targetSeconds / m_trackDurationSec) * m_totalFileSize);
-
-            Logger::Log(LogLevel::INFO, "NetworkStreamer: [Strategy -> HTTP Range] Type: " + typeStr + ". Requesting bytes=" + std::to_string(targetByte) + "-");
+            Logger::Log(LogLevel::INFO, "NetworkStreamer: [Direct HTTP] Requesting bytes=" + std::to_string(targetByte) + "-");
 
             QNetworkRequest request(m_baseUrl);
             request.setRawHeader("Range", QString("bytes=%1-").arg(targetByte).toUtf8());
@@ -361,12 +457,10 @@ void NetworkStreamer::SeekTo(double targetSeconds) {
             connect(m_reply, &QNetworkReply::readyRead, this, &NetworkStreamer::OnReadyRead);
             connect(m_reply, &QNetworkReply::finished, this, &NetworkStreamer::OnChunkFinished);
             connect(m_reply, &QNetworkReply::errorOccurred, this, &NetworkStreamer::OnErrorOccurred);
-        } else {
-            Logger::Log(LogLevel::WARNING, "NetworkStreamer: [Strategy -> HTTP Range] Failed! Missing total file size or duration.");
         }
     }
-    else if (m_streamType == StreamType::HlsEncrypted) {
-        // --- СТРАТЕГИЯ 2: Прыжок по зашифрованным чанкам HLS ---
+    else if (m_streamType == StreamType::HlsEncrypted || m_streamType == StreamType::HlsUnencrypted) {
+        // --- СТРАТЕГИЯ 2: Прыжок по чанкам HLS с точным позиционированием ---
         double accumulatedTime = 0.0;
         int targetIndex = 0;
 
@@ -378,23 +472,23 @@ void NetworkStreamer::SeekTo(double targetSeconds) {
             accumulatedTime += m_hlsChunks[i].durationSec;
         }
 
-        // Жесткая синхронизация AES IV
-        m_mediaSequence = m_baseMediaSequence + targetIndex;
+        if (m_streamType == StreamType::HlsEncrypted) {
+            m_mediaSequence = m_baseMediaSequence + targetIndex;
+        }
 
-        // Пересобираем очередь чанков, отбрасывая прослушанные
         m_chunkQueue.clear();
         for (int i = targetIndex; i < m_hlsChunks.size(); ++i) {
             m_chunkQueue.enqueue(m_hlsChunks[i].url);
         }
 
-        Logger::Log(LogLevel::INFO, "NetworkStreamer: [Strategy -> HLS Chunk] Jumping to chunk " + std::to_string(targetIndex) + ". Sequence reset to " + std::to_string(m_mediaSequence));
+        // Высчитываем разницу для отбрасывания мусорных фреймов
+        double skipSeconds = targetSeconds - accumulatedTime;
+        emit ExactSeekOffset(skipSeconds);
+
+        Logger::Log(LogLevel::INFO, "NetworkStreamer: Jumping to chunk " + std::to_string(targetIndex) + ". Skip PCM: " + std::to_string(skipSeconds) + "s");
         DownloadNextChunk();
     }
     else if (m_streamType == StreamType::EncryptedMonolith) {
-        // --- СТРАТЕГИЯ 3: Mmap для зашифрованных монолитов (В планах) ---
-        Logger::Log(LogLevel::WARNING, "NetworkStreamer: [Strategy -> RAM File Mapping] Native mmap seek for monoliths is pending implementation.");
-    }
-    else {
-        Logger::Log(LogLevel::ERROR, "NetworkStreamer: Unknown stream type! Cannot seek.");
+        Logger::Log(LogLevel::WARNING, "NetworkStreamer: Monolith seek pending implementation.");
     }
 }

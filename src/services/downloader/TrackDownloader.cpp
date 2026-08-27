@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <iostream>
 #include <QCoreApplication>
+#include <QPointer>
 
 namespace {
     QByteArray makeSyncSafe(uint32_t size) {
@@ -132,9 +133,13 @@ void TrackDownloader::Download(const Track& track, const std::string& urlStr) {
         demuxer->ProcessBytes(reinterpret_cast<const uint8_t*>(data.constData()), data.size());
     });
 
-    connect(streamer, &NetworkStreamer::DownloadFinished, this, [this, streamer, file, track, filePath, safeName, isAacFormat, syncPrint]() {
+    QPointer<TrackDownloader> safeThis(this);
+
+    connect(streamer, &NetworkStreamer::DownloadFinished, this, [safeThis, streamer, file, track, filePath, safeName, isAacFormat, syncPrint]() {
         file->close();
         streamer->deleteLater();
+
+        if (!safeThis) return;
 
         QString finalPath = filePath;
         if (*isAacFormat) {
@@ -144,21 +149,23 @@ void TrackDownloader::Download(const Track& track, const std::string& urlStr) {
 
         if (track.coverUrl.empty()) {
             InjectID3v2(finalPath, track, QByteArray());
-            syncPrint("[Загрузка] " + track.artist + " - " + track.title + " успешно сохранен (без обложки).");
+            syncPrint("[Загрузка] " + track.artist + " - " + track.title + " успешно сохранен.");
             return;
         }
 
         QNetworkRequest request((QUrl(QString::fromStdString(track.coverUrl))));
-        QNetworkReply* reply = m_manager.get(request);
+        QNetworkReply* reply = safeThis->m_manager.get(request);
 
-        connect(reply, &QNetworkReply::finished, this, [reply, finalPath, track, syncPrint]() {
+        connect(reply, &QNetworkReply::finished, safeThis, [safeThis, reply, finalPath, track, syncPrint]() {
+            reply->deleteLater();
+            if (!safeThis) return;
+
             QByteArray coverData;
             if (reply->error() == QNetworkReply::NoError) {
                 coverData = reply->readAll();
             }
-            reply->deleteLater();
-            InjectID3v2(finalPath, track, coverData);
 
+            InjectID3v2(finalPath, track, coverData);
             syncPrint("[Загрузка] " + track.artist + " - " + track.title + " успешно сохранен.");
         });
     });

@@ -1,29 +1,14 @@
-#include <iostream>
 #include <QGuiApplication>
-#include <QSettings>
-#include <string>
 #include <QtWebView>
-#include <cmath> // Для std::round
-
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
-#include "core/audio/miniaudio/MiniaudioEngine.h"
-#include "core/lyrics/LyricsFetcher.h"
-#include "core/playlist/PlaylistManager.h"
-#include "core/auth/router/SourceRouter.h"
-#include "core/api/vk/VkClient.h"
-#include "core/api/spotify/SpotifyClient.h"
-#include "core/api/soundcloud/SoundCloudClient.h"
-#include "services/database/DatabaseManager.h"
-#include "services/downloader/TrackDownloader.h"
-#include "services/network/NetworkStreamer.h"
-#include "ui/console/core/ConsoleController.h"
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
 #include "utils/env/EnvParser.h"
-#include "core/audio/playback/PlaybackController.h"
+#include "core/ApplicationCore.h"
+
+#ifdef _WIN32
+#include <windows.h>
+#undef ERROR
+#endif
 
 int main(int argc, char *argv[]) {
 #ifdef _WIN32
@@ -47,278 +32,18 @@ int main(int argc, char *argv[]) {
     Logger::Init();
 
     QMap<QString, QString> envVars = EnvParser::Parse(".env");
-
     Logger::Log(LogLevel::INFO, "--- VK Audio Player Started ---");
     Logger::Log(LogLevel::INFO, "DB Path: " + PathManager::GetDbPath().toStdString());
 
-    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    // DI Контейнер берет на себя всю тяжелую работу
+    ApplicationCore appCore(envVars);
 
-    if (!settings.contains("Session/Volume")) {
-        settings.setValue("Audio/CrossfadeDurationMs", 3000);
-        settings.setValue("Audio/CrossfadePlayback", false);
-        settings.setValue("Session/Volume", 1.0f);
-        settings.setValue("Session/Shuffle", false);
-        settings.setValue("Session/AutoPlay", false);
-        settings.setValue("Session/Position", 0.0);
-        settings.setValue("Session/Repeat", 1);
-        settings.setValue("Session/CurrentTrackIndex", -1);
-        settings.setValue("General/source", "VK");
-        settings.setValue("Ui/ShowVisualizer", true);
-        settings.setValue("Visualizer/Mode", 1);
-        settings.sync();
-        Logger::Log(LogLevel::INFO, "Main: Created default config.ini configuration");
+    if (!appCore.Initialize()) {
+        Logger::Log(LogLevel::ERROR, "Main: Failed to initialize ApplicationCore. Exiting.");
+        return -1;
     }
 
-    // --- ИНИЦИАЛИЗАЦИЯ CAVA.INI ПРИ ЗАПУСКЕ ---
-    QString ultimatePath = PathManager::GetUltimateConfigPath();
-    if (!QFile::exists(ultimatePath)) {
-        QSettings defaultUltimate(ultimatePath, QSettings::IniFormat);
-        defaultUltimate.setValue("Visualizer/Height", 10);
-        defaultUltimate.setValue("Visualizer/Width", 0);
-        defaultUltimate.setValue("Visualizer/BarWidth", 2);
-        defaultUltimate.setValue("Visualizer/BarSpacing", 1);
-        defaultUltimate.setValue("Visualizer/BlockSpacing", 1);
-        defaultUltimate.setValue("Visualizer/DrawBorders", true);
-        defaultUltimate.setValue("Visualizer/Layout", "Visualizer,ProgressBar,TrackInfo");
-        defaultUltimate.setValue("Visualizer/PaddingLeft", 2);
-
-        // Цвета визуализатора
-        defaultUltimate.setValue("Visualizer/Color", "gradient");
-        defaultUltimate.setValue("Visualizer/GradientColors", "#32FF96,#F0B432,#FF5050");
-
-        // Настройки фона
-        defaultUltimate.setValue("Background/Enabled", false);
-        defaultUltimate.setValue("Background/Color", "gradient");
-        defaultUltimate.setValue("Background/GradientColors", "#1E1E1E,#000000");
-
-        // Физика
-        defaultUltimate.setValue("Visualizer/Framerate", 30);
-        defaultUltimate.setValue("Visualizer/Smoothing", 0.5);
-
-        defaultUltimate.sync();
-        Logger::Log(LogLevel::INFO, "Main: Created default ultimate.ini configuration");
-    }
-    // ------------------------------------------
-
-    std::string activeSource = settings.value("General/source", "VK").toString().toStdString();
-    bool crossfadeEnabled = settings.value("Audio/CrossfadePlayback", false).toBool();
-    bool isShuffle = settings.value("Session/Shuffle", false).toBool();
-    bool autoPlay = settings.value("Session/AutoPlay", false).toBool();
-    float savedVolume = settings.value("Session/Volume", 1.0f).toFloat();
-    int savedTrackIndex = settings.value("Session/CurrentTrackIndex", -1).toInt();
-
-    double savedPosition = settings.value("Session/Position", 0.0).toDouble();
-    int savedRepeatMode = settings.value("Session/Repeat", 1).toInt();
-
-    DatabaseManager dbManager;
-    if (!dbManager.Init()) return -1;
-
-    MiniaudioEngine audio;
-    if (!audio.Init()) return -1;
-
-    PlaylistManager playlist;
-    playlist.SetRepeatMode(savedRepeatMode);
-    TrackDownloader downloader;
-    LyricsFetcher lyricsFetcher;
-    NetworkStreamer streamer;
-
-    PlaybackController playbackCtrl(audio, playlist, streamer);
-    SourceRouter router(envVars);
-
-    ConsoleController console(audio, playlist, *router.GetAuthManager(), dbManager, downloader, lyricsFetcher);
-
-    audio.SetVolume(savedVolume);
-    bool isPlaybackStarted = false;
-    int vkSyncIndex = 0;
-
-    playbackCtrl.SetCrossfadeEnabled(crossfadeEnabled);
-    playbackCtrl.SetSavedPosition(savedPosition);
-    playbackCtrl.SetStartPaused(!autoPlay);
-
-    QObject::connect(&streamer, &NetworkStreamer::DataReceived, [&](const QByteArray& data) {
-        audio.PushNetworkData(reinterpret_cast<const uint8_t*>(data.constData()), data.size());
-    });
-
-    audio.OnNetworkSeekRequested = [&](double targetSeconds) {
-        QMetaObject::invokeMethod(QCoreApplication::instance(), [&streamer, targetSeconds]() {
-            streamer.SeekTo(targetSeconds);
-        }, Qt::QueuedConnection);
-    };
-
-    QObject::connect(&console, &ConsoleController::QuitRequested, &app, &QCoreApplication::quit);
-
-    audio.OnTrackFinished = [&]() { playbackCtrl.HandleTrackFinished(); };
-    audio.OnTrackNearEnd = [&]() { playbackCtrl.HandleTrackNearEnd(); };
-    audio.OnPlaybackError = [&](const std::string& err) {
-        Logger::Log(LogLevel::ERROR, "Playback failed: " + err + ". Skipping to next track...");
-        playlist.Next();
-    };
-    playlist.OnTrackRequested = [&](Track track) { playbackCtrl.AttemptPlay(track); };
-
-    console.OnGaplessModeChanged = [&](bool isCrossfade) {
-        settings.setValue("Audio/CrossfadePlayback", isCrossfade);
-        settings.sync();
-        playbackCtrl.SetCrossfadeEnabled(isCrossfade);
-        Logger::Log(LogLevel::INFO, std::string("Main: Crossfade transition set to ") + (isCrossfade ? "ON" : "OFF"));
-    };
-
-    int uiMode = settings.value("Visualizer/Mode", 0).toInt(); // Читаем текущий режим
-
-    Logger::SetConsoleOutputEnabled(uiMode == 0);
-
-    auto initPlaylistAndStart = [&](bool isOnline) {
-        if (isPlaybackStarted) return;
-
-        if (!playlist.HasTracks()) {
-            std::vector<Track> cachedTracks = dbManager.LoadTracks(activeSource);
-            if (isOnline) {
-                for (const auto& t : cachedTracks) playlist.AddTrack(t);
-            } else {
-                for (const auto& t : cachedTracks) {
-                    QString mp3Path = PathManager::GetDownloadFilePath(t.GetSafeFilename(), "mp3");
-                    QString aacPath = PathManager::GetDownloadFilePath(t.GetSafeFilename(), "aac");
-                    if (QFile::exists(mp3Path) || QFile::exists(aacPath)) {
-                        playlist.AddTrack(t);
-                    }
-                }
-            }
-
-            if (isShuffle) {
-                std::vector<std::string> savedQueue = dbManager.LoadQueueIds(activeSource, true);
-                if (!savedQueue.empty()) {
-                    playlist.RestoreShuffleQueue(savedQueue);
-                } else {
-                    playlist.SetShuffle(true);
-                }
-            }
-        }
-
-        if (playlist.HasTracks()) {
-            if (uiMode == 0) {
-                std::cout << "\r\033[2K=== ПЛЕЕР ГОТОВ К РАБОТЕ ===\nРежим очереди: " << (isShuffle ? "Шафл" : "Стандартный")
-                          << "\nАвтостарт: " << (autoPlay ? "ВКЛ" : "ВЫКЛ") << "\n"
-                          << (isOnline ? "" : "[ОФФЛАЙН] Загружены только скачанные треки.\n")
-                          << "Введите 'h' для вывода списка команд\n\n> ";
-                std::cout.flush();
-            }
-
-            isPlaybackStarted = true;
-
-            if (savedTrackIndex >= 0 && savedTrackIndex < playlist.GetAllTracks().size()) {
-                playlist.JumpTo(savedTrackIndex);
-                savedTrackIndex = -1;
-            } else {
-                playlist.OnTrackRequested(playlist.GetCurrentTrack());
-            }
-
-        } else {
-            Logger::Log(LogLevel::WARNING, "[Оффлайн] Нет скачанных треков. Плеер пуст.");
-        }
-    };
-
-    auto onAudioFetched = [&](const std::vector<Track>& tracks) {
-        bool hasNewTracks = false;
-        auto allTracks = playlist.GetAllTracks();
-        for (const auto& track : tracks) {
-            bool exists = false;
-            for (const auto& cached : allTracks) {
-                if (cached.id == track.id) { exists = true; break; }
-            }
-            if (!exists) {
-                playlist.InsertTrack(vkSyncIndex, track);
-                hasNewTracks = true;
-            }
-            vkSyncIndex++;
-        }
-        dbManager.SaveTracks(tracks);
-        if (!isPlaybackStarted) {
-            initPlaylistAndStart(true);
-        }
-        if (!isPlaybackStarted || hasNewTracks) {
-            dbManager.SaveQueue(playlist.GetAllTracks(), activeSource, false);
-            dbManager.SaveQueue(playlist.GetQueueTracks(), activeSource, playlist.IsShuffle());
-            dbManager.ExportQueueToTxt(playlist.GetQueueTracks(), "playlist.txt", playlist.IsShuffle());
-        }
-    };
-
-    auto onFinishedFetching = [&]() {
-        Logger::Log(LogLevel::INFO, "=== ФОНОВАЯ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА ===");
-        dbManager.SaveQueue(playlist.GetAllTracks(), activeSource, false);
-        dbManager.SaveQueue(playlist.GetQueueTracks(), activeSource, playlist.IsShuffle());
-        dbManager.ExportQueueToTxt(playlist.GetQueueTracks(), "playlist.txt", playlist.IsShuffle());
-    };
-
-    QObject::connect(&console, &ConsoleController::OfflineModeRequested, &app, [&]() {
-        initPlaylistAndStart(false);
-    }, Qt::QueuedConnection);
-
-    QObject::connect(&console, &ConsoleController::SourceChanged, &app, [&](const std::string& source) {
-        router.SwitchSource(source);
-    }, Qt::QueuedConnection);
-
-    QObject::connect(&router, &SourceRouter::SourceChanged, [&](const std::string& newSource) {
-        activeSource = newSource;
-        playbackCtrl.ClearState();
-        isPlaybackStarted = false;
-        playlist.Clear();
-
-        settings.setValue("General/source", QString::fromStdString(newSource));
-        settings.sync();
-
-        console.SetCurrentProvider(router.GetCurrentProvider());
-        playbackCtrl.SetCurrentProvider(router.GetCurrentProvider());
-    });
-
-    QObject::connect(&router, &SourceRouter::AuthUiStateChanged, [&](bool isWaiting) {
-        console.SetState(isWaiting ? ConsoleState::WAITING_TOKEN_URL : ConsoleState::COMMAND_MODE);
-    });
-
-    QObject::connect(&router, &SourceRouter::ProviderReady, [&](bool isOnline) {
-        vkSyncIndex = 0;
-        initPlaylistAndStart(isOnline);
-    });
-
-    QObject::connect(router.GetVkClient(), &IAudioProvider::AudioFetched, [&](const std::vector<Track>& tracks) {
-        if (router.GetCurrentProvider() == router.GetVkClient()) onAudioFetched(tracks);
-    });
-    QObject::connect(router.GetVkClient(), &IAudioProvider::FinishedFetching, [&]() {
-        if (router.GetCurrentProvider() == router.GetVkClient()) onFinishedFetching();
-    });
-
-    QObject::connect(router.GetSpotifyClient(), &IAudioProvider::AudioFetched, [&](const std::vector<Track>& tracks) {
-        if (router.GetCurrentProvider() == router.GetSpotifyClient()) onAudioFetched(tracks);
-    });
-    QObject::connect(router.GetSpotifyClient(), &IAudioProvider::FinishedFetching, [&]() {
-        if (router.GetCurrentProvider() == router.GetSpotifyClient()) onFinishedFetching();
-    });
-
-    QObject::connect(router.GetSoundCloudClient(), &IAudioProvider::AudioFetched, [&](const std::vector<Track>& tracks) {
-        if (router.GetCurrentProvider() == router.GetSoundCloudClient()) onAudioFetched(tracks);
-    });
-    QObject::connect(router.GetSoundCloudClient(), &IAudioProvider::FinishedFetching, [&]() {
-            if (router.GetCurrentProvider() == router.GetSoundCloudClient()) onFinishedFetching();
-        });
-
-    QObject::connect(router.GetYandexClient(), &IAudioProvider::AudioFetched, [&](const std::vector<Track>& tracks) {
-        if (router.GetCurrentProvider() == router.GetYandexClient()) onAudioFetched(tracks);
-    });
-    QObject::connect(router.GetYandexClient(), &IAudioProvider::FinishedFetching, [&]() {
-        if (router.GetCurrentProvider() == router.GetYandexClient()) onFinishedFetching();
-    });
-
-
-    QObject::connect(&app, &QCoreApplication::aboutToQuit, [&]() {
-            Logger::Log(LogLevel::INFO, "Main: Saving session state...");
-            settings.setValue("Session/Volume", audio.GetVolume());
-            settings.setValue("Session/CurrentTrackIndex", playlist.GetCurrentAbsoluteIndex());
-            settings.setValue("Session/Position", audio.GetPositionSeconds());
-            settings.setValue("Session/Shuffle", playlist.IsShuffle());
-            settings.setValue("Session/Repeat", playlist.GetRepeatMode());
-            settings.sync();
-        });
-
-    router.SwitchSource(activeSource);
-    console.Start();
+    appCore.Start();
 
     int exitCode = app.exec();
     Logger::Close();

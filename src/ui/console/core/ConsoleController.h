@@ -1,13 +1,13 @@
 #pragma once
 
 #include <memory>
-
 #include <QObject>
 #include <QString>
 #include <atomic>
-#include <thread>
 #include <functional>
+#include <thread>
 
+// Forward declarations
 class IAudioEngine;
 class PlaylistManager;
 class OAuthManager;
@@ -17,6 +17,7 @@ class TrackDownloader;
 class LyricsFetcher;
 class CommandDispatcher;
 class ConsoleRenderer;
+class QTimer;
 
 enum class ConsoleState {
     COMMAND_MODE,
@@ -33,7 +34,8 @@ public:
         OAuthManager& authManager,
         DatabaseManager& dbManager,
         TrackDownloader& downloader,
-        LyricsFetcher& lyricsFetcher);
+        LyricsFetcher& lyricsFetcher,
+        QObject* parent = nullptr);
     ~ConsoleController();
 
     void Start();
@@ -41,18 +43,20 @@ public:
     void SetState(ConsoleState state);
     ConsoleState GetState() const { return m_currentState; }
 
-    void SetCurrentProvider(IAudioProvider* provider); // Сеттер для переключения источника
+    void SetCurrentProvider(IAudioProvider* provider);
 
     std::function<void(bool)> OnGaplessModeChanged;
 
     signals:
         void QuitRequested();
-        void OfflineModeRequested();
-        void SourceChanged(const std::string& sourceName);
+    void OfflineModeRequested();
+    void SourceChanged(const std::string& sourceName);
+
+private slots:
+    void OnUiTick();
 
 private:
     void InputLoop();
-    void UiLoop();
 
     IAudioEngine& m_audio;
     PlaylistManager& m_playlist;
@@ -61,10 +65,13 @@ private:
     TrackDownloader& m_downloader;
     LyricsFetcher& m_lyricsFetcher;
     IAudioProvider* m_currentProvider = nullptr;
+
     std::unique_ptr<CommandDispatcher> m_dispatcher;
     std::unique_ptr<ConsoleRenderer> m_renderer;
+
     std::atomic<ConsoleState> m_currentState;
     std::atomic<bool> m_isRunning;
+
+    QTimer* m_uiTimer;
     std::thread m_inputThread;
-    std::thread m_uiThread;
 };

@@ -1,20 +1,19 @@
 #pragma once
 #include <vector>
-#include <mutex>
+#include <atomic>
 #include <cstdint>
 
 class RingBuffer {
 public:
     explicit RingBuffer(size_t size);
-    // пустой конструктор
     RingBuffer();
-    
-    // передача данных
+
+    // передача данных (вызывается фоновым потоком скачивания)
     size_t Write(const uint8_t* data, size_t sizeToWrite);
-    
-    // сбор данных
+
+    // сбор данных (вызывается аудио-потоком)
     size_t Read(uint8_t* data, size_t sizeToRead);
-    
+
     // Узнать, сколько байт доступно для чтения
     size_t GetAvailableRead() const;
     
@@ -29,10 +28,9 @@ public:
 
 private:
     std::vector<uint8_t> m_buffer;
-    size_t m_capacity;
-    size_t m_readPos;
-    size_t m_writePos;
-    size_t m_availableBytes;
-    
-    mutable std::mutex m_mutex;
+    size_t m_capacity = 0;
+
+    // Lock-free счетчики
+    alignas(64) std::atomic<size_t> m_writePos{0};
+    alignas(64) std::atomic<size_t> m_readPos{0};
 };

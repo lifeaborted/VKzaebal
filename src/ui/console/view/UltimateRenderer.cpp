@@ -25,7 +25,7 @@
 static int utf8_length(const std::string& str) {
     int len = 0;
     for (size_t i = 0; i < str.length(); ++i) {
-        if ((str[i] & 0xC0) != 0x80) len++; 
+        if ((str[i] & 0xC0) != 0x80) len++;
     }
     return len;
 }
@@ -39,7 +39,7 @@ static std::string safeTruncate(const std::string& str, int maxChars) {
         if ((str[i] & 0xE0) == 0xC0) charLen = 2;
         else if ((str[i] & 0xF0) == 0xE0) charLen = 3;
         else if ((str[i] & 0xF8) == 0xF0) charLen = 4;
-        
+
         result.append(str, i, charLen);
         i += charLen;
         chars++;
@@ -264,12 +264,11 @@ void UltimateRenderer::Render() {
         columns[x] = totalTicks;
     }
 
-    std::string frame = "";
+    std::string frame;
+    frame.reserve(consoleWidth * consoleHeight * 2);
     int drawnLines = 0;
 
-    // Умная лямбда для добавления строк с заливкой фона
     auto addLine = [&](std::string content) {
-        // ГЛАВНАЯ ЗАЩИТА: Никогда не рисуем на последних двух строках (зарезервировано под инпут)
         if (drawnLines >= consoleHeight - 2) return;
 
         std::string bg = "";

@@ -4,30 +4,36 @@
 #include <QUrl>
 #include <QUrlQuery>
 #include <QNetworkRequest>
-#include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-#include <QRegularExpression>
-#include <iostream>
-#include <QEventLoop>
 
-VkClient::VkClient(QObject* parent) : IAudioProvider(parent), m_manager(new QNetworkAccessManager(this)) {
-    Logger::Log(LogLevel::INFO, "api created.");
+VkClient::VkClient(QObject* parent) : BaseApiProvider(parent) {
+    Logger::Log(LogLevel::INFO, "VkClient created.");
 }
 
 VkClient::~VkClient() {
-    Logger::Log(LogLevel::INFO, "api destroyed.");
+    Logger::Log(LogLevel::INFO, "VkClient destroyed.");
 }
 
-void VkClient::SetAccessToken(const std::string& token) {
-    m_accessToken = token;
+bool VkClient::HandleApiError(const QJsonDocument& json, int /*httpStatusCode*/) {
+    QJsonObject root = json.object();
+    if (root.contains("error")) {
+        QJsonObject errObj = root["error"].toObject();
+        int errCode = errObj["error_code"].toInt();
+        std::string errMsg = errObj["error_msg"].toString().toStdString();
+
+        Logger::Log(LogLevel::ERROR, "VK API Error [" + std::to_string(errCode) + "]: " + errMsg);
+
+        if (errCode == 5) {
+            emit TokenExpired();
+        }
+        return true;
+    }
+    return false;
 }
 
 void VkClient::ValidateToken(std::function<void(bool)> callback) {
-    if (m_accessToken.empty()) {
-        callback(false);
-        return;
-    }
+    if (m_accessToken.empty()) { callback(false); return; }
 
     QUrl url("https://api.vk.com/method/users.get");
     QUrlQuery query;
@@ -37,34 +43,12 @@ void VkClient::ValidateToken(std::function<void(bool)> callback) {
 
     QNetworkRequest request(url);
     request.setRawHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
 
-    QNetworkReply* reply = m_manager->get(request);
-
-    connect(reply, &QNetworkReply::finished, this, [reply, callback]() {
-        reply->deleteLater();
-        if (reply->error() != QNetworkReply::NoError) {
-            callback(false);
-            return;
-        }
-
-        QByteArray response_data = reply->readAll();
-        QJsonDocument json = QJsonDocument::fromJson(response_data);
-
-        if (json.isNull() || !json.isObject()) {
-            Logger::Log(LogLevel::ERROR, "VK API: Received invalid JSON in ValidateToken");
-            callback(false);
-            return;
-        }
-
-        // Если ВК вернул ошибку, значит токен невалиден
-        if (json.object().contains("error")) {
-            Logger::Log(LogLevel::WARNING, "api: Token validation failed (API error).");
-            callback(false);
-        } else {
-            Logger::Log(LogLevel::INFO, "api: Token is valid.");
-            callback(true);
-        }
+    SendJsonRequest(request, [callback](const QJsonDocument&) {
+        Logger::Log(LogLevel::INFO, "api: Token is valid.");
+        callback(true);
+    }, [callback](const std::string&) {
+        callback(false);
     });
 }
 
@@ -76,133 +60,20 @@ void VkClient::FetchTrackUrl(const std::string& trackId, std::function<void(cons
     query.addQueryItem("v", QString::fromStdString(m_apiVersion));
     url.setQuery(query);
 
-    Logger::Log(LogLevel::INFO, "http запрос: " + url.toString().toStdString());
-
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, "VKAndroidApp/5.56.1-12345 (Android 11; SDK 30; x86_64; en; 2274003)");
     request.setTransferTimeout(5000);
 
-    QNetworkReply* reply = m_manager->get(request);
-
-    QObject::connect(reply, &QNetworkReply::finished, this, [this, reply, callback]() {
+    SendJsonRequest(request, [callback](const QJsonDocument& json) {
         std::string freshUrl = "";
-        bool isNetworkError = false;
-
-        if (reply->error() == QNetworkReply::NoError) {
-            QByteArray response_data = reply->readAll();
-            QJsonDocument json = QJsonDocument::fromJson(response_data);
-
-            if (json.isNull() || !json.isObject()) {
-                Logger::Log(LogLevel::ERROR, "VK API: Received invalid JSON in FetchTrackUrl");
-                callback("", true);
-                reply->deleteLater();
-                return;
-            }
-
-            QJsonObject root = json.object();
-
-            if (root.contains("error")) {
-                QJsonObject errObj = root["error"].toObject();
-                std::string errMsg = errObj["error_msg"].toString().toStdString();
-                int errCode = errObj["error_code"].toInt();
-                Logger::Log(LogLevel::ERROR, "VK API Error [" + std::to_string(errCode) + "]: " + errMsg);
-
-                if (errCode == 5) {
-                    emit TokenExpired();
-                }
-            } else {
-                QJsonArray responseArray = root["response"].toArray();
-                if (!responseArray.isEmpty()) {
-                    QJsonObject trackObj = responseArray[0].toObject();
-                    freshUrl = trackObj["url"].toString().toStdString();
-                }
-            }
-        } else {
-            Logger::Log(LogLevel::ERROR, "Network error while fetching track URL: " + reply->errorString().toStdString());
-            isNetworkError = true;
+        QJsonArray responseArray = json.object()["response"].toArray();
+        if (!responseArray.isEmpty()) {
+            freshUrl = responseArray[0].toObject()["url"].toString().toStdString();
         }
-
-        callback(freshUrl, isNetworkError);
-        reply->deleteLater();
+        callback(freshUrl, false);
+    }, [callback](const std::string&) {
+        callback("", true);
     });
-}
-
-void VkClient::OnReplyFinished(QNetworkReply* reply) {
-    reply->deleteLater();
-
-    if (reply->error() != QNetworkReply::NoError) {
-        std::string err = reply->errorString().toStdString();
-        Logger::Log(LogLevel::ERROR, "api Network Error: " + err);
-        emit ApiError(err);
-        return;
-    }
-
-    QByteArray responseData = reply->readAll();
-    QJsonDocument jsonDoc = QJsonDocument::fromJson(responseData);
-
-    if (!jsonDoc.isObject()) {
-        emit ApiError("Invalid JSON response");
-        return;
-    }
-
-    QJsonObject rootObj = jsonDoc.object();
-
-    if (rootObj.contains("error")) {
-        QJsonObject errObj = rootObj["error"].toObject();
-        std::string errMsg = errObj["error_msg"].toString().toStdString();
-        Logger::Log(LogLevel::ERROR, "VK API Error: " + errMsg);
-        emit ApiError(errMsg);
-        return;
-    }
-
-    QJsonObject responseObj = rootObj["response"].toObject();
-    QJsonArray itemsArray = responseObj["items"].toArray();
-
-    std::vector<Track> tracks;
-    tracks.reserve(itemsArray.size());
-    for (int i = 0; i < itemsArray.size(); ++i) {
-        QJsonObject trackObj = itemsArray[i].toObject();
-
-        Track t;
-        int audioId = trackObj["id"].toInt();
-        int ownerId = trackObj["owner_id"].toInt();
-
-        t.id = std::to_string(ownerId) + "_" + std::to_string(audioId);
-        t.source = "VK";
-        t.ownerId = std::to_string(ownerId);
-        t.artist = trackObj["artist"].toString().toStdString();
-        t.title = trackObj["title"].toString().toStdString();
-        t.url = trackObj["url"].toString().toStdString();
-        t.duration = trackObj["duration"].toInt();
-        t.coverUrl = "";
-        t.lyrics_id = trackObj.contains("lyrics_id") ? std::to_string(trackObj["lyrics_id"].toInt()) : "";
-        t.lyrics = "";
-
-        if (trackObj.contains("album") && trackObj["album"].isObject()) {
-            QJsonObject album = trackObj["album"].toObject();
-            if (album.contains("thumb") && album["thumb"].isObject()) {
-                QJsonObject thumb = album["thumb"].toObject();
-                QStringList qualityKeys = {
-                    "photo_1200", "photo_600", "photo_300",
-                    "photo_270", "photo_135", "photo_68", "photo_34"
-                };
-
-                for (const QString& key : qualityKeys) {
-                    if (thumb.contains(key)) {
-                        t.coverUrl = thumb[key].toString().toStdString();
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (audioId != 0) {
-            tracks.push_back(t);
-        }
-    }
-
-    Logger::Log(LogLevel::INFO, "api: Successfully parsed " + std::to_string(tracks.size()) + " tracks.");
-    emit AudioFetched(tracks);
 }
 
 void VkClient::FetchAllUserAudio(int offset, int count) {
@@ -217,43 +88,9 @@ void VkClient::FetchAllUserAudio(int offset, int count) {
     QNetworkRequest request(url);
     request.setRawHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
-    QNetworkReply* reply = m_manager->get(request);
-
-    connect(reply, &QNetworkReply::finished, this, [this, reply, offset, count]() {
-        reply->deleteLater();
-
-        if (reply->error() != QNetworkReply::NoError) {
-            Logger::Log(LogLevel::ERROR, "Network error during audio.get: " + reply->errorString().toStdString());
-            return;
-        }
-
-        QByteArray response_data = reply->readAll();
-        QJsonDocument json = QJsonDocument::fromJson(response_data);
-
-        if (json.isNull() || !json.isObject()) {
-            Logger::Log(LogLevel::ERROR, "VK API: Received invalid JSON in FetchAllUserAudio");
-            emit FinishedFetching();
-            return;
-        }
-
-        QJsonObject root = json.object();
-
-        if (root.contains("error")) {
-            QJsonObject errObj = root["error"].toObject();
-            int errCode = errObj["error_code"].toInt();
-            std::string errMsg = errObj["error_msg"].toString().toStdString();
-
-            Logger::Log(LogLevel::ERROR, "VK API Error [" + std::to_string(errCode) + "]: " + errMsg);
-
-            if (errCode == 5) {
-                emit TokenExpired();
-            }
-            return;
-        }
-
+    SendJsonRequest(request, [this, offset, count](const QJsonDocument& json) {
         std::vector<Track> chunkTracks;
-        QJsonObject responseObj = root["response"].toObject();
-        QJsonArray items = responseObj["items"].toArray();
+        QJsonArray items = json.object()["response"].toObject()["items"].toArray();
         chunkTracks.reserve(items.size());
 
         for (const QJsonValue& val : items) {
@@ -274,16 +111,11 @@ void VkClient::FetchAllUserAudio(int offset, int count) {
             track.lyrics_id = trackJson.contains("lyrics_id") ? std::to_string(trackJson["lyrics_id"].toInt()) : "";
             track.lyrics = "";
 
-            // Парсинг обложек
             if (trackJson.contains("album") && trackJson["album"].isObject()) {
                 QJsonObject album = trackJson["album"].toObject();
                 if (album.contains("thumb") && album["thumb"].isObject()) {
                     QJsonObject thumb = album["thumb"].toObject();
-                    QStringList qualityKeys = {
-                        "photo_1200", "photo_600", "photo_300",
-                        "photo_270", "photo_135", "photo_68", "photo_34"
-                    };
-
+                    QStringList qualityKeys = {"photo_1200", "photo_600", "photo_300", "photo_270", "photo_135", "photo_68", "photo_34"};
                     for (const QString& key : qualityKeys) {
                         if (thumb.contains(key)) {
                             track.coverUrl = thumb[key].toString().toStdString();
@@ -293,19 +125,15 @@ void VkClient::FetchAllUserAudio(int offset, int count) {
                 }
             }
 
-            if (audio_id != 0) {
-                chunkTracks.push_back(track);
-            }
+            if (audio_id != 0) chunkTracks.push_back(std::move(track));
         }
 
-        if (!chunkTracks.empty()) {
-            emit AudioFetched(chunkTracks);
-        }
+        if (!chunkTracks.empty()) emit AudioFetched(chunkTracks);
 
-        if (items.size() == count) {
-            FetchAllUserAudio(offset + count, count);
-        } else {
-            emit FinishedFetching();
-        }
+        if (items.size() == count) FetchAllUserAudio(offset + count, count);
+        else emit FinishedFetching();
+
+    }, [this](const std::string&) {
+        emit FinishedFetching();
     });
 }

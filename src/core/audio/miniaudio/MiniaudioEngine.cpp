@@ -46,17 +46,14 @@ MiniaudioEngine::MiniaudioEngine() : m_demuxer([this](const uint8_t* payload, si
     m_isDecoderInitialized = false;
     m_isPlaying = false;
     m_volume = 1.0f;
-    // Выделяем память один раз
     m_mainBuffer.resize(16384, 0);
     m_fadeOutBuffer.resize(16384, 0);
 
-    // Запускаем фоновый поток декодирования
     m_isDecoding = true;
     m_decodeThread = std::thread(&MiniaudioEngine::DecodeLoop, this);
 }
 
 MiniaudioEngine::~MiniaudioEngine() {
-    // Останавливаем фоновый поток
     m_isDecoding = false;
     m_decodeCv.notify_all();
 
@@ -79,62 +76,86 @@ bool MiniaudioEngine::IsPlaying() const { return m_isPlaying; }
 
 void MiniaudioEngine::SetPositionSeconds(double pos) {
     if (m_currentDurationSec <= 0) return;
-
     if (pos < 0.0) pos = 0.0;
     if (pos > static_cast<double>(m_currentDurationSec)) pos = static_cast<double>(m_currentDurationSec);
 
-    std::lock_guard<std::mutex> lock(m_audioMutex);
+    bool wasPlaying = m_isPlaying;
+    if (wasPlaying && m_isDeviceInitialized) {
+        m_isPlaying = false;
+        ma_device_stop(&m_device);
+    }
 
-    if (m_decoder) {
-        ma_uint64 targetFrame = static_cast<ma_uint64>(pos * static_cast<double>(SAMPLE_RATE));
-        
-        ma_decoder_seek_to_pcm_frame(m_decoder.get(), 0);
+    bool isLocalFile = false;
+    {
+        // Блок 1: Изолированная работа с аудио-ядром
+        std::lock_guard<std::mutex> lock(m_audioMutex);
+        if (m_decoder) {
+            isLocalFile = true;
+            ma_uint64 targetFrame = static_cast<ma_uint64>(pos * static_cast<double>(SAMPLE_RATE));
 
-        ma_uint64 framesToRead = targetFrame;
-        std::vector<int16_t> dumpBuf(8192 * 2);
+            ma_uint64 seekFrame = (targetFrame > SAMPLE_RATE) ? (targetFrame - SAMPLE_RATE) : 0;
+            ma_decoder_seek_to_pcm_frame(m_decoder.get(), seekFrame);
 
-        while (framesToRead > 0) {
-            ma_uint64 toRead = (framesToRead > 8192) ? 8192 : framesToRead;
-            ma_uint64 read = 0;
-            if (ma_decoder_read_pcm_frames(m_decoder.get(), dumpBuf.data(), toRead, &read) != MA_SUCCESS || read == 0) {
-                break;
+            ma_uint64 framesToRead = targetFrame - seekFrame;
+            if (framesToRead > 0) {
+                std::vector<int16_t> dumpBuf(framesToRead * 2);
+                ma_uint64 framesReadTotal = 0;
+
+                while (framesReadTotal < framesToRead) {
+                    ma_uint64 toRead = framesToRead - framesReadTotal;
+                    ma_uint64 read = 0;
+                    ma_result result = ma_decoder_read_pcm_frames(m_decoder.get(),
+                                                                  dumpBuf.data() + (framesReadTotal * 2),
+                                                                  toRead, &read);
+                    if (result != MA_SUCCESS || read == 0) {
+                        break;
+                    }
+                    framesReadTotal += read;
+                }
+                m_playbackFrameCount = seekFrame + framesReadTotal;
+            } else {
+                m_playbackFrameCount = targetFrame;
             }
-            framesToRead -= read;
+
+            m_nearEndTriggered = false;
+            m_finishedTriggered = false;
+            std::memset(m_mainBuffer.data(), 0, m_mainBuffer.size() * sizeof(int16_t));
+            Logger::Log(LogLevel::INFO, "Miniaudio: Exact seeked to " + std::to_string(m_playbackFrameCount.load() / static_cast<double>(SAMPLE_RATE)) + "s");
+        } else {
+            m_playbackFrameCount = static_cast<ma_uint64>(pos * static_cast<double>(SAMPLE_RATE));
+            m_nearEndTriggered = false;
+            m_finishedTriggered = false;
+            m_pcmBuffer.Clear();
         }
+    }
 
-        m_playbackFrameCount = targetFrame - framesToRead;
-        m_nearEndTriggered = false;
-        m_finishedTriggered = false;
-
-        std::memset(m_mainBuffer.data(), 0, m_mainBuffer.size() * sizeof(int16_t));
-        Logger::Log(LogLevel::INFO, "Miniaudio: Exact seeked to " + std::to_string(pos) + "s");
-    } else {
-        m_playbackFrameCount = static_cast<ma_uint64>(pos * static_cast<double>(SAMPLE_RATE));
-        m_nearEndTriggered = false;
-        m_finishedTriggered = false;
-
-        m_pcmBuffer.Clear();
+    // Блок 2: Работа с сетью
+    if (!isLocalFile) {
         {
             std::lock_guard<std::mutex> netLock(m_networkMutex);
             m_aacBuffer.clear();
         }
         m_mp3Buffer.clear();
-
         m_demuxer.Reset();
-
         if (m_aacDecoder) {
             aacDecoder_Close(m_aacDecoder);
             m_aacDecoder = aacDecoder_Open(TT_MP4_ADTS, 1);
         }
         mp3dec_init(&m_mp3Decoder);
-
         if (OnNetworkSeekRequested) {
             OnNetworkSeekRequested(pos);
         }
     }
+
+    if (wasPlaying && m_isDeviceInitialized) {
+        m_isPlaying = true;
+        ma_device_start(&m_device);
+    }
 }
 
-double MiniaudioEngine::GetPositionSeconds() const { return static_cast<double>(m_playbackFrameCount.load()) / static_cast<double>(SAMPLE_RATE); }
+double MiniaudioEngine::GetPositionSeconds() const {
+    return static_cast<double>(m_playbackFrameCount.load()) / static_cast<double>(SAMPLE_RATE);
+}
 
 double MiniaudioEngine::GetLengthSeconds() const {
     return static_cast<double>(m_currentDurationSec);
@@ -146,7 +167,9 @@ std::vector<float> MiniaudioEngine::GetSpectrumData() const {
 
     std::vector<Complex> a(256);
     {
-        std::lock_guard<std::mutex> lock(m_spectrumMutex);
+        std::unique_lock<std::mutex> lock(m_spectrumMutex, std::try_to_lock);
+        if (!lock.owns_lock()) return result;
+
         for (int i = 0; i < 256; ++i) {
             double multiplier = 0.5 * (1.0 - cos(2 * PI * i / 255.0));
             a[i] = Complex(m_recentSamples[i] * multiplier, 0);
@@ -198,7 +221,12 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
     if (!engine) return;
 
     {
-        std::lock_guard<std::mutex> lock(engine->m_audioMutex);
+        std::unique_lock<std::mutex> lock(engine->m_audioMutex, std::try_to_lock);
+
+        if (!lock.owns_lock()) {
+            std::memset(pOutput, 0, frameCount * 2 * sizeof(int16_t));
+            return;
+        }
 
         if (frameCount * 2 > engine->m_mainBuffer.size()) {
             frameCount = engine->m_mainBuffer.size() / 2;
@@ -270,21 +298,24 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
         }
 
         {
-            std::lock_guard<std::mutex> specLock(engine->m_spectrumMutex);
-            size_t samplesToCopy = std::min(static_cast<size_t>(frameCount), static_cast<size_t>(256));
+            // Блокировка спектрограммы тоже стала NON-BLOCKING
+            std::unique_lock<std::mutex> specLock(engine->m_spectrumMutex, std::try_to_lock);
+            if (specLock.owns_lock()) {
+                size_t samplesToCopy = std::min(static_cast<size_t>(frameCount), static_cast<size_t>(256));
 
-            if (samplesToCopy < 256) {
-                std::memmove(engine->m_recentSamples.data(),
-                             engine->m_recentSamples.data() + samplesToCopy,
-                             (256 - samplesToCopy) * sizeof(float));
-            }
+                if (samplesToCopy < 256) {
+                    std::memmove(engine->m_recentSamples.data(),
+                                 engine->m_recentSamples.data() + samplesToCopy,
+                                 (256 - samplesToCopy) * sizeof(float));
+                }
 
-            size_t startIdx = 256 - samplesToCopy;
-            size_t pOutStart = frameCount - samplesToCopy;
-            for (size_t i = 0; i < samplesToCopy; ++i) {
-                float left = pOut[(pOutStart + i) * 2] / 32768.0f;
-                float right = pOut[(pOutStart + i) * 2 + 1] / 32768.0f;
-                engine->m_recentSamples[startIdx + i] = (left + right) / 2.0f;
+                size_t startIdx = 256 - samplesToCopy;
+                size_t pOutStart = frameCount - samplesToCopy;
+                for (size_t i = 0; i < samplesToCopy; ++i) {
+                    float left = pOut[(pOutStart + i) * 2] / 32768.0f;
+                    float right = pOut[(pOutStart + i) * 2 + 1] / 32768.0f;
+                    engine->m_recentSamples[startIdx + i] = (left + right) / 2.0f;
+                }
             }
         }
 
@@ -292,22 +323,20 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
         double totalSec = static_cast<double>(engine->m_currentDurationSec);
         double crossfadeSec = engine->m_crossfadeDurationMs / 1000.0;
 
-        // --- ДЕТЕКТОР ФИЗИЧЕСКОГО КОНЦА (EOF) ---
         if (framesRead == 0 && frameCount > 0) {
             bool isEof = false;
             if (engine->m_decoder) {
-                isEof = true; // Локальный файл точно закончился
+                isEof = true;
             } else if (totalSec > 0.0 && currentSec >= totalSec - 15.0) {
-                isEof = true; // Сетевой буфер пуст, и мы находимся в конце трека
+                isEof = true;
             }
 
             if (isEof) {
-                currentSec = totalSec; // Искусственно мотаем таймер до конца, чтобы 100% пробить триггеры
+                currentSec = totalSec;
             }
         }
 
         if (totalSec > 0.0 || (framesRead == 0 && engine->m_decoder)) {
-            // Триггер предзагрузки URL следующего трека
             if (totalSec > 0.0 && !engine->m_nearEndTriggered && currentSec >= totalSec - 10.0) {
                 engine->m_nearEndTriggered = true;
                 if (engine->OnTrackNearEnd) {
@@ -317,13 +346,11 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
                 }
             }
 
-            // Учитываем кроссфейд ТОЛЬКО если он реально включен!
             double endTriggerSec = totalSec;
             if (engine->m_isCrossfadeEnabled && engine->m_crossfadeDurationMs > 0 && totalSec > 0.0) {
                 endTriggerSec = totalSec - crossfadeSec;
             }
 
-            // Триггер фактического переключения
             if (!engine->m_finishedTriggered && currentSec >= endTriggerSec) {
                 engine->m_finishedTriggered = true;
                 if (engine->OnTrackFinished) {
@@ -338,7 +365,7 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
 
 bool MiniaudioEngine::PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId) {
     m_currentTrackId = trackId;
-    m_isCrossfadeEnabled = crossfade; // Запоминаем флаг для DataCallback
+    m_isCrossfadeEnabled = crossfade;
 
     QString localPath = PathManager::GetDownloadFilePath(trackId, "mp3");
 
@@ -469,30 +496,36 @@ void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSiz
         AAC_DECODER_ERROR err = aacDecoder_DecodeFrame(m_aacDecoder, pcmBuf.data(), pcmBuf.size(), 0);
 
         if (err == AAC_DEC_NOT_ENOUGH_BITS) break;
-        if (err != AAC_DEC_OK) {
-            Logger::Log(LogLevel::WARNING, "AAC decode error: " + std::to_string(err));
-
-            if (OnPlaybackError) {
-                QMetaObject::invokeMethod(QCoreApplication::instance(), [this, err]() {
-                    OnPlaybackError("AAC Decode Error: " + std::to_string(err));
-                }, Qt::QueuedConnection);
-            }
-            break;
-        }
+        if (err != AAC_DEC_OK) break;
 
         CStreamInfo* info = aacDecoder_GetStreamInfo(m_aacDecoder);
         if (info && info->numChannels > 0) {
+            ma_uint32 framesToOutput = info->frameSize;
+            int16_t* pcmDataPtr = nullptr;
+            std::vector<int16_t> stereoBuf;
+
             if (info->numChannels == 1) {
-                std::vector<int16_t> stereoBuf(info->frameSize * 2);
+                stereoBuf.resize(info->frameSize * 2);
                 for (int i = 0; i < info->frameSize; ++i) {
                     stereoBuf[i * 2]     = pcmBuf[i];
                     stereoBuf[i * 2 + 1] = pcmBuf[i];
                 }
-                size_t bytesToOutput = info->frameSize * 2 * sizeof(int16_t);
-                m_pcmBuffer.Write(reinterpret_cast<uint8_t*>(stereoBuf.data()), bytesToOutput);
+                pcmDataPtr = stereoBuf.data();
             } else {
-                size_t bytesToOutput = info->frameSize * info->numChannels * sizeof(int16_t);
-                m_pcmBuffer.Write(reinterpret_cast<uint8_t*>(pcmBuf.data()), bytesToOutput);
+                pcmDataPtr = pcmBuf.data();
+            }
+
+            ma_uint64 discard = m_networkDiscardFrames.load();
+            if (discard > 0) {
+                ma_uint64 framesToDrop = std::min<ma_uint64>(discard, framesToOutput);
+                m_networkDiscardFrames -= framesToDrop;
+                framesToOutput -= framesToDrop;
+                pcmDataPtr += (framesToDrop * 2);
+            }
+
+            if (framesToOutput > 0) {
+                size_t bytesToOutput = framesToOutput * 2 * sizeof(int16_t);
+                m_pcmBuffer.Write(reinterpret_cast<uint8_t*>(pcmDataPtr), bytesToOutput);
             }
         }
     }
@@ -504,9 +537,7 @@ void MiniaudioEngine::DecodeMp3Payload(const uint8_t* payload, size_t payloadSiz
     static constexpr size_t kMinBufferForDecode = 8192;
     static constexpr size_t kMaxFrameSize = 2048;
 
-    if (m_mp3Buffer.size() < kMinBufferForDecode) {
-        return;
-    }
+    if (m_mp3Buffer.size() < kMinBufferForDecode) return;
 
     mp3dec_frame_info_t info;
     while (m_mp3Buffer.size() > kMaxFrameSize) {
@@ -515,51 +546,67 @@ void MiniaudioEngine::DecodeMp3Payload(const uint8_t* payload, size_t payloadSiz
                                            static_cast<int>(m_mp3Buffer.size()),
                                            pcmBuf.data(), &info);
 
-        if (info.frame_bytes == 0) {
-            break;
-        }
+        if (info.frame_bytes == 0) break;
 
         if (samples > 0 && info.channels > 0) {
+            ma_uint32 framesToOutput = samples;
+            int16_t* pcmDataPtr = nullptr;
+            std::vector<int16_t> stereoBuf;
+
             if (info.channels == 1) {
-                std::vector<int16_t> stereoBuf(samples * 2);
+                stereoBuf.resize(samples * 2);
                 for (int i = 0; i < samples; ++i) {
                     stereoBuf[i * 2]     = pcmBuf[i];
                     stereoBuf[i * 2 + 1] = pcmBuf[i];
                 }
-                size_t bytesToOutput = samples * 2 * sizeof(int16_t);
-                m_pcmBuffer.Write(reinterpret_cast<uint8_t*>(stereoBuf.data()), bytesToOutput);
+                pcmDataPtr = stereoBuf.data();
             } else {
-                size_t bytesToOutput = static_cast<size_t>(samples) * info.channels * sizeof(int16_t);
-                m_pcmBuffer.Write(reinterpret_cast<uint8_t*>(pcmBuf.data()), bytesToOutput);
+                pcmDataPtr = pcmBuf.data();
+            }
+
+            ma_uint64 discard = m_networkDiscardFrames.load();
+            if (discard > 0) {
+                ma_uint64 framesToDrop = std::min<ma_uint64>(discard, framesToOutput);
+                m_networkDiscardFrames -= framesToDrop;
+                framesToOutput -= framesToDrop;
+                pcmDataPtr += (framesToDrop * 2);
+            }
+
+            if (framesToOutput > 0) {
+                size_t bytesToOutput = framesToOutput * 2 * sizeof(int16_t);
+                m_pcmBuffer.Write(reinterpret_cast<uint8_t*>(pcmDataPtr), bytesToOutput);
             }
         }
-
         m_mp3Buffer.erase(m_mp3Buffer.begin(), m_mp3Buffer.begin() + info.frame_bytes);
     }
 }
 
 void MiniaudioEngine::ClearBuffers(bool crossfade, int nextDurationSec) {
-    std::lock_guard<std::mutex> lock(m_audioMutex);
+    {
+        std::lock_guard<std::mutex> lock(m_audioMutex);
 
-    m_currentDurationSec = nextDurationSec;
-    m_nearEndTriggered = false;
-    m_finishedTriggered = false;
-    m_playbackFrameCount = 0;
+        m_currentDurationSec = nextDurationSec;
+        m_nearEndTriggered = false;
+        m_finishedTriggered = false;
+        m_playbackFrameCount = 0;
 
-    if (crossfade && m_crossfadeDurationMs > 0) {
-        InitiateCrossfade();
-    } else {
-        StopFadeOut();
-        m_decoder.reset();
-        m_pcmBuffer.Clear();
+        if (crossfade && m_crossfadeDurationMs > 0) {
+            InitiateCrossfade();
+        } else {
+            StopFadeOut();
+            m_decoder.reset();
+            m_pcmBuffer.Clear();
+        }
     }
 
     m_demuxer.Reset();
     m_mp3Buffer.clear();
     mp3dec_init(&m_mp3Decoder);
 
-    std::lock_guard<std::mutex> netLock(m_networkMutex);
-    m_aacBuffer.clear();
+    {
+        std::lock_guard<std::mutex> netLock(m_networkMutex);
+        m_aacBuffer.clear();
+    }
 }
 
 void MiniaudioEngine::InitiateCrossfade() {

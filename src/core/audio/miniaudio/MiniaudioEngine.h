@@ -37,6 +37,10 @@ public:
     void PushNetworkData(const uint8_t* data, size_t size);
     void ClearBuffers(bool crossfade = false, int nextDurationSec = 0);
 
+    void SetNetworkSkipSeconds(double seconds) override {
+        m_networkDiscardFrames = static_cast<ma_uint64>(seconds * SAMPLE_RATE);
+    }
+
     static constexpr int SAMPLE_RATE = 44100;
 
 private:
@@ -103,4 +107,5 @@ private:
     std::vector<float> m_recentSamples = std::vector<float>(256, 0.0f);
 
     std::string m_currentTrackId;
+    std::atomic<ma_uint64> m_networkDiscardFrames{0};
 };

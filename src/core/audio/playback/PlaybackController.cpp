@@ -123,9 +123,7 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
                 double posToSeek = m_savedPosition;
                 m_savedPosition = 0.0;
 
-                QTimer::singleShot(100, [this, posToSeek]() {
-                    m_audio.SetPositionSeconds(posToSeek);
-                });
+                m_audio.SetPositionSeconds(posToSeek);
             }
 
             if (m_startPaused) {

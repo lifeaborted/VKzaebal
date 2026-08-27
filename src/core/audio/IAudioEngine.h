@@ -22,6 +22,7 @@ public:
     virtual double GetLengthSeconds() const = 0;
     virtual std::vector<float> GetSpectrumData() const = 0;
     virtual void ClearBuffers(bool crossfade = false, int nextDurationSec = 0) = 0;
+    virtual void SetNetworkSkipSeconds(double seconds) {}
 
     std::function<void()> OnTrackNearEnd;
     std::function<void()> OnTrackFinished;

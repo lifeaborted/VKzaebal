@@ -2,83 +2,94 @@
 #include <algorithm>
 #include <cstring>
 
-RingBuffer::RingBuffer(size_t size) 
-    : m_capacity(size), m_readPos(0), m_writePos(0), m_availableBytes(0) {
-    m_buffer.resize(size);
+RingBuffer::RingBuffer(size_t size) {
+    Init(size);
+}
+
+RingBuffer::RingBuffer() = default;
+
+void RingBuffer::Init(size_t size) {
+    m_capacity = size + 1;
+    m_buffer.resize(m_capacity);
+    m_readPos.store(0, std::memory_order_relaxed);
+    m_writePos.store(0, std::memory_order_relaxed);
+}
+
+void RingBuffer::Clear() {
+    m_readPos.store(0, std::memory_order_relaxed);
+    m_writePos.store(0, std::memory_order_relaxed);
 }
 
 size_t RingBuffer::GetAvailableRead() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_availableBytes;
+    size_t w = m_writePos.load(std::memory_order_acquire);
+    size_t r = m_readPos.load(std::memory_order_relaxed);
+    if (w >= r) {
+        return w - r;
+    }
+    return m_capacity - r + w;
 }
 
 size_t RingBuffer::GetAvailableWrite() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_capacity - m_availableBytes;
+    size_t w = m_writePos.load(std::memory_order_relaxed);
+    size_t r = m_readPos.load(std::memory_order_acquire);
+    if (w >= r) {
+        return m_capacity - 1 - (w - r);
+    }
+    return r - w - 1;
 }
 
 size_t RingBuffer::Write(const uint8_t* data, size_t sizeToWrite) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    
-    size_t availableWrite = m_capacity - m_availableBytes;
+    size_t r = m_readPos.load(std::memory_order_acquire);
+    size_t w = m_writePos.load(std::memory_order_relaxed);
+
+    size_t availableWrite;
+    if (w >= r) {
+        availableWrite = m_capacity - 1 - (w - r);
+    } else {
+        availableWrite = r - w - 1;
+    }
+
     size_t actualWrite = std::min(sizeToWrite, availableWrite);
-    
     if (actualWrite == 0) return 0; // Буфер переполнен
 
-    // Пишем до конца буфера
-    size_t firstPart = std::min(actualWrite, m_capacity - m_writePos);
-    std::memcpy(&m_buffer[m_writePos], data, firstPart);
-    
-    // Если нужно, загибаемся в начало буфера
+    size_t firstPart = std::min(actualWrite, m_capacity - w);
+    std::memcpy(&m_buffer[w], data, firstPart);
+
     if (firstPart < actualWrite) {
         std::memcpy(&m_buffer[0], data + firstPart, actualWrite - firstPart);
     }
 
-    m_writePos = (m_writePos + actualWrite) % m_capacity;
-    m_availableBytes += actualWrite;
+    // Сообщаем потоку чтения, что данные готовы
+    m_writePos.store((w + actualWrite) % m_capacity, std::memory_order_release);
 
     return actualWrite;
 }
 
 size_t RingBuffer::Read(uint8_t* data, size_t sizeToRead) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    
-    size_t actualRead = std::min(sizeToRead, m_availableBytes);
-    
-    if (actualRead == 0) return 0; // Буфер пуст (сеть не успевает)
+    size_t w = m_writePos.load(std::memory_order_acquire);
+    size_t r = m_readPos.load(std::memory_order_relaxed);
 
-    size_t firstPart = std::min(actualRead, m_capacity - m_readPos);
-    std::memcpy(data, &m_buffer[m_readPos], firstPart);
-    
+    size_t availableRead;
+    if (w >= r) {
+        availableRead = w - r;
+    } else {
+        availableRead = m_capacity - r + w;
+    }
+
+    size_t actualRead = std::min(sizeToRead, availableRead);
+    if (actualRead == 0) return 0; // Буфер пуст
+
+    // Читаем первую часть
+    size_t firstPart = std::min(actualRead, m_capacity - r);
+    std::memcpy(data, &m_buffer[r], firstPart);
+
+    // Дочитываем с начала буфера
     if (firstPart < actualRead) {
         std::memcpy(data + firstPart, &m_buffer[0], actualRead - firstPart);
     }
 
-    m_readPos = (m_readPos + actualRead) % m_capacity;
-    m_availableBytes -= actualRead;
+    // Сообщаем потоку записи, что место освободилось
+    m_readPos.store((r + actualRead) % m_capacity, std::memory_order_release);
 
     return actualRead;
-}
-
-// Пустой конструктор для инициализации
-RingBuffer::RingBuffer()
-    : m_capacity(0), m_readPos(0), m_writePos(0), m_availableBytes(0) {
-}
-
-// Отложенная инициализация
-void RingBuffer::Init(size_t size) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_capacity = size;
-    m_buffer.resize(size);
-    m_readPos = 0;
-    m_writePos = 0;
-    m_availableBytes = 0;
-}
-
-// Очистка буфера
-void RingBuffer::Clear() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_readPos = 0;
-    m_writePos = 0;
-    m_availableBytes = 0;
 }

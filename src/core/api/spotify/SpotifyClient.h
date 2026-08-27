@@ -1,10 +1,8 @@
 #pragma once
-#include "core/api/IAudioProvider.h"
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
+#include "core/api/BaseApiProvider.h"
 #include <QString>
 
-class SpotifyClient : public IAudioProvider {
+class SpotifyClient : public BaseApiProvider {
     Q_OBJECT
 public:
     explicit SpotifyClient(QObject* parent = nullptr);
@@ -14,18 +12,17 @@ public:
     void ExchangeCodeForToken(const std::string& code);
 
     void ValidateToken(std::function<void(bool)> callback);
-    void SetAccessToken(const std::string& token) override;
     void FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) override;
     void FetchAllUserAudio(int offset = 0, int count = 200) override;
 
     signals:
         void TokenReceived(const std::string& token);
-        void AuthError(const std::string& errorString);
+    void AuthError(const std::string& errorString);
+
+protected:
+    bool HandleApiError(const QJsonDocument& json, int httpStatusCode) override;
 
 private:
-    QNetworkAccessManager* m_manager;
-    std::string m_accessToken;
-
     QString m_clientId;
     QString m_codeVerifier;
 };

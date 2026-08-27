@@ -2,20 +2,6 @@
 #include <windows.h>
 #endif
 
-#include <QDir>
-#include <QFile>
-#include <QDesktopServices>
-#include <QUrl>
-#include <QFileInfo>
-#include <QRegularExpression>
-#include <iostream>
-#include <string>
-#include <cctype>
-#include <QCoreApplication>
-#include <QMetaObject>
-#include <cmath>
-#include <QSettings>
-
 #include "ConsoleController.h"
 #include "core/audio/IAudioEngine.h"
 #include "core/playlist/PlaylistManager.h"
@@ -29,10 +15,15 @@
 #include "ui/console/commands/CommandDispatcher.h"
 #include "ui/console/view/ConsoleRenderer.h"
 
+#include <QCoreApplication>
+#include <QTimer>
+#include <QSettings>
+#include <iostream>
+
 ConsoleController::ConsoleController(
     IAudioEngine& audio, PlaylistManager& playlist, OAuthManager& authManager,
-    DatabaseManager& dbManager, TrackDownloader& downloader, LyricsFetcher& lyricsFetcher
-) : m_audio(audio), m_playlist(playlist), m_authManager(authManager),
+    DatabaseManager& dbManager, TrackDownloader& downloader, LyricsFetcher& lyricsFetcher, QObject* parent
+) : QObject(parent), m_audio(audio), m_playlist(playlist), m_authManager(authManager),
     m_dbManager(dbManager), m_downloader(downloader), m_lyricsFetcher(lyricsFetcher),
     m_currentState(ConsoleState::COMMAND_MODE), m_isRunning(false) {
 
@@ -40,21 +31,19 @@ ConsoleController::ConsoleController(
     m_renderer = std::make_unique<ConsoleRenderer>(audio, playlist);
 
     m_dispatcher->SetPrintCallback([this](const std::string& text) {
-            if (!m_isRunning || !QCoreApplication::instance()) return;
-            QMetaObject::invokeMethod(QCoreApplication::instance(), [this, text]() {
-                std::string cleanText = text;
-                size_t pos = cleanText.find("\n\n> ");
-                if (pos != std::string::npos) cleanText.erase(pos);
+        if (!m_isRunning || !QCoreApplication::instance()) return;
 
-                // Если текст длинный (например, меню Help или Search) - кидаем в Оверлей
-                int newlines = std::count(cleanText.begin(), cleanText.end(), '\n');
-                if (newlines > 2) {
-                    m_renderer->SetOverlay(cleanText);
-                } else {
-                    m_renderer->SetStatusMessage(cleanText);
-                }
-            }, Qt::QueuedConnection);
-        });
+        std::string cleanText = text;
+        size_t pos = cleanText.find("\n\n> ");
+        if (pos != std::string::npos) cleanText.erase(pos);
+
+        int newlines = std::count(cleanText.begin(), cleanText.end(), '\n');
+        if (newlines > 2) {
+            m_renderer->SetOverlay(cleanText);
+        } else {
+            m_renderer->SetStatusMessage(cleanText);
+        }
+    });
 
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
     m_renderer->SetVisualizerEnabled(settings.value("Ui/ShowVisualizer", true).toBool());
@@ -62,37 +51,22 @@ ConsoleController::ConsoleController(
     m_dispatcher->OnVisualizerToggled = [this]() {
         bool newState = !m_renderer->IsVisualizerEnabled();
         m_renderer->SetVisualizerEnabled(newState);
-        QSettings s(PathManager::GetConfigPath(), QSettings::IniFormat);
-        s.setValue("Ui/ShowVisualizer", newState);
-        s.sync();
+        QSettings(PathManager::GetConfigPath(), QSettings::IniFormat).setValue("Ui/ShowVisualizer", newState);
     };
 
-    m_dispatcher->OnReloadUiRequested = [this]() {
-        m_renderer->ReloadConfig();
-    };
-
-    m_dispatcher->OnSourceChangeRequested = [this](const std::string&) {
-        m_currentState = ConsoleState::SELECT_SOURCE;
-    };
+    m_dispatcher->OnReloadUiRequested = [this]() { m_renderer->ReloadConfig(); };
+    m_dispatcher->OnSourceChangeRequested = [this](const std::string&) { m_currentState = ConsoleState::SELECT_SOURCE; };
 
     m_dispatcher->OnLogoutRequested = [this](const std::string& service) {
         auto processLogout = [this](const QString& svcName, const std::string& internalName) {
             m_authManager.ClearSavedToken(svcName);
-            std::string msg = "[Выход] Токен для " + internalName + " удален.";
-            QMetaObject::invokeMethod(QCoreApplication::instance(), [this, msg]() {
-                m_renderer->SetStatusMessage(msg);
-            }, Qt::QueuedConnection);
+            m_renderer->SetStatusMessage("[Выход] Токен для " + internalName + " удален.");
         };
 
-        bool logoutVk = (service == "vk" || service == "all");
-        bool logoutSpotify = (service == "spotify" || service == "all");
-        bool logoutSc = (service == "sc" || service == "all");
-        bool logoutYandex = (service == "yandex" || service == "all");
-
-        if (logoutVk) processLogout("VK", "ВКонтакте");
-        if (logoutSpotify) processLogout("Spotify", "Spotify");
-        if (logoutSc) processLogout("SoundCloud", "SoundCloud");
-        if (logoutYandex) processLogout("Yandex", "Yandex");
+        if (service == "vk" || service == "all") processLogout("VK", "ВКонтакте");
+        if (service == "spotify" || service == "all") processLogout("Spotify", "Spotify");
+        if (service == "sc" || service == "all") processLogout("SoundCloud", "SoundCloud");
+        if (service == "yandex" || service == "all") processLogout("Yandex", "Yandex");
     };
 
     m_dispatcher->OnGaplessModeChanged = [this](bool isGapless) {
@@ -102,8 +76,11 @@ ConsoleController::ConsoleController(
     m_dispatcher->OnQuitRequested = [this]() {
         m_audio.Pause();
         emit QuitRequested();
-        m_isRunning = false;
     };
+
+    // Таймер для отрисовки интерфейса (Главный поток)
+    m_uiTimer = new QTimer(this);
+    connect(m_uiTimer, &QTimer::timeout, this, &ConsoleController::OnUiTick);
 }
 
 ConsoleController::~ConsoleController() {
@@ -126,17 +103,20 @@ void ConsoleController::Start() {
     }
 
     m_isRunning = true;
+    m_uiTimer->start(16); // Запуск визуализатора
+
+    // Запускаем фоновый поток только для чтения клавиатуры!
     m_inputThread = std::thread(&ConsoleController::InputLoop, this);
-    m_uiThread = std::thread(&ConsoleController::UiLoop, this);
 }
 
 void ConsoleController::Stop() {
+    if (!m_isRunning) return;
     m_isRunning = false;
 
-    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
-    int mode = settings.value("Visualizer/Mode", 0).toInt();
+    m_uiTimer->stop();
 
-    if (mode == 1) {
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    if (settings.value("Visualizer/Mode", 0).toInt() == 1) {
         std::cout << "\033[?1049l\033[?25h";
     } else {
         std::cout << "\033[?25h";
@@ -150,105 +130,94 @@ void ConsoleController::Stop() {
     }
 #endif
 
-    if (m_inputThread.joinable()) m_inputThread.detach();
-    if (m_uiThread.joinable()) m_uiThread.join();
-}
-
-void ConsoleController::InputLoop() {
-    std::string rawInput;
-
-    while (m_isRunning) {
-        if (!std::getline(std::cin, rawInput)) {
-            std::cin.clear();
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            continue;
-        }
-
-        if (m_currentState == ConsoleState::WAITING_TOKEN_URL) {
-            size_t start = rawInput.find_first_not_of(" \t\r\n");
-            if (start == std::string::npos) {
-                std::cout << "> "; std::cout.flush(); continue;
-            }
-            std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
-
-            if (input == "offline") {
-                m_currentState = ConsoleState::COMMAND_MODE;
-                emit OfflineModeRequested();
-                continue;
-            }
-
-            QString urlStr = QString::fromStdString(input);
-            QMetaObject::invokeMethod(&m_authManager, [&, urlStr]() {
-                m_authManager.onUrlIntercepted(urlStr);
-            }, Qt::QueuedConnection);
-
-            m_currentState = ConsoleState::COMMAND_MODE;
-            continue;
-        }
-
-        if (m_currentState == ConsoleState::SELECT_SOURCE) {
-            size_t start = rawInput.find_first_not_of(" \t\r\n");
-            if (start == std::string::npos) {
-                std::cout << "> "; std::cout.flush(); continue;
-            }
-            std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
-
-            if (input == "1") emit SourceChanged("VK");
-            else if (input == "2") emit SourceChanged("Spotify");
-            else if (input == "3") emit SourceChanged("SoundCloud");
-            else if (input == "4") emit SourceChanged("Yandex");
-            else if (input == "5") emit SourceChanged("Offline");
-
-            m_currentState = ConsoleState::COMMAND_MODE;
-            continue;
-        }
-
-        // РЕЖИМ ПЛЕЕРА
-        if (m_currentState == ConsoleState::COMMAND_MODE) {
-            // При нажатии Enter всегда просим перерисовать экран, чтобы убрать сдвиг скролла
-            m_renderer->RequestFullRedraw();
-            m_renderer->SetOverlay(""); // ВСЕГДА прячем оверлей Help/Search
-
-            size_t start = rawInput.find_first_not_of(" \t\r\n");
-            if (start == std::string::npos) {
-                continue; // Пустой Enter просто закрыл оверлей и обновил кадр
-            }
-
-            std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
-            m_dispatcher->Dispatch(input);
-            continue;
-        }
-    }
-}
-
-void ConsoleController::UiLoop() {
-    while (m_isRunning) {
-        if (m_currentState == ConsoleState::WAITING_TOKEN_URL || m_currentState == ConsoleState::SELECT_SOURCE) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            continue;
-        }
-
-        if (m_currentState == ConsoleState::COMMAND_MODE) {
-            m_renderer->Render();
-        }
-
-        // ДИНАМИЧЕСКИЙ FPS В ЗАВИСИМОСТИ ОТ РЕЖИМА
-        QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
-        int mode = settings.value("Visualizer/Mode", 0).toInt();
-
-        int fps = 2;
-        if (mode == 1) {
-            fps = m_renderer->GetFramerate();
-        } else {
-            fps = m_renderer->IsVisualizerEnabled() ? 15 : 2;
-        }
-
-        int delay = (fps > 0) ? (1000 / fps) : 33;
-        std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+    // Отсоединяем поток, чтобы он мирно умер при закрытии приложения, если застрял на std::getline
+    if (m_inputThread.joinable()) {
+        m_inputThread.detach();
     }
 }
 
 void ConsoleController::SetCurrentProvider(IAudioProvider* provider) {
     m_currentProvider = provider;
     if (m_dispatcher) m_dispatcher->SetCurrentProvider(provider);
+}
+
+void ConsoleController::InputLoop() {
+    std::string rawInput;
+    while (m_isRunning) {
+        // БЛОКИРУЮЩИЙ ВЫЗОВ (Теперь он не мешает графике, так как живет в своем потоке)
+        if (!std::getline(std::cin, rawInput)) {
+            std::cin.clear();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+
+        // БЕЗОПАСНО ПЕРЕДАЕМ КОМАНДУ В ГЛАВНЫЙ ПОТОК (Qt Event Loop)
+        QMetaObject::invokeMethod(this, [this, rawInput]() {
+            if (!m_isRunning) return;
+
+            if (m_currentState == ConsoleState::WAITING_TOKEN_URL) {
+                size_t start = rawInput.find_first_not_of(" \t\r\n");
+                if (start == std::string::npos) { std::cout << "> "; std::cout.flush(); return; }
+
+                std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
+                if (input == "offline") {
+                    m_currentState = ConsoleState::COMMAND_MODE;
+                    emit OfflineModeRequested();
+                    return;
+                }
+
+                m_authManager.onUrlIntercepted(QString::fromStdString(input));
+                m_currentState = ConsoleState::COMMAND_MODE;
+                return;
+            }
+
+            if (m_currentState == ConsoleState::SELECT_SOURCE) {
+                size_t start = rawInput.find_first_not_of(" \t\r\n");
+                if (start == std::string::npos) { std::cout << "> "; std::cout.flush(); return; }
+
+                std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
+                if (input == "1") emit SourceChanged("VK");
+                else if (input == "2") emit SourceChanged("Spotify");
+                else if (input == "3") emit SourceChanged("SoundCloud");
+                else if (input == "4") emit SourceChanged("Yandex");
+                else if (input == "5") emit SourceChanged("Offline");
+
+                m_currentState = ConsoleState::COMMAND_MODE;
+                return;
+            }
+
+            if (m_currentState == ConsoleState::COMMAND_MODE) {
+                m_renderer->RequestFullRedraw();
+                m_renderer->SetOverlay("");
+
+                size_t start = rawInput.find_first_not_of(" \t\r\n");
+                if (start != std::string::npos) {
+                    std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
+                    m_dispatcher->Dispatch(input);
+                }
+            }
+        }, Qt::QueuedConnection);
+    }
+}
+
+void ConsoleController::OnUiTick() {
+    if (m_currentState == ConsoleState::WAITING_TOKEN_URL || m_currentState == ConsoleState::SELECT_SOURCE) {
+        return;
+    }
+
+    if (m_currentState == ConsoleState::COMMAND_MODE) {
+        m_renderer->Render();
+    }
+
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    int mode = settings.value("Visualizer/Mode", 0).toInt();
+
+    int fps = 2;
+    if (mode == 1) fps = m_renderer->GetFramerate();
+    else fps = m_renderer->IsVisualizerEnabled() ? 15 : 2;
+
+    int newInterval = (fps > 0) ? (1000 / fps) : 33;
+    if (m_uiTimer->interval() != newInterval) {
+        m_uiTimer->setInterval(newInterval);
+    }
 }

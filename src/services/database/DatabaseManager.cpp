@@ -1,11 +1,14 @@
 #include "DatabaseManager.h"
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
+
 #include <QSqlError>
 #include <QVariant>
 #include <QFile>
 #include <QTextStream>
 #include <QStringList>
+#include <QtConcurrent>
+#include <QUuid>
 
 DatabaseManager::DatabaseManager() {
     m_db = QSqlDatabase::addDatabase("QSQLITE");
@@ -77,65 +80,94 @@ void DatabaseManager::ClearSetting(const QString& key) {
     query.exec();
 }
 
-void DatabaseManager::ExportQueueToTxt(const std::vector<Track>& queue, const QString& filename, bool isShuffle) const {
-    QString exportPath = PathManager::GetPlaylistExportPath(filename);
-    QFile file(exportPath);
-    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QTextStream out(&file);
-        out << "=== ТЕКУЩИЙ ПЛЕЙЛИСТ ===\n";
-        out << "Режим: " << (isShuffle ? "SHUFFLE" : "СТАНДАРТНЫЙ") << "\n";
-        out << "-------------------------\n\n";
+void DatabaseManager::SaveQueue(const std::vector<Track>& currentQueue, const std::string& source, bool isShuffle) {
+    QThreadPool::globalInstance()->start([currentQueue, source, isShuffle]() {
+        QString connectionName = QUuid::createUuid().toString();
+        {
+            QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connectionName);
+            db.setDatabaseName(PathManager::GetDbPath());
 
-        for (size_t i = 0; i < queue.size(); ++i) {
-            out << "[" << (i + 1) << "]. " << QString::fromStdString(queue[i].artist)
-                << " - " << QString::fromStdString(queue[i].title)
-                << " [" << QString::fromStdString(queue[i].GetFormattedDuration()) << "]\n";
+            if (db.open()) {
+                db.transaction();
+                QSqlQuery query(db);
+
+                query.prepare("DELETE FROM PlayQueue WHERE is_shuffle = :is_shuffle AND source = :source");
+                query.bindValue(":is_shuffle", isShuffle ? 1 : 0);
+                query.bindValue(":source", QString::fromStdString(source));
+                query.exec();
+
+                query.prepare("INSERT INTO PlayQueue (position, id, source, is_shuffle) VALUES (:pos, :id, :source, :shuffle)");
+                for (size_t i = 0; i < currentQueue.size(); ++i) {
+                    query.bindValue(":pos", static_cast<int>(i));
+                    query.bindValue(":id", QString::fromStdString(currentQueue[i].id));
+                    query.bindValue(":source", QString::fromStdString(source));
+                    query.bindValue(":shuffle", isShuffle ? 1 : 0);
+                    query.exec();
+                }
+                db.commit();
+                db.close();
+            } else {
+                Logger::Log(LogLevel::ERROR, "DB: Failed to open threaded connection for SaveQueue.");
+            }
         }
-        file.close();
-    } else {
-        Logger::Log(LogLevel::ERROR, "DB: Failed to generate playlist export.");
-    }
+        QSqlDatabase::removeDatabase(connectionName);
+    });
+}
+
+void DatabaseManager::ExportQueueToTxt(const std::vector<Track>& queue, const QString& filename, bool isShuffle) const {
+    QThreadPool::globalInstance()->start([queue, filename, isShuffle]() {
+        QString exportPath = PathManager::GetPlaylistExportPath(filename);
+        QFile file(exportPath);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream out(&file);
+            out << "=== ТЕКУЩИЙ ПЛЕЙЛИСТ ===\n";
+            out << "Режим: " << (isShuffle ? "SHUFFLE" : "СТАНДАРТНЫЙ") << "\n";
+            out << "-------------------------\n\n";
+
+            for (size_t i = 0; i < queue.size(); ++i) {
+                out << "[" << (i + 1) << "]. " << QString::fromStdString(queue[i].artist)
+                    << " - " << QString::fromStdString(queue[i].title)
+                    << " [" << QString::fromStdString(queue[i].GetFormattedDuration()) << "]\n";
+            }
+            file.close();
+        } else {
+            Logger::Log(LogLevel::ERROR, "DB: Failed to generate playlist export.");
+        }
+    });
 }
 
 void DatabaseManager::SaveTracks(const std::vector<Track>& tracks) {
-    QSqlQuery query;
-    m_db.transaction();
+    QThreadPool::globalInstance()->start([tracks]() {
+        QString connectionName = QUuid::createUuid().toString();
+        {
+            QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connectionName);
+            db.setDatabaseName(PathManager::GetDbPath());
 
-    query.prepare("INSERT OR REPLACE INTO Tracks (id, source, artist, title, duration, cover_url, lyrics_id, lyrics) "
-                  "VALUES (:id, :source, :artist, :title, :duration, :cover_url, :lyrics_id, :lyrics)");
+            if (db.open()) {
+                db.transaction();
+                QSqlQuery query(db);
+                query.prepare("INSERT OR REPLACE INTO Tracks (id, source, artist, title, duration, cover_url, lyrics_id, lyrics) "
+                              "VALUES (:id, :source, :artist, :title, :duration, :cover_url, :lyrics_id, :lyrics)");
 
-    for (const auto& track : tracks) {
-        query.bindValue(":id", QString::fromStdString(track.id));
-        query.bindValue(":source", QString::fromStdString(track.source));
-        query.bindValue(":artist", QString::fromStdString(track.artist));
-        query.bindValue(":title", QString::fromStdString(track.title));
-        query.bindValue(":duration", QString::fromStdString(track.GetFormattedDuration()));
-        query.bindValue(":cover_url", QString::fromStdString(track.coverUrl));
-        query.bindValue(":lyrics_id", QString::fromStdString(track.lyrics_id));
-        query.bindValue(":lyrics", QString::fromStdString(track.lyrics));
-        query.exec();
-    }
-    m_db.commit();
-}
-
-void DatabaseManager::SaveQueue(const std::vector<Track>& currentQueue, const std::string& source, bool isShuffle) {
-    QSqlQuery query;
-    m_db.transaction();
-
-    query.prepare("DELETE FROM PlayQueue WHERE is_shuffle = :is_shuffle AND source = :source");
-    query.bindValue(":is_shuffle", isShuffle ? 1 : 0);
-    query.bindValue(":source", QString::fromStdString(source));
-    query.exec();
-
-    query.prepare("INSERT INTO PlayQueue (position, id, source, is_shuffle) VALUES (:pos, :id, :source, :shuffle)");
-    for (size_t i = 0; i < currentQueue.size(); ++i) {
-        query.bindValue(":pos", static_cast<int>(i));
-        query.bindValue(":id", QString::fromStdString(currentQueue[i].id));
-        query.bindValue(":source", QString::fromStdString(source));
-        query.bindValue(":shuffle", isShuffle ? 1 : 0);
-        query.exec();
-    }
-    m_db.commit();
+                for (const auto& track : tracks) {
+                    query.bindValue(":id", QString::fromStdString(track.id));
+                    query.bindValue(":source", QString::fromStdString(track.source));
+                    query.bindValue(":artist", QString::fromStdString(track.artist));
+                    query.bindValue(":title", QString::fromStdString(track.title));
+                    query.bindValue(":duration", QString::fromStdString(track.GetFormattedDuration()));
+                    query.bindValue(":cover_url", QString::fromStdString(track.coverUrl));
+                    query.bindValue(":lyrics_id", QString::fromStdString(track.lyrics_id));
+                    query.bindValue(":lyrics", QString::fromStdString(track.lyrics));
+                    query.exec();
+                }
+                db.commit();
+                db.close();
+            } else {
+                Logger::Log(LogLevel::ERROR, "DB: Failed to open threaded connection.");
+            }
+        }
+        QSqlDatabase::removeDatabase(connectionName);
+    });
 }
 
 std::vector<Track> DatabaseManager::LoadTracks(const std::string& source) {
