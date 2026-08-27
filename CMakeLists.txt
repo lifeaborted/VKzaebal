@@ -23,6 +23,10 @@ set(PROJECT_SOURCES
         src/models/Track.h
 
         # --- Core ---
+
+        src/core/ApplicationCore.cpp
+        src/core/ApplicationCore.h
+
         # API
         src/core/api/IAudioProvider.h
 
@@ -37,6 +41,9 @@ set(PROJECT_SOURCES
 
         src/core/api/yandex/YandexClient.cpp
         src/core/api/yandex/YandexClient.h
+
+        src/core/api/BaseApiProvider.cpp
+        src/core/api/BaseApiProvider.h
 
         # Audio
         src/core/audio/bass/BassEngine.h
@@ -110,7 +117,6 @@ set(PROJECT_SOURCES
 
         src/utils/path/PathManager.h
         src/utils/path/PathManager.cpp
-        src/ui/console/view/UltimateRenderer.cpp
 )
 
 # --- Подключаем внешние библиотеки ---
