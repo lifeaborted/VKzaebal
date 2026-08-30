@@ -190,6 +190,7 @@ void ConsoleController::InputLoop() {
             if (m_currentState == ConsoleState::COMMAND_MODE) {
                 m_renderer->RequestFullRedraw();
                 m_renderer->SetOverlay("");
+                m_renderer->SetStatusMessage("");
 
                 size_t start = rawInput.find_first_not_of(" \t\r\n");
                 if (start != std::string::npos) {

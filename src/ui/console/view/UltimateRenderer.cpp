@@ -67,7 +67,7 @@ static std::vector<RGB> ParseColorsList(const std::string& str) {
     return res;
 }
 
-// Умный конвертер HEX в ANSI
+// конвертер HEX в ANSI
 static std::string HexToAnsiStr(const std::string& hex, bool isBg) {
     if (hex.length() == 7 && hex[0] == '#') {
         try {
@@ -77,7 +77,6 @@ static std::string HexToAnsiStr(const std::string& hex, bool isBg) {
             return "\033[" + std::to_string(isBg ? 48 : 38) + ";2;" + std::to_string(r) + ";" + std::to_string(g) + ";" + std::to_string(b) + "m";
         } catch(...) {}
     }
-    // Если пользователь всё-таки ввел сырой ANSI код
     std::string s = hex;
     size_t pos = 0;
     while ((pos = s.find("\\033", pos)) != std::string::npos) {
@@ -274,7 +273,7 @@ void UltimateRenderer::Render() {
         columns[x] = totalTicks;
     }
 
-    // --- ОБНОВЛЕНИЕ КЭША ИНТЕРФЕЙСА (Срабатывает только updateUi раз в секунду) ---
+    // --- ОБНОВЛЕНИЕ КЭША ИНТЕРФЕЙСА ---
     if (updateUi) {
         Track currentTrack = m_playlist.GetCurrentTrack();
 
@@ -293,24 +292,39 @@ void UltimateRenderer::Render() {
         char timeBuf[128];
         snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d / %02d:%02d", curMin, curSecInt, totMin, totSecInt);
 
-        std::string statusStr = m_audio.IsPlaying() ? "\033[38;2;80;255;150m▶ Playing\033[0m" : "\033[38;2;150;150;150m■ Paused\033[0m";
-        m_cTimeStatus = "\033[38;2;150;150;150m" + std::string(timeBuf) + "\033[0m        " + statusStr;
+        // 1. Статус проигрывания (теперь выводится один, прижат к левому краю)
+        m_cTimeStatus = m_audio.IsPlaying() ? "\033[38;2;80;255;150m▶ Playing\033[0m" : "\033[38;2;150;150;150m■ Paused\033[0m";
 
-        int barInnerLength = innerWidth;
+        // 2. Рассчитываем ширину полосы с учетом таймера (чтобы не вылезать за спектрограмму)
+        std::string timeStr = timeBuf;
+        int timeLen = timeStr.length() + 2;
+        int barInnerLength = innerWidth - timeLen;
+        if (barInnerLength < 10) barInnerLength = 10;
+
         std::string barStr = "";
 
         if (totalSec > 0.0) {
             int filled = static_cast<int>((currentSec / totalSec) * barInnerLength);
-            if (filled > barInnerLength) filled = barInnerLength;
+
+            int thumbPos = filled;
+            if (thumbPos >= barInnerLength) thumbPos = barInnerLength - 1;
+            if (thumbPos < 0) thumbPos = 0;
 
             for (int i = 0; i < barInnerLength; ++i) {
-                if (i < filled) barStr += "\033[38;2;80;255;150m━\033[0m";
-                else barStr += "\033[38;2;80;80;80m━\033[0m";
+                if (i == thumbPos) {
+                    barStr += "\033[1;38;2;255;255;255m\xE2\x96\xA0\033[0m"; // Ползунок
+                } else if (i < thumbPos) {
+                    barStr += "\033[38;2;80;255;150m\xE2\x94\x81\033[0m"; // Заполненная часть
+                } else {
+                    barStr += "\033[38;2;80;80;80m\xE2\x94\x81\033[0m";   // Пустая часть
+                }
             }
         } else {
-            for (int i = 0; i < barInnerLength; ++i) barStr += "\033[38;2;80;80;80m━\033[0m";
+            barStr += "\033[1;38;2;255;255;255m\xE2\x96\xA0\033[0m";
+            for (int i = 1; i < barInnerLength; ++i) barStr += "\033[38;2;80;80;80m\xE2\x94\x81\033[0m";
         }
-        m_cProgressBar = barStr;
+
+        m_cProgressBar = barStr + "  \033[38;2;150;150;150m" + timeStr + "\033[0m";
 
         int volPercent = static_cast<int>(std::round(m_audio.GetVolume() * 100));
         int volBars = (volPercent * 25) / 100;
@@ -369,7 +383,7 @@ void UltimateRenderer::Render() {
         }
     }
 
-    // --- ФОРМИРОВАНИЕ КАДРА (Вызывается каждый тик FPS) ---
+    // --- ФОРМИРОВАНИЕ КАДРА ---
     std::string frame;
     frame.reserve(consoleWidth * consoleHeight * 2);
     int drawnLines = 0;

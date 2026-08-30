@@ -35,7 +35,6 @@ int main(int argc, char *argv[]) {
     Logger::Log(LogLevel::INFO, "--- VK Audio Player Started ---");
     Logger::Log(LogLevel::INFO, "DB Path: " + PathManager::GetDbPath().toStdString());
 
-    // DI Контейнер берет на себя всю тяжелую работу
     ApplicationCore appCore(envVars);
 
     if (!appCore.Initialize()) {
