@@ -54,6 +54,9 @@ set(PROJECT_SOURCES
         src/core/audio/miniaudio/MiniaudioEngine.h
         src/core/audio/miniaudio/MiniaudioEngine.cpp
 
+        src/core/audio/fourierTransform/FourierTransform.cpp
+        src/core/audio/fourierTransform/FourierTransform.h
+
         src/core/audio/IAudioEngine.h
 
         src/core/audio/playback/PlaybackController.h
@@ -194,5 +197,20 @@ if (WIN32)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/basshls.dll"
             $<TARGET_FILE_DIR:${PROJECT_NAME}>
+    )
+endif()
+
+# Включение аппаратного ускорения AVX2
+if(MSVC)
+    target_compile_options(VKAudioPlayer PRIVATE
+            $<$<CONFIG:Release>:/O2>
+            /arch:AVX2
+            /fp:fast
+    )
+else()
+    target_compile_options(VKAudioPlayer PRIVATE
+            $<$<CONFIG:Release>:-O3>
+            -mavx2
+            -ffast-math
     )
 endif()

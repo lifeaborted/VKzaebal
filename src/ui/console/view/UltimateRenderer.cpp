@@ -217,10 +217,10 @@ void UltimateRenderer::Render() {
         m_lastUiUpdate = now;
     }
 
-    int fixedLines = 18;
+    int fixedLines = 19;
     int availableForDynamic = consoleHeight - fixedLines;
 
-    int currentHeight = m_height;
+    int currentHeight = m_height > 1 ? m_height - 1 : 1;
     int playlistLines = 5;
 
     if (availableForDynamic < 2) {
@@ -312,7 +312,7 @@ void UltimateRenderer::Render() {
 
             for (int i = 0; i < barInnerLength; ++i) {
                 if (i == thumbPos) {
-                    barStr += "\033[1;38;2;255;255;255m\xE2\x96\xA0\033[0m"; // Ползунок
+                    barStr += "\033[38;2;255;255;255m●\033[0m"; // Ползунок
                 } else if (i < thumbPos) {
                     barStr += "\033[38;2;80;255;150m\xE2\x94\x81\033[0m"; // Заполненная часть
                 } else {
@@ -356,6 +356,8 @@ void UltimateRenderer::Render() {
         std::string repStr = (repMode == 1) ? "[Repeat: All]" : (repMode == 2 ? "[Repeat: One]" : "[Repeat: Off]");
 
         m_cPlaylistLines.push_back("\033[38;2;255;180;80m▶ Playlist\033[0m \033[38;2;100;100;100m—\033[0m " + shufStr + " \033[38;2;150;150;150m" + repStr + " [" + std::to_string(trackIndex + 1) + "/" + std::to_string(cachedQueue.size()) + "]\033[0m");
+
+        m_cPlaylistLines.push_back("");
 
         int half = (playlistLines - 1) / 2;
         int startIdx = std::max(0, trackIndex - half);
@@ -423,8 +425,8 @@ void UltimateRenderer::Render() {
             addLine(line);
         }
     } else {
-        addLine("\033[38;2;80;255;150mV K   A U D I O   P L A Y E R\033[0m");
-        addLine("\033[38;2;250;250;250m🎵 \033[1m" + m_cTrackTitle + "\033[0m");
+        addLine("\033[38;2;80;255;150m \033[0m");
+        addLine("\033[38;2;250;250;250m\033[1m" + m_cTrackTitle + "\033[0m");
 
         addLine("");
         addLine(m_cTimeStatus);
@@ -458,6 +460,8 @@ void UltimateRenderer::Render() {
             addLine(lineContent);
         }
 
+        addLine("");
+
         addLine(m_cProgressBar);
         addLine("");
         addLine(m_cVolumeEq);
@@ -469,21 +473,16 @@ void UltimateRenderer::Render() {
         }
     }
 
-    int targetLines = consoleHeight - 6;
-    if (targetLines < 10) targetLines = 10;
 
-    while (drawnLines < targetLines) {
-        addLine("");
-    }
-
+    // 1. Выводим статус сразу под плейлистом
     if (!m_cStatusMsg.empty() && m_overlayText.empty()) {
         addLine(m_cStatusMsg);
-    } else {
-        addLine("");
     }
 
+    // 2. Отрисовываем разделительную линию (плейлист теперь будет упираться прямо в нее)
     addLine("\033[38;2;80;80;80m" + std::string(innerWidth, '-') + "\033[0m");
 
+    // 3. Футер с подсказками
     std::string footer = "\033[1;37m[P]\033[0m Play   \033[1;37m[N]\033[0m Next   \033[1;37m[B]\033[0m Prev   \033[1;37m[SH]\033[0m Shuffle   \033[1;37m[V 50]\033[0m Vol   \033[1;37m[H]\033[0m Help   \033[1;37m[Q]\033[0m Quit";
 
     std::string bg = "";
@@ -496,9 +495,12 @@ void UltimateRenderer::Render() {
             pos += resetStr.length();
         }
     }
-
     addLine(footer);
-    addLine("");
+
+    while (drawnLines < consoleHeight - 2) {
+        addLine("");
+    }
+
 
     // --- ВЫВОД В КОНСОЛЬ ---
     if (m_needsFullRedraw || frame != m_lastPrintedStr) {

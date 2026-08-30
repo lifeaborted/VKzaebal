@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QTimer>
 #include <QCoreApplication>
+#include <QSettings>
 
 PlaybackController::PlaybackController(IAudioEngine& audio, PlaylistManager& playlist, NetworkStreamer& streamer, QObject* parent)
     : QObject(parent), m_audio(audio), m_playlist(playlist), m_streamer(streamer) {}
@@ -53,6 +54,14 @@ void PlaybackController::HandleTrackNearEnd() {
 }
 
 void PlaybackController::AttemptPlay(const Track& track, int attempt) {
+
+    if (attempt == 1) {
+        bool shouldSavePos = QSettings(PathManager::GetConfigPath(), QSettings::IniFormat).value("Playback/SavePosition", true).toBool();
+        if (!shouldSavePos) {
+            m_savedPosition = 0.0;
+        }
+    }
+
     int currentGen = (attempt == 1) ? ++m_playbackGeneration : m_playbackGeneration.load();
 
     QString localPath = PathManager::GetDownloadFilePath(track.GetSafeFilename(), "mp3");

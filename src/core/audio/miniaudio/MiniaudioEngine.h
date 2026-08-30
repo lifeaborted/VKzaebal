@@ -5,6 +5,7 @@
 #include "utils/buffer/RingBuffer.h"
 #include "aacdecoder_lib.h"
 #include "utils/parser/MpegTsDemuxer.h"
+#include <core/audio/fourierTransform/FourierTransform.h>
 
 #include <string>
 #include <atomic>
@@ -31,7 +32,7 @@ public:
     bool IsPlaying() const override;
     double GetPositionSeconds() const override;
     double GetLengthSeconds() const override;
-    std::vector<float> GetSpectrumData() const override;
+    std::vector<float> GetSpectrumData() override;
 
     // Метод, куда NetworkStreamer будет пушить скачанные байты AAC
     void PushNetworkData(const uint8_t* data, size_t size);
@@ -115,4 +116,6 @@ private:
     std::atomic<ma_uint64> m_networkDiscardFrames{0};
 
     std::atomic<bool> m_isNetworkFinished{false};
+
+    FastFourierTransform m_fft{256};
 };

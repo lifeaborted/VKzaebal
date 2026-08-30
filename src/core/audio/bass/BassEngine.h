@@ -26,7 +26,7 @@ public:
     bool IsPlaying() const override;
     double GetPositionSeconds() const override;
     double GetLengthSeconds() const override;
-    std::vector<float> GetSpectrumData() const override;
+    std::vector<float> GetSpectrumData() override;
     // Заглушка
     void ClearBuffers(bool crossfade = false, int nextDurationSec = 0) override {}
 

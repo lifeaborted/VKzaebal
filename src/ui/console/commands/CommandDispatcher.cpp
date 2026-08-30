@@ -456,6 +456,25 @@ void CommandDispatcher::Dispatch(const std::string& input) {
     }
 }
 
+class SavePosCommand : public IConsoleCommand {
+    void Execute(const std::string& arg, CommandContext& ctx) override {
+        try {
+            int mode = std::stoi(arg);
+            if (mode == 0 || mode == 1) {
+                bool savePos = (mode == 1);
+                QSettings(PathManager::GetConfigPath(), QSettings::IniFormat).setValue("Playback/SavePosition", savePos);
+                std::string msg = savePos ? "[Режим] Теперь плеер запоминает позицию в треке при выходе.\n\n> "
+                                          : "[Режим] Теперь плеер запоминает только трек.\n\n> ";
+                if (ctx.print) ctx.print(msg);
+            } else {
+                if (ctx.print) ctx.print("[Ошибка] Используй: savepos 0 (только трек) или savepos 1 (трек + время)\n\n> ");
+            }
+        } catch (...) {
+            if (ctx.print) ctx.print("[Ошибка] Неверный формат. Используй: savepos 0 или savepos 1\n\n> ");
+        }
+    }
+};
+
 void CommandDispatcher::RegisterCommands() {
     m_commands["p"] = std::make_unique<PlayPauseCommand>();
     m_commands["n"] = std::make_unique<NextCommand>();
@@ -483,6 +502,7 @@ void CommandDispatcher::RegisterCommands() {
     m_commands["vis"] = std::make_unique<ConfigCommand>("vis");
     m_commands["mode"] = std::make_unique<ConfigCommand>("mode");
     m_commands["reload"] = std::make_unique<ConfigCommand>("reload");
+    m_commands["savepos"] = std::make_unique<SavePosCommand>();
 
     m_commands["logout"] = std::make_unique<SystemCommand>("logout");
     m_commands["i"] = std::make_unique<SystemCommand>("info");

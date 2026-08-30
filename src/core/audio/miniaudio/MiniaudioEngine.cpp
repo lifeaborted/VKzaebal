@@ -15,33 +15,6 @@
 const double PI = 3.14159265358979323846;
 typedef std::complex<double> Complex;
 
-// Быстрое преобразование Фурье (FFT) Кули-Тьюки
-static void SimpleFFT(std::vector<Complex>& a) {
-    size_t n = a.size();
-    if (n <= 1) return;
-
-    for (size_t i = 1, j = 0; i < n; i++) {
-        size_t bit = n >> 1;
-        for (; j & bit; bit >>= 1) j ^= bit;
-        j ^= bit;
-        if (i < j) std::swap(a[i], a[j]);
-    }
-
-    for (size_t len = 2; len <= n; len <<= 1) {
-        double ang = 2 * PI / len;
-        Complex wlen(cos(ang), sin(ang));
-        for (size_t i = 0; i < n; i += len) {
-            Complex w(1);
-            for (size_t j = 0; j < len / 2; j++) {
-                Complex u = a[i + j];
-                Complex v = a[i + j + len / 2] * w;
-                a[i + j] = u + v;
-                a[i + j + len / 2] = u - v;
-                w *= wlen;
-            }
-        }
-    }
-}
 
 MiniaudioEngine::MiniaudioEngine() : m_demuxer([this](const uint8_t* payload, size_t size, AudioFormat format) {
     if (format == AudioFormat::MP3) {
@@ -170,25 +143,33 @@ double MiniaudioEngine::GetLengthSeconds() const {
     return static_cast<double>(m_currentDurationSec);
 }
 
-std::vector<float> MiniaudioEngine::GetSpectrumData() const {
+std::vector<float> MiniaudioEngine::GetSpectrumData() {
     std::vector<float> result(128, 0.0f);
+    
     if (!m_isPlaying) return result;
 
-    std::vector<Complex> a(256);
-    {
-        std::unique_lock<std::mutex> lock(m_spectrumMutex, std::try_to_lock);
-        if (!lock.owns_lock()) return result;
+    const size_t FFT_SIZE = 256;
+    std::vector<Complex> complexData(FFT_SIZE);
 
-        for (int i = 0; i < 256; ++i) {
-            double multiplier = 0.5 * (1.0 - cos(2 * PI * i / 255.0));
-            a[i] = Complex(m_recentSamples[i] * multiplier, 0);
+    {
+        // 1. Блокируем доступ и копируем последние 256 сэмплов из кэша
+        std::unique_lock<std::mutex> specLock(m_spectrumMutex, std::try_to_lock);
+        if (!specLock.owns_lock()) return result; // Если занято, отдаем нули
+
+        // 2. Копирование с Окном Хеннинга
+        const double PI = 3.14159265358979323846;
+        for (size_t i = 0; i < FFT_SIZE; ++i) {
+            double multiplier = 0.5 * (1.0 - std::cos(2.0 * PI * i / (FFT_SIZE - 1)));
+            complexData[i] = Complex(m_recentSamples[i] * multiplier, 0.0);
         }
     }
 
-    SimpleFFT(a);
+    // 3. Вызов алгоритма Кули-Тьюки
+    m_fft.compute(complexData);
 
-    for (int i = 0; i < 128; ++i) {
-        float mag = static_cast<float>(std::abs(a[i]) / 128.0) * 2.5f;
+    // 4. Расчет итоговых амплитуд
+    for (size_t i = 0; i < 128; ++i) {
+        float mag = static_cast<float>(std::abs(complexData[i]) / 128.0) * 2.5f;
         result[i] = mag;
     }
 
