@@ -12,6 +12,7 @@
 
 DatabaseManager::DatabaseManager() {
     m_db = QSqlDatabase::addDatabase("QSQLITE");
+    m_db.setConnectOptions("QSQLITE_BUSY_TIMEOUT=5000");
     m_db.setDatabaseName(PathManager::GetDbPath());
 }
 
@@ -85,6 +86,7 @@ void DatabaseManager::SaveQueue(const std::vector<Track>& currentQueue, const st
         QString connectionName = QUuid::createUuid().toString();
         {
             QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connectionName);
+            db.setConnectOptions("QSQLITE_BUSY_TIMEOUT=5000");
             db.setDatabaseName(PathManager::GetDbPath());
 
             if (db.open()) {
@@ -141,6 +143,7 @@ void DatabaseManager::SaveTracks(const std::vector<Track>& tracks) {
         QString connectionName = QUuid::createUuid().toString();
         {
             QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connectionName);
+            db.setConnectOptions("QSQLITE_BUSY_TIMEOUT=5000");
             db.setDatabaseName(PathManager::GetDbPath());
 
             if (db.open()) {

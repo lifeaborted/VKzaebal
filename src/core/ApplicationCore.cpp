@@ -199,8 +199,12 @@ void ApplicationCore::WireConnections() {
     // Обработка данных от провайдеров
     auto bindProvider = [&](IAudioProvider* client) {
         if (!client) return;
-        connect(client, &IAudioProvider::AudioFetched, [&](const std::vector<Track>& t) { if (m_router->GetCurrentProvider() == client) OnAudioFetched(t); });
-        connect(client, &IAudioProvider::FinishedFetching, [&, client]() { if (m_router->GetCurrentProvider() == client) OnFinishedFetching(); });
+        connect(client, &IAudioProvider::AudioFetched, [&, client](const std::vector<Track>& t) {
+            if (m_router->GetCurrentProvider() == client) OnAudioFetched(t);
+        });
+        connect(client, &IAudioProvider::FinishedFetching, [&, client]() {
+            if (m_router->GetCurrentProvider() == client) OnFinishedFetching();
+        });
     };
 
     bindProvider(m_router->GetVkClient());
