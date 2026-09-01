@@ -173,19 +173,23 @@ void ConsoleController::InputLoop() {
             }
 
             if (m_currentState == ConsoleState::SELECT_SOURCE) {
-                size_t start = rawInput.find_first_not_of(" \t\r\n");
-                if (start == std::string::npos) { std::cout << "> "; std::cout.flush(); return; }
+                        size_t start = rawInput.find_first_not_of(" \t\r\n");
+                        if (start == std::string::npos) { std::cout << "> "; std::cout.flush(); return; }
 
-                std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
-                if (input == "1") emit SourceChanged("VK");
-                else if (input == "2") emit SourceChanged("Spotify");
-                else if (input == "3") emit SourceChanged("SoundCloud");
-                else if (input == "4") emit SourceChanged("Yandex");
-                else if (input == "5") emit SourceChanged("Offline");
+                        std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
 
-                m_currentState = ConsoleState::COMMAND_MODE;
-                return;
-            }
+                        m_renderer->SetOverlay("");
+                        m_renderer->RequestFullRedraw();
+
+                        if (input == "1") emit SourceChanged("VK");
+                        else if (input == "2") emit SourceChanged("Spotify");
+                        else if (input == "3") emit SourceChanged("SoundCloud");
+                        else if (input == "4") emit SourceChanged("Yandex");
+                        else if (input == "5") emit SourceChanged("Offline");
+
+                        m_currentState = ConsoleState::COMMAND_MODE;
+                        return;
+                    }
 
             if (m_currentState == ConsoleState::COMMAND_MODE) {
                 m_renderer->RequestFullRedraw();
@@ -203,13 +207,11 @@ void ConsoleController::InputLoop() {
 }
 
 void ConsoleController::OnUiTick() {
-    if (m_currentState == ConsoleState::WAITING_TOKEN_URL || m_currentState == ConsoleState::SELECT_SOURCE) {
+    if (m_currentState == ConsoleState::WAITING_TOKEN_URL) {
         return;
     }
 
-    if (m_currentState == ConsoleState::COMMAND_MODE) {
         m_renderer->Render();
-    }
 
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
     int mode = settings.value("Visualizer/Mode", 0).toInt();
