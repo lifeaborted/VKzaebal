@@ -23,8 +23,41 @@
 #include <QtConcurrent>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <windows.h>
+#include <commdlg.h>
+#include <mmsystem.h>
+#pragma comment(lib, "winmm.lib")
+#pragma comment(lib, "comdlg32.lib")
+
+#include <thread>
+#include <chrono>
+#include <cstdio>
+#include <vector>
 
 namespace {
+    std::string OpenAudioFileDialog() {
+        OPENFILENAMEW ofn;
+        WCHAR szFile[MAX_PATH] = {0};
+
+        ZeroMemory(&ofn, sizeof(OPENFILENAMEW));
+        ofn.lStructSize = sizeof(OPENFILENAMEW);
+        ofn.hwndOwner = NULL;
+        ofn.lpstrFile = szFile;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrFilter = L"Audio Files\0*.mp3;*.wav;*.aac;*.flac;*.ogg;*.m4a\0All Files\0*.*\0";
+        ofn.nFilterIndex = 1;
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+        if (GetOpenFileNameW(&ofn) == TRUE) {
+            int size_needed = WideCharToMultiByte(CP_UTF8, 0, ofn.lpstrFile, -1, NULL, 0, NULL, NULL);
+            if (size_needed > 0) {
+                std::vector<char> buffer(size_needed);
+                WideCharToMultiByte(CP_UTF8, 0, ofn.lpstrFile, -1, &buffer[0], size_needed, NULL, NULL);
+                return std::string(buffer.data());
+            }
+        }
+        return "";
+    }
     void RunInMainThread(std::function<void()> func) {
         QMetaObject::invokeMethod(QCoreApplication::instance(), func, Qt::QueuedConnection);
     }
@@ -304,18 +337,58 @@ namespace {
 
     class ShazamCommand : public IConsoleCommand {
         void Execute(const std::string& arg, CommandContext& ctx) override {
-            if (arg.empty()) {
-                if (ctx.print) ctx.print("[Shazam] Использование: shazam <путь_к_файлу>\n\n> ");
-                return;
-            }
-            if (ctx.print) ctx.print("[Shazam] Анализ трека через нативное Rust-ядро...\n> ");
+            std::string filePath = "";
+            bool isMic = false;
 
-            QThreadPool::globalInstance()->start([ctx, argStr = arg]() {
-                char* raw_base64 = generate_shazam_signature(argStr.c_str());
-                if (!raw_base64) {
-                    if (ctx.print) ctx.print("\n[Shazam] Ошибка генерации подписи в Rust-ядре.\n> ");
+            if (arg == "file") {
+                filePath = OpenAudioFileDialog();
+                if (filePath.empty()) {
+                    if (ctx.print) ctx.print("[Shazam] Отмена. Файл не выбран.\n\n> ");
                     return;
                 }
+                if (ctx.print) ctx.print("[Shazam] Выбран файл: " + filePath + "\n> ");
+            } else if (arg == "mic") {
+                isMic = true;
+                char tempPath[MAX_PATH];
+                GetTempPathA(MAX_PATH, tempPath);
+                filePath = std::string(tempPath) + "shazam_mic_record.wav";
+
+                if (ctx.print) ctx.print("[Shazam] \xF0\x9F\x8E\xA4 Запись с микрофона (7 секунд)...\n> ");
+            } else if (!arg.empty()) {
+                filePath = arg;
+            } else {
+                if (ctx.print) ctx.print("[Shazam] Использование:\n  shazam mic  - запись с микрофона\n  shazam file - выбрать файл через проводник\n\n> ");
+                return;
+            }
+
+            QThreadPool::globalInstance()->start([ctx, filePath, isMic]() {
+                if (isMic) {
+                    mciSendStringA("open new type waveaudio alias rec", NULL, 0, NULL);
+                    mciSendStringA("record rec", NULL, 0, NULL);
+                    std::this_thread::sleep_for(std::chrono::seconds(7));
+
+                    std::string saveCmd = "save rec \"" + filePath + "\"";
+                    mciSendStringA(saveCmd.c_str(), NULL, 0, NULL);
+                    mciSendStringA("close rec", NULL, 0, NULL);
+                }
+
+                RunInMainThread([ctx]() {
+                    if (ctx.print) ctx.print("\n[Shazam] Анализ аудио...\n> ");
+                });
+
+                char* raw_base64 = generate_shazam_signature(filePath.c_str());
+
+                if (isMic) {
+                    std::remove(filePath.c_str());
+                }
+
+                if (!raw_base64) {
+                    RunInMainThread([ctx]() {
+                        if (ctx.print) ctx.print("\n[Shazam] Ошибка: Не удалось обработать аудио.\n> ");
+                    });
+                    return;
+                }
+
                 QString base64Sig = QString::fromUtf8(raw_base64);
                 free_shazam_string(raw_base64);
 
@@ -342,7 +415,7 @@ namespace {
                             } else {
                                 QString title = trackObj["title"].toString();
                                 QString artist = trackObj["subtitle"].toString();
-                                if (ctx.print) ctx.print("\n[Shazam] 🎵 УСПЕХ! Найдено: " + artist.toStdString() + " - " + title.toStdString() + "\n> ");
+                                if (ctx.print) ctx.print("\n[Shazam] Найдено: " + artist.toStdString() + " - " + title.toStdString() + "\n> ");
                             }
                         } else {
                             if (ctx.print) ctx.print("\n[Shazam] Ошибка сети: " + reply->errorString().toStdString() + "\n> ");
