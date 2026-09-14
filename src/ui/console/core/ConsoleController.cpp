@@ -185,7 +185,8 @@ void ConsoleController::InputLoop() {
                         else if (input == "2") emit SourceChanged("Spotify");
                         else if (input == "3") emit SourceChanged("SoundCloud");
                         else if (input == "4") emit SourceChanged("Yandex");
-                        else if (input == "5") emit SourceChanged("Offline");
+                        else if (input == "5") emit SourceChanged("YouTube");
+                        else if (input == "6") emit SourceChanged("Offline");
 
                         m_currentState = ConsoleState::COMMAND_MODE;
                         return;

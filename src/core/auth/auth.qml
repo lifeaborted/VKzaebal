@@ -68,6 +68,21 @@ Window {
                     }
                 });
             }
+            // --- YOUTUBE MUSIC ---
+            else if (cppAuthUrl.indexOf("music.youtube.com") !== -1) {
+                var ytCode = `
+                    (function() {
+                        return document.cookie.indexOf('SAPISID=') !== -1;
+                    })();
+                `;
+                webView.runJavaScript(ytCode, function(result) {
+                    if (result === true) {
+                        console.log("[QML] YouTube: Authorization detected.");
+                        cppAuthManager.onYtAuthIntercepted();
+                        universalSniper.running = false;
+                    }
+                });
+            }
         }
     }
 }

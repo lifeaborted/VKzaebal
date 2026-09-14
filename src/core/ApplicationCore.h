@@ -9,6 +9,7 @@
 #include "core/api/spotify/SpotifyClient.h"
 #include "core/api/soundcloud/SoundCloudClient.h"
 #include "core/api/yandex/YandexClient.h"
+#include "core/api/youtube/YouTubeClient.h"
 
 #include "../../../../../Qt/6.11.1/msvc2022_64/include/QtCore/qtmetamacros.h"
 

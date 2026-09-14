@@ -14,7 +14,7 @@ static std::ofstream logFile;
 std::mutex Logger::s_mutex;
 
 // Инициализация минимального уровня логов
-LogLevel Logger::s_minLogLevel = LogLevel::ERROR;
+LogLevel Logger::s_minLogLevel = LogLevel::INFO;
 bool Logger::s_consoleOutputEnabled = true;
 
 void Logger::Init() {
@@ -36,9 +36,9 @@ void Logger::SetMinLogLevel(LogLevel level) {
 void Logger::Log(LogLevel level, const std::string& message) {
     // --- 1. Ограничение вывода через макросы (Compile-time) ---
     // Если собираем в Release (NDEBUG) и хотим видеть только ошибки:
-    #ifdef NDEBUG
-        if (level != LogLevel::ERROR) return;
-    #endif
+    //#ifdef NDEBUG
+    //    if (level != LogLevel::ERROR) return;
+    //#endif
 
     // --- 2. Ограничение вывода через переменную (Runtime) ---
     // Так как enum: DEBUG=0, INFO=1, WARNING=2, ERROR=3

@@ -4,7 +4,6 @@
 #include <string>
 #include <functional>
 
-
 class QSettings;
 class OAuthManager : public QObject {
     Q_OBJECT
@@ -18,9 +17,11 @@ public:
 
     Q_INVOKABLE void onUrlIntercepted(const QString& urlStr);
     Q_INVOKABLE void onScTokenIntercepted(const QString& tokenStr);
+    Q_INVOKABLE void onYtAuthIntercepted();
 
     signals:
         void TokenReceived(const std::string& token);
-        void AuthFailed(const std::string& error);
-        void AuthCodeReceived(const std::string& code);
+    void AuthFailed(const std::string& error);
+    void AuthCodeReceived(const std::string& code);
+    void YtAuthSucceeded();
 };

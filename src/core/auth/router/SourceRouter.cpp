@@ -1,6 +1,8 @@
 #include "SourceRouter.h"
 #include "core/api/vk/VkClient.h"
 #include "core/api/spotify/SpotifyClient.h"
+#include "core/api/yandex/YandexClient.h"
+#include "core/api/youtube/YouTubeClient.h"
 #include "core/auth/oauth/OAuthManager.h"
 #include "utils/logger/Logger.h"
 
@@ -17,6 +19,7 @@ SourceRouter::SourceRouter(const QMap<QString, QString>& envVars, QObject* paren
     m_spotifyClient = std::make_unique<SpotifyClient>();
     m_soundCloudClient = std::make_unique<SoundCloudClient>();
     m_yandexClient = std::make_unique<YandexClient>();
+    m_youtubeClient = std::make_unique<YouTubeClient>();
 
     m_authManager = std::make_unique<OAuthManager>();
 
@@ -52,6 +55,21 @@ SourceRouter::SourceRouter(const QMap<QString, QString>& envVars, QObject* paren
             }
         });
 
+    // НОВЫЙ БЛОК: Перехват успеха авторизации YouTube
+    connect(m_authManager.get(), &OAuthManager::YtAuthSucceeded, this, [&]() {
+        if (m_authEngine) { m_authEngine->deleteLater(); m_authEngine = nullptr; }
+
+        // Записываем флаг, что мы авторизованы, чтобы больше не открывать окно
+        m_authManager->SaveToken("AUTHORIZED", "YouTube");
+
+        emit AuthUiStateChanged(false);
+        std::cout << "\n[УСПЕХ] Авторизация YouTube Music пройдена!\n> ";
+        std::cout.flush();
+
+        emit ProviderReady(true);
+        m_youtubeClient->FetchAllUserAudio(0, 50);
+    });
+
     connect(m_authManager.get(), &OAuthManager::AuthCodeReceived, this, [&](const std::string& code) {
             static std::string lastCode = "";
             if (code == lastCode) return;
@@ -74,6 +92,15 @@ SourceRouter::SourceRouter(const QMap<QString, QString>& envVars, QObject* paren
     connect(m_spotifyClient.get(), &SpotifyClient::TokenReceived, this, &SourceRouter::OnSpotifyTokenReceived);
     connect(m_spotifyClient.get(), &SpotifyClient::AuthError, this, &SourceRouter::OnSpotifyAuthError);
     connect(m_vkClient.get(), &VkClient::TokenExpired, this, &SourceRouter::OnVkTokenExpired);
+
+    // НОВЫЙ БЛОК: Если YouTube откидывает сессию, заставляем пользователя логиниться заново
+    connect(m_youtubeClient.get(), &YouTubeClient::TokenExpired, this, [this]() {
+        Logger::Log(LogLevel::WARNING, "SourceRouter: YouTube session expired or BotGuard rejected.");
+        std::cout << "\n[ВНИМАНИЕ] Сессия YouTube Music устарела или отклонена.\n";
+        std::cout.flush();
+        m_authManager->ClearSavedToken("YouTube");
+        StartAuthFlow("YouTube", "https://music.youtube.com/");
+    });
 }
 
 SourceRouter::~SourceRouter() {
@@ -201,7 +228,6 @@ void SourceRouter::StartSpotifyService() {
 
     m_authManager->GetSavedToken("Spotify", [this, spDc, clientId](const std::string& savedToken) {
 
-        // --- РЕЖИМ 1: Обход через sp_dc ---
         if (!spDc.isEmpty()) {
             if (savedToken.empty()) {
                 std::cout << "\n[Spotify] Получение Web Access Token через sp_dc...\n"; std::cout.flush();
@@ -225,7 +251,6 @@ void SourceRouter::StartSpotifyService() {
                 });
             }
         }
-        // --- РЕЖИМ 2: Официальный PKCE ---
         else if (!clientId.isEmpty()) {
             if (savedToken.empty()) {
                 std::string authUrl = m_spotifyClient->StartAuthPkce(clientId);
@@ -250,7 +275,6 @@ void SourceRouter::StartSpotifyService() {
                 });
             }
         }
-        // --- ОШИБКА КОНФИГУРАЦИИ ---
         else {
             emit AuthUiStateChanged(false);
             std::cout << "\n[ОШИБКА] В .env не задан ни SPOTIFY_SP_DC, ни SPOTIFY_CLIENT_ID!\n> ";
@@ -275,6 +299,23 @@ void SourceRouter::StartYandexService() {
     });
 }
 
+void SourceRouter::StartYouTubeService() {
+    // НОВЫЙ БЛОК: Запрашиваем авторизацию YouTube
+    m_authManager->GetSavedToken("YouTube", [this](const std::string& savedToken) {
+        if (savedToken.empty()) {
+            std::cout << "\n[YouTube] Требуется авторизация для обхода BotGuard...\n";
+            std::cout.flush();
+            StartAuthFlow("YouTube", "https://music.youtube.com/");
+        } else {
+            std::cout << "\n[YouTube] Сессия найдена. Инициализация...\n";
+            std::cout.flush();
+            emit AuthUiStateChanged(false);
+            emit ProviderReady(true);
+            m_youtubeClient->FetchAllUserAudio(0, 50);
+        }
+    });
+}
+
 void SourceRouter::SwitchSource(const std::string& newSource) {
     Logger::Log(LogLevel::INFO, "SourceRouter: Switching audio source to " + newSource);
 
@@ -288,6 +329,8 @@ void SourceRouter::SwitchSource(const std::string& newSource) {
         m_currentProvider = m_yandexClient.get();
     } else if (newSource == "Offline") {
         m_currentProvider = nullptr;
+    } else if (newSource == "YouTube") {
+        m_currentProvider = m_youtubeClient.get();
     }
 
     emit SourceChanged(newSource);
@@ -300,6 +343,8 @@ void SourceRouter::SwitchSource(const std::string& newSource) {
         StartSoundCloudService();
     } else if (newSource == "Yandex") {
         StartYandexService();
+    } else if (newSource == "YouTube") {
+        StartYouTubeService();
     } else if (newSource == "Offline") {
         emit AuthUiStateChanged(false);
         emit ProviderReady(false);

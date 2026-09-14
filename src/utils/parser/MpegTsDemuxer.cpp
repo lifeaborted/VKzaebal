@@ -36,6 +36,20 @@ void MpegTsDemuxer::ProcessBytes(const uint8_t* data, size_t size) {
     }
 
     if (!m_isTsStream) {
+        if (size >= 10 && data[0] == 'I' && data[1] == 'D' && data[2] == '3') {
+            uint32_t tagSize = ((data[6] & 0x7F) << 21) | ((data[7] & 0x7F) << 14) |
+                               ((data[8] & 0x7F) << 7)  | (data[9] & 0x7F);
+            m_id3BytesToSkip = 10 + tagSize;
+        }
+
+        if (m_id3BytesToSkip > 0) {
+            size_t toSkip = std::min(m_id3BytesToSkip, size);
+            data += toSkip;
+            size -= toSkip;
+            m_id3BytesToSkip -= toSkip;
+            if (size == 0) return;
+        }
+
         if (m_format == AudioFormat::Unknown) m_format = DetectAudioFormat(data, size);
         m_callback(data, size, m_format);
         return;

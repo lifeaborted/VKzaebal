@@ -1,7 +1,5 @@
 #pragma once
 
-#include "core/api/yandex/YandexClient.h"
-
 #include <QObject>
 #include <QString>
 #include <QMap>
@@ -11,6 +9,9 @@
 class VkClient;
 class SpotifyClient;
 class SoundCloudClient;
+class YandexClient;
+class YouTubeClient;
+
 class OAuthManager;
 class IAudioProvider;
 class QQmlApplicationEngine;
@@ -28,6 +29,7 @@ public:
     SpotifyClient* GetSpotifyClient() const { return m_spotifyClient.get(); }
     SoundCloudClient* GetSoundCloudClient() const { return m_soundCloudClient.get(); }
     YandexClient* GetYandexClient() const { return m_yandexClient.get(); }
+    YouTubeClient* GetYouTubeClient() const { return m_youtubeClient.get(); }
 
     OAuthManager* GetAuthManager() const { return m_authManager.get(); }
 
@@ -47,6 +49,7 @@ private:
     void StartSpotifyService();
     void StartSoundCloudService();
     void StartYandexService();
+    void StartYouTubeService();
 
     void StartAuthFlow(const QString& service, const QString& authUrl);
 
@@ -54,6 +57,7 @@ private:
     std::unique_ptr<SpotifyClient> m_spotifyClient;
     std::unique_ptr<SoundCloudClient> m_soundCloudClient;
     std::unique_ptr<YandexClient> m_yandexClient;
+    std::unique_ptr<YouTubeClient> m_youtubeClient;
     
     std::unique_ptr<OAuthManager> m_authManager;
 

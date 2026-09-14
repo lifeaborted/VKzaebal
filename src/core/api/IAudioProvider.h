@@ -18,7 +18,7 @@ public:
     signals:
         // Общие сигналы для всех сервисов
         void AudioFetched(const std::vector<Track>& tracks);
-    void ApiError(const std::string& errorMessage);
-    void TokenExpired();
-    void FinishedFetching();
+        void ApiError(const std::string& errorMessage);
+        void TokenExpired();
+        void FinishedFetching();
 };

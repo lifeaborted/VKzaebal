@@ -120,3 +120,8 @@ void OAuthManager::onScTokenIntercepted(const QString& tokenStr) {
     Logger::Log(LogLevel::INFO, "auth: SC Token intercepted via JS-Sniper!");
     emit TokenReceived(cleanToken.toStdString());
 }
+
+void OAuthManager::onYtAuthIntercepted() {
+    Logger::Log(LogLevel::INFO, "auth: YouTube Auth successful via JS-Sniper!");
+    emit YtAuthSucceeded();
+}

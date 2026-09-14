@@ -53,16 +53,10 @@ void NetworkStreamer::StartDownload(const std::string& urlString) {
         connect(m_reply, &QNetworkReply::finished, this, [this, url]() {
             if (m_reply && m_reply->error() == QNetworkReply::NoError) {
                 QString manifest = m_reply->readAll();
-                ParseM3u8(manifest, url);
-
                 m_reply->deleteLater();
                 m_reply = nullptr;
 
-                if (m_isEncrypted) {
-                    DownloadKey();
-                } else {
-                    DownloadNextChunk();
-                }
+                ParseM3u8(manifest, url);
             } else {
                 Logger::Log(LogLevel::ERROR, "Failed to download .m3u8 manifest");
                 emit DownloadError("Failed to download .m3u8 manifest");
@@ -166,6 +160,8 @@ void NetworkStreamer::ParseM3u8(const QString& manifestData, const QUrl& baseUrl
         double pos = m_pendingSeekPos;
         m_pendingSeekPos = -1.0;
         SeekTo(pos);
+    } else if (m_isEncrypted) {
+        DownloadKey();
     } else {
         DownloadNextChunk();
     }
@@ -230,8 +226,8 @@ void NetworkStreamer::OnReadyRead() {
 
     QByteArray newData = m_reply->readAll();
 
-    // Если трек зашифрован (AES) - копим чанк целиком
-    if (m_isEncrypted) {
+    // Если трек зашифрован (AES) или незашифрованный HLS - копим чанк целиком
+    if (m_isEncrypted || m_streamType == StreamType::HlsUnencrypted) {
         m_currentChunkData.append(newData);
     } else {
         // Иначе стримим напрямую в аудио-движок
@@ -328,6 +324,23 @@ void NetworkStreamer::OnChunkFinished() {
                 return;
             }
             m_currentChunkData.clear();
+        } else if (m_streamType == StreamType::HlsUnencrypted) {
+            m_currentChunkData.append(newData);
+            if (!m_currentChunkData.isEmpty()) {
+                // Если чанк начинается с ID3-тегов (типично для HLS AAC чанков YouTube/Apple)
+                if (m_currentChunkData.size() >= 10 && m_currentChunkData.startsWith("ID3")) {
+                    const uint8_t* d = reinterpret_cast<const uint8_t*>(m_currentChunkData.constData());
+                    int id3Size = 10 + (((d[6] & 0x7F) << 21) | ((d[7] & 0x7F) << 14) | ((d[8] & 0x7F) << 7) | (d[9] & 0x7F));
+                    if (id3Size <= m_currentChunkData.size()) {
+                        m_currentChunkData.remove(0, id3Size);
+                    }
+                }
+                if (!m_currentChunkData.isEmpty()) {
+                    emit DataReceived(m_currentChunkData);
+                }
+            }
+            m_currentChunkData.clear();
+            shouldDownloadNextImmediately = true;
         } else {
             if (!newData.isEmpty()) {
                 emit DataReceived(newData);

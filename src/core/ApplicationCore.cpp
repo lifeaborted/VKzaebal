@@ -211,6 +211,7 @@ void ApplicationCore::WireConnections() {
     bindProvider(m_router->GetSpotifyClient());
     bindProvider(m_router->GetSoundCloudClient());
     bindProvider(m_router->GetYandexClient());
+    bindProvider(m_router->GetYouTubeClient());
 }
 
 void ApplicationCore::InitPlaylistAndStart(bool isOnline) {

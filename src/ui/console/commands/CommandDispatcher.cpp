@@ -357,7 +357,7 @@ namespace {
             } else if (!arg.empty()) {
                 filePath = arg;
             } else {
-                if (ctx.print) ctx.print("[Shazam] Использование:\n  shazam mic  - запись с микрофона\n  shazam file - выбрать файл через проводник\n\n> ");
+                if (ctx.print) ctx.print("\n=== Выбор источника ===\n1 - ВКонтакте\n2 - Spotify\n3 - SoundCloud\n4 - Yandex\n5 - YouTube Music\n6 - Оффлайн режим\n\nВведите номер: ");
                 return;
             }
 
@@ -434,7 +434,7 @@ namespace {
         explicit ConfigCommand(const std::string& type) : m_cmdType(type) {}
         void Execute(const std::string& arg, CommandContext& ctx) override {
             if (m_cmdType == "source") {
-                if (ctx.print) ctx.print("\n=== Выбор источника ===\n1 - ВКонтакте\n2 - Spotify\n3 - SoundCloud\n4 - Yandex\n5 - Оффлайн режим\n\nВведите номер: ");
+                if (ctx.print) ctx.print("\n=== Выбор источника ===\n1 - ВКонтакте\n2 - Spotify\n3 - SoundCloud\n4 - Yandex\n5 - YouTube\n6 - Оффлайн режим\n\nВведите номер: ");
                 if (ctx.onSourceChange) ctx.onSourceChange("SELECT");
             } else if (m_cmdType == "vis") {
                 if (ctx.onVisualizerToggle) ctx.onVisualizerToggle();
