@@ -30,17 +30,29 @@ set(PROJECT_SOURCES
         # API
         src/core/api/IAudioProvider.h
 
+        # - Spotify -
         src/core/api/spotify/SpotifyClient.h
         src/core/api/spotify/SpotifyClient.cpp
 
+        # - SoundCloud -
         src/core/api/soundcloud/SoundCloudClient.cpp
         src/core/api/soundcloud/SoundCloudClient.h
 
+        # - VK -
         src/core/api/vk/VkClient.h
         src/core/api/vk/VkClient.cpp
 
+        # - Yandex -
         src/core/api/yandex/YandexClient.cpp
         src/core/api/yandex/YandexClient.h
+
+        # - YouTube -
+        src/core/api/youtube/YouTubeClient.cpp
+        src/core/api/youtube/YouTubeClient.h
+        src/core/api/youtube/YouTubePoTokenGenerator.cpp
+        src/core/api/youtube/YouTubePoTokenGenerator.h
+        src/core/api/youtube/YouTubeExtractor.cpp
+        src/core/api/youtube/YouTubeExtractor.h
 
         src/core/api/BaseApiProvider.cpp
         src/core/api/BaseApiProvider.h
