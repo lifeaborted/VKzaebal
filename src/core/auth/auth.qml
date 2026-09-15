@@ -69,19 +69,40 @@ Window {
                 });
             }
             // --- YOUTUBE MUSIC ---
-            else if (cppAuthUrl.indexOf("music.youtube.com") !== -1) {
-                var ytCode = `
-                    (function() {
-                        return document.cookie.indexOf('SAPISID=') !== -1;
-                    })();
-                `;
-                webView.runJavaScript(ytCode, function(result) {
-                    if (result === true) {
-                        console.log("[QML] YouTube: Authorization detected.");
-                        cppAuthManager.onYtAuthIntercepted();
-                        universalSniper.running = false;
-                    }
-                });
+            else if (cppAuthUrl.indexOf("youtube.com") !== -1 || cppAuthUrl.indexOf("google.com") !== -1) {
+                var currentUrl = webView.url.toString();
+                // Strictly require being on music.youtube.com domain, NOT on accounts.google.com!
+                if (currentUrl.indexOf("https://music.youtube.com") === 0 || currentUrl.indexOf("http://music.youtube.com") === 0) {
+                    var ytCode = `
+                        (function() {
+                            if (window.location.hostname !== "music.youtube.com") return "";
+
+                            // Ensure YouTube Music SPA config is loaded and user is authenticated
+                            if (!window.ytcfg || typeof window.ytcfg.get !== 'function') {
+                                return "";
+                            }
+                            if (window.ytcfg.get('LOGGED_IN') !== true) {
+                                return "";
+                            }
+
+                            var cookies = document.cookie;
+                            if (!cookies) return "";
+
+                            // SAPISID is strictly set only on authenticated sessions
+                            var hasSapisid = cookies.indexOf('SAPISID=') !== -1 || cookies.indexOf('__Secure-1PAPISID=') !== -1;
+                            if (!hasSapisid) return "";
+
+                            return cookies;
+                        })();
+                    `;
+                    webView.runJavaScript(ytCode, function(result) {
+                        if (result && result !== "null" && result !== "") {
+                            console.log("[QML] YouTube: Authorization detected, cookies intercepted.");
+                            cppAuthManager.onYtAuthIntercepted(result);
+                            universalSniper.running = false;
+                        }
+                    });
+                }
             }
         }
     }

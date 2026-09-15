@@ -463,10 +463,10 @@ namespace {
         explicit SystemCommand(const std::string& type) : m_cmdType(type) {}
         void Execute(const std::string& arg, CommandContext& ctx) override {
             if (m_cmdType == "logout") {
-                if (arg == "vk" || arg == "spotify" || arg == "sc" || arg == "yandex" || arg == "all") {
+                if (arg == "vk" || arg == "spotify" || arg == "sc" || arg == "yandex" || arg == "youtube" || arg == "yt" || arg == "all") {
                     if (ctx.onLogout) RunInMainThread([ctx, arg]() { ctx.onLogout(arg); });
                 } else {
-                    if (ctx.print) ctx.print("[Ошибка] Укажите сервис: logout vk | logout spotify | logout sc | logout yandex | logout all\n\n> ");
+                    if (ctx.print) ctx.print("[Ошибка] Укажите сервис: logout vk | logout spotify | logout sc | logout yandex | logout youtube | logout all\n\n> ");
                 }
             } else if (m_cmdType == "info") {
                 RunInMainThread([ctx]() {

@@ -1,4 +1,5 @@
 #include "OAuthManager.h"
+#include "WebViewCookieReader.h"
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
 #include <qtkeychain/keychain.h>
@@ -121,7 +122,15 @@ void OAuthManager::onScTokenIntercepted(const QString& tokenStr) {
     emit TokenReceived(cleanToken.toStdString());
 }
 
-void OAuthManager::onYtAuthIntercepted() {
-    Logger::Log(LogLevel::INFO, "auth: YouTube Auth successful via JS-Sniper!");
-    emit YtAuthSucceeded();
+void OAuthManager::onYtAuthIntercepted(const QString& cookies) {
+    Logger::Log(LogLevel::INFO, "auth: YouTube Auth successful via JS-Sniper! Attempting full session extraction...");
+    std::string token = WebViewCookieReader::GetFullYouTubeCookies();
+    if (token.empty() || token.find("LOGIN_INFO=") == std::string::npos) {
+        Logger::Log(LogLevel::WARNING, "auth: SQLite cookie extraction didn't yield LOGIN_INFO, falling back to JS cookies.");
+        token = cookies.toStdString();
+    } else {
+        Logger::Log(LogLevel::INFO, "auth: Full YouTube session cookies successfully extracted (length: " + std::to_string(token.size()) + ")");
+    }
+    SaveToken(token, "YouTube");
+    emit YtAuthSucceeded(token);
 }

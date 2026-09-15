@@ -17,11 +17,11 @@ public:
 
     Q_INVOKABLE void onUrlIntercepted(const QString& urlStr);
     Q_INVOKABLE void onScTokenIntercepted(const QString& tokenStr);
-    Q_INVOKABLE void onYtAuthIntercepted();
+    Q_INVOKABLE void onYtAuthIntercepted(const QString& cookies);
 
-    signals:
-        void TokenReceived(const std::string& token);
+signals:
+    void TokenReceived(const std::string& token);
     void AuthFailed(const std::string& error);
     void AuthCodeReceived(const std::string& code);
-    void YtAuthSucceeded();
+    void YtAuthSucceeded(const std::string& cookies);
 };

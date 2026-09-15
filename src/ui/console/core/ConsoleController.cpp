@@ -1,4 +1,4 @@
-﻿#ifdef _WIN32
+#ifdef _WIN32
 #include <windows.h>
 #endif
 
@@ -67,6 +67,7 @@ ConsoleController::ConsoleController(
         if (service == "spotify" || service == "all") processLogout("Spotify", "Spotify");
         if (service == "sc" || service == "all") processLogout("SoundCloud", "SoundCloud");
         if (service == "yandex" || service == "all") processLogout("Yandex", "Yandex");
+        if (service == "youtube" || service == "yt" || service == "all") processLogout("YouTube", "YouTube Music");
     };
 
     m_dispatcher->OnGaplessModeChanged = [this](bool isGapless) {

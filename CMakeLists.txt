@@ -77,6 +77,8 @@ set(PROJECT_SOURCES
         # Authorization
         src/core/auth/oauth/OAuthManager.h
         src/core/auth/oauth/OAuthManager.cpp
+        src/core/auth/oauth/WebViewCookieReader.h
+        src/core/auth/oauth/WebViewCookieReader.cpp
 
         src/core/auth/router/SourceRouter.h
         src/core/auth/router/SourceRouter.cpp

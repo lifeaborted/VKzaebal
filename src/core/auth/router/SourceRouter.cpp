@@ -4,6 +4,7 @@
 #include "core/api/yandex/YandexClient.h"
 #include "core/api/youtube/YouTubeClient.h"
 #include "core/auth/oauth/OAuthManager.h"
+#include "core/auth/oauth/WebViewCookieReader.h"
 #include "utils/logger/Logger.h"
 
 #include <QQmlApplicationEngine>
@@ -55,19 +56,17 @@ SourceRouter::SourceRouter(const QMap<QString, QString>& envVars, QObject* paren
             }
         });
 
-    // НОВЫЙ БЛОК: Перехват успеха авторизации YouTube
-    connect(m_authManager.get(), &OAuthManager::YtAuthSucceeded, this, [&]() {
+    // Перехват успеха авторизации YouTube
+    connect(m_authManager.get(), &OAuthManager::YtAuthSucceeded, this, [this](const std::string& cookies) {
         if (m_authEngine) { m_authEngine->deleteLater(); m_authEngine = nullptr; }
 
-        // Записываем флаг, что мы авторизованы, чтобы больше не открывать окно
-        m_authManager->SaveToken("AUTHORIZED", "YouTube");
-
         emit AuthUiStateChanged(false);
-        std::cout << "\n[УСПЕХ] Авторизация YouTube Music пройдена!\n> ";
+        std::cout << "\n[УСПЕХ] Авторизация YouTube Music пройдена! Синхронизация избранных треков...\n> ";
         std::cout.flush();
 
+        m_youtubeClient->SetAccessToken(cookies);
         emit ProviderReady(true);
-        m_youtubeClient->FetchAllUserAudio(0, 50);
+        m_youtubeClient->FetchAllUserAudio(0, 100);
     });
 
     connect(m_authManager.get(), &OAuthManager::AuthCodeReceived, this, [&](const std::string& code) {
@@ -99,7 +98,8 @@ SourceRouter::SourceRouter(const QMap<QString, QString>& envVars, QObject* paren
         std::cout << "\n[ВНИМАНИЕ] Сессия YouTube Music устарела или отклонена.\n";
         std::cout.flush();
         m_authManager->ClearSavedToken("YouTube");
-        StartAuthFlow("YouTube", "https://music.youtube.com/");
+        m_youtubeClient->SetAccessToken("");
+        StartAuthFlow("YouTube", "https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fmusic.youtube.com%2F");
     });
 }
 
@@ -300,18 +300,38 @@ void SourceRouter::StartYandexService() {
 }
 
 void SourceRouter::StartYouTubeService() {
-    // НОВЫЙ БЛОК: Запрашиваем авторизацию YouTube
-    m_authManager->GetSavedToken("YouTube", [this](const std::string& savedToken) {
-        if (savedToken.empty()) {
-            std::cout << "\n[YouTube] Требуется авторизация для обхода BotGuard...\n";
+    QString envCookie = m_envVars.value("YOUTUBE_COOKIE", "");
+
+    m_authManager->GetSavedToken("YouTube", [this, envCookie](const std::string& savedToken) {
+        std::string effectiveToken = !envCookie.isEmpty() ? envCookie.toStdString() : savedToken;
+
+        // Если в Keychain нет LOGIN_INFO, пробуем прочитать активную сессию из WebView2
+        if (effectiveToken.find("LOGIN_INFO=") == std::string::npos) {
+            std::string fullCookies = WebViewCookieReader::GetFullYouTubeCookies();
+            if (!fullCookies.empty() && fullCookies.find("LOGIN_INFO=") != std::string::npos) {
+                Logger::Log(LogLevel::INFO, "SourceRouter: Retrieved active YouTube session from WebView2 storage.");
+                effectiveToken = fullCookies;
+                m_authManager->SaveToken(effectiveToken, "YouTube");
+            }
+        }
+
+        bool hasValidCookies = (effectiveToken.find("LOGIN_INFO=") != std::string::npos || !envCookie.isEmpty()) &&
+                               (effectiveToken.find("SAPISID=") != std::string::npos || effectiveToken.find("__Secure-1PAPISID=") != std::string::npos);
+
+        if (effectiveToken.empty() || !hasValidCookies) {
+            if (!effectiveToken.empty()) {
+                m_authManager->ClearSavedToken("YouTube");
+            }
+            std::cout << "\n[YouTube] Требуется авторизация для загрузки вашей медиатеки...\n";
             std::cout.flush();
-            StartAuthFlow("YouTube", "https://music.youtube.com/");
+            StartAuthFlow("YouTube", "https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fmusic.youtube.com%2F");
         } else {
-            std::cout << "\n[YouTube] Сессия найдена. Инициализация...\n";
+            std::cout << "\n[YouTube] Сессия найдена. Загрузка избранных треков...\n";
             std::cout.flush();
+            m_youtubeClient->SetAccessToken(effectiveToken);
             emit AuthUiStateChanged(false);
             emit ProviderReady(true);
-            m_youtubeClient->FetchAllUserAudio(0, 50);
+            m_youtubeClient->FetchAllUserAudio(0, 100);
         }
     });
 }
