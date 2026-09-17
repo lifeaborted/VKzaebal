@@ -75,6 +75,10 @@ void ApplicationCore::EnsureDefaultConfig() {
         settings.setValue("Session/CurrentTrackIndex", -1);
         settings.setValue("General/source", "VK");
         settings.setValue("Ui/ShowVisualizer", true);
+        settings.setValue("Downloads/Path", "");
+        settings.sync();
+    } else if (!settings.contains("Downloads/Path")) {
+        settings.setValue("Downloads/Path", "");
         settings.sync();
     }
 

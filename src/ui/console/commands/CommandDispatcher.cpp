@@ -17,6 +17,7 @@
 #include <QUrl>
 #include <cmath>
 #include <QSettings>
+#include <QFileDialog>
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <QUuid>
@@ -26,6 +27,7 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <mmsystem.h>
+#include <shobjidl.h>
 #pragma comment(lib, "winmm.lib")
 #pragma comment(lib, "comdlg32.lib")
 
@@ -58,6 +60,43 @@ namespace {
         }
         return "";
     }
+
+#ifdef _WIN32
+    std::string ChooseFolderNativeDialog() {
+        std::string result;
+        HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        IFileOpenDialog *pFileDialog = nullptr;
+        if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileDialog)))) {
+            DWORD dwOptions;
+            if (SUCCEEDED(pFileDialog->GetOptions(&dwOptions))) {
+                pFileDialog->SetOptions(dwOptions | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+            }
+            pFileDialog->SetTitle(L"Выберите папку для сохранения аудио");
+            if (SUCCEEDED(pFileDialog->Show(NULL))) {
+                IShellItem *pItem = nullptr;
+                if (SUCCEEDED(pFileDialog->GetResult(&pItem))) {
+                    PWSTR pszFilePath = nullptr;
+                    if (SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath))) {
+                        int size = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
+                        if (size > 0) {
+                            std::vector<char> buffer(size);
+                            WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, buffer.data(), size, NULL, NULL);
+                            result = std::string(buffer.data());
+                        }
+                        CoTaskMemFree(pszFilePath);
+                    }
+                    pItem->Release();
+                }
+            }
+            pFileDialog->Release();
+        }
+        if (SUCCEEDED(hr)) {
+            CoUninitialize();
+        }
+        return result;
+    }
+#endif
+
     void RunInMainThread(std::function<void()> func) {
         QMetaObject::invokeMethod(QCoreApplication::instance(), func, Qt::QueuedConnection);
     }
@@ -352,11 +391,40 @@ namespace {
                             if (ctx.print) ctx.print("[Ошибка] Нет активного онлайн-источника для скачивания.\n\n> ");
                             return;
                         }
+
+                        QString customDir = PathManager::GetCustomDownloadsDir();
+                        QString targetDir = customDir;
+
+                        if (targetDir.isEmpty()) {
+#ifdef _WIN32
+                            std::string nativeFolder = ChooseFolderNativeDialog();
+                            targetDir = QString::fromStdString(nativeFolder);
+#else
+                            targetDir = QFileDialog::getExistingDirectory(nullptr,
+                                QString::fromUtf8("Выберите папку для сохранения аудио"),
+                                QString(),
+                                QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+#endif
+
+                            if (targetDir.isEmpty()) {
+                                if (ctx.print) ctx.print("[Загрузка] Скачивание отменено (папка не выбрана).\n\n> ");
+                                return;
+                            }
+                            PathManager::SetSessionDownloadsDir(targetDir);
+                        }
+
+                        QString targetMp3 = PathManager::GetDownloadFilePath(targetTrack.GetSafeFilename(), "mp3", targetDir);
+                        QString targetAac = PathManager::GetDownloadFilePath(targetTrack.GetSafeFilename(), "aac", targetDir);
+                        if (QFile::exists(targetMp3) || QFile::exists(targetAac)) {
+                            if (ctx.print) ctx.print("[Загрузка] Трек уже скачан в выбранную папку.\n\n> ");
+                            return;
+                        }
+
                         if (ctx.print) ctx.print("[Загрузка] Получение ссылки для " + targetTrack.title + "...\n\n> ");
 
-                        RunInMainThread([ctx, targetTrack]() {
-                            ctx.currentProvider->FetchTrackUrl(targetTrack.id, [ctx, targetTrack](const std::string& url, bool err) {
-                                if (!err && !url.empty()) ctx.downloader.Download(targetTrack, url);
+                        RunInMainThread([ctx, targetTrack, targetDir]() {
+                            ctx.currentProvider->FetchTrackUrl(targetTrack.id, [ctx, targetTrack, targetDir](const std::string& url, bool err) {
+                                if (!err && !url.empty()) ctx.downloader.Download(targetTrack, url, targetDir);
                                 else Logger::Log(LogLevel::WARNING, "Failed to get URL for download.");
                             });
                         });

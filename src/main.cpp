@@ -21,15 +21,32 @@ int main(int argc, char *argv[]) {
     SetConsoleMode(hOut, dwMode);
 #endif
 
-    QGuiApplication app(argc, argv);
-    app.setQuitOnLastWindowClosed(false);
-    QtWebView::initialize();
+    PathManager::Init();
+    Logger::Init();
+
+    qInstallMessageHandler([](QtMsgType type, const QMessageLogContext &context, const QString &msg) {
+        LogLevel level = LogLevel::INFO;
+        switch (type) {
+            case QtDebugMsg:    level = LogLevel::DEBUG; break;
+            case QtInfoMsg:     level = LogLevel::INFO; break;
+            case QtWarningMsg:  level = LogLevel::WARNING; break;
+            case QtCriticalMsg:
+            case QtFatalMsg:    level = LogLevel::ERROR; break;
+        }
+        std::string sourceInfo = "";
+        if (context.file) {
+            sourceInfo = " (" + std::string(context.file) + ":" + std::to_string(context.line) + ")";
+        }
+        Logger::Log(level, "[Qt] " + msg.toStdString() + sourceInfo);
+    });
 
     QCoreApplication::setOrganizationName("VKAudioTeam");
     QCoreApplication::setApplicationName("VKAudioPlayer");
 
-    PathManager::Init();
-    Logger::Init();
+    QtWebView::initialize();
+
+    QGuiApplication app(argc, argv);
+    app.setQuitOnLastWindowClosed(false);
 
     QMap<QString, QString> envVars = EnvParser::Parse(".env");
     Logger::Log(LogLevel::INFO, "--- VK Audio Player Started ---");

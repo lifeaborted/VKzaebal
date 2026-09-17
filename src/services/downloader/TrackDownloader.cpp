@@ -95,11 +95,11 @@ TrackDownloader::TrackDownloader(QObject* parent) : QObject(parent) {
     QDir().mkpath(PathManager::GetDownloadsDir());
 }
 
-void TrackDownloader::Download(const Track& track, const std::string& urlStr) {
+void TrackDownloader::Download(const Track& track, const std::string& urlStr, const QString& customDir) {
     std::string safeName = track.GetSafeFilename();
 
-    QString filePath = PathManager::GetDownloadFilePath(safeName, "mp3");
-    QString aacPath = PathManager::GetDownloadFilePath(safeName, "aac");
+    QString filePath = PathManager::GetDownloadFilePath(safeName, "mp3", customDir);
+    QString aacPath = PathManager::GetDownloadFilePath(safeName, "aac", customDir);
     auto syncPrint = [](const std::string& text) {
         Logger::Log(LogLevel::INFO, text);
     };
@@ -108,6 +108,9 @@ void TrackDownloader::Download(const Track& track, const std::string& urlStr) {
         Logger::Log(LogLevel::INFO, "[Загрузчик] Трек уже скачан: " + safeName);
         return;
     }
+
+    QFileInfo fi(filePath);
+    QDir().mkpath(fi.absolutePath());
 
     Logger::Log(LogLevel::INFO, "[Загрузчик] Старт загрузки (Universal Native): " + safeName);
 
@@ -142,7 +145,7 @@ void TrackDownloader::Download(const Track& track, const std::string& urlStr) {
 
     QPointer<TrackDownloader> safeThis(this);
 
-    connect(streamer, &NetworkStreamer::DownloadFinished, this, [safeThis, streamer, file, track, filePath, safeName, isAacFormat, syncPrint]() {
+    connect(streamer, &NetworkStreamer::DownloadFinished, this, [safeThis, streamer, file, track, filePath, safeName, isAacFormat, customDir, syncPrint]() {
         file->close();
         streamer->deleteLater();
 
@@ -150,7 +153,7 @@ void TrackDownloader::Download(const Track& track, const std::string& urlStr) {
 
         QString finalPath = filePath;
         if (*isAacFormat) {
-            finalPath = PathManager::GetDownloadFilePath(safeName, "aac");
+            finalPath = PathManager::GetDownloadFilePath(safeName, "aac", customDir);
             QFile::rename(filePath, finalPath);
         }
 

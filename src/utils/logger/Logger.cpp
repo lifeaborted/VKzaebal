@@ -73,30 +73,30 @@ void Logger::Log(LogLevel level, const std::string& message) {
     std::string fullMessage = timeStr + levelStr + message;
     std::string clearUi = "\r\033[2K\033[1A\r\033[2K";
 
-    std::lock_guard<std::mutex> lock(s_mutex);
-
-    if (s_consoleOutputEnabled) {
-        if (level == LogLevel::ERROR) {
-            std::cerr << clearUi << fullMessage << "\n\n> ";
-            std::cerr.flush();
-        } else {
-            std::cout << clearUi << fullMessage << "\n\n> ";
-            std::cout.flush();
-        }
-    }
-
-    // В файл логируем всё, что прошло фильтр
-    if (logFile.is_open()) {
-        logFile << fullMessage << std::endl;
-        logFile.flush();
-    }
-
-    // Уведомляем подписчиков (например, строку состояния консоли)
     LogCallback cb = nullptr;
     {
         std::lock_guard<std::mutex> lock(s_mutex);
+
+        if (s_consoleOutputEnabled) {
+            if (level == LogLevel::ERROR) {
+                std::cerr << clearUi << fullMessage << "\n\n> ";
+                std::cerr.flush();
+            } else {
+                std::cout << clearUi << fullMessage << "\n\n> ";
+                std::cout.flush();
+            }
+        }
+
+        // В файл логируем всё, что прошло фильтр
+        if (logFile.is_open()) {
+            logFile << fullMessage << std::endl;
+            logFile.flush();
+        }
+
         cb = s_callback;
     }
+
+    // Вызываем callback ВНЕ мьютекса, чтобы избежать взаимоблокировки (deadlock)
     if (cb) {
         cb(level, message);
     }

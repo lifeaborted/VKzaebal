@@ -177,7 +177,7 @@ void SourceRouter::OnVkTokenExpired() {
     std::cout << "\n[ВНИМАНИЕ] Токен ВК устарел.\n";
     m_authManager->ClearSavedToken("VK");
     m_vkClient->SetAccessToken("");
-    StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
+    StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=2685278&scope=audio,offline&redirect_uri=https://oauth.vk.com/blank.html&display=page&response_type=token&v=5.131");
 }
 
 void SourceRouter::StartVkService() {
@@ -185,7 +185,7 @@ void SourceRouter::StartVkService() {
         if (savedToken.empty()) {
             std::cout << "\n[VK] Токен не найден. Открываем окно авторизации...\n";
             std::cout.flush();
-            StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
+            StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=2685278&scope=audio,offline&redirect_uri=https://oauth.vk.com/blank.html&display=page&response_type=token&v=5.131");
         } else {
             std::cout << "\n[VK] Проверка сохраненного токена...\n";
             std::cout.flush();
@@ -199,7 +199,7 @@ void SourceRouter::StartVkService() {
                 } else {
                     m_authManager->ClearSavedToken("VK");
                     m_vkClient->SetAccessToken("");
-                    StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
+                    StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=2685278&scope=audio,offline&redirect_uri=https://oauth.vk.com/blank.html&display=page&response_type=token&v=5.131");
                 }
             });
         }

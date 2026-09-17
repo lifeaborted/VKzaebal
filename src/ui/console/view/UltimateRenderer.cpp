@@ -390,9 +390,9 @@ void UltimateRenderer::Render() {
                             cleanMsg.find("failed") != std::string::npos);
 
             if (isError) {
-                m_cStatusMsg = "\033[38;2;255;85;85m✖ " + cleanMsg + "\033[0m";
+                m_cStatusMsg = "\033[38;2;255;85;85m " + cleanMsg + "\033[0m";
             } else {
-                m_cStatusMsg = "\033[38;2;255;180;80mℹ " + cleanMsg + "\033[0m";
+                m_cStatusMsg = "\033[38;2;255;180;80m " + cleanMsg + "\033[0m";
             }
         } else {
             m_cStatusMsg = "";

@@ -3,9 +3,11 @@
 #include <QDir>
 #include <QRegularExpression>
 #include <QCoreApplication>
+#include <QSettings>
 
 QString PathManager::s_appDataDir;
 QString PathManager::s_downloadsDir;
+QString PathManager::s_sessionDownloadsDir;
 QString PathManager::s_lyricsDir;
 QString PathManager::s_logsDir;
 bool PathManager::s_initialized = false;
@@ -44,8 +46,34 @@ QString PathManager::GetAppDataDir() {
     return s_appDataDir;
 }
 
+QString PathManager::GetCustomDownloadsDir() {
+    QSettings settings(GetConfigPath(), QSettings::IniFormat);
+    QString path = settings.value("Downloads/Path", "").toString().trimmed();
+    if (!path.isEmpty()) {
+        return QDir::cleanPath(path);
+    }
+    return "";
+}
+
+void PathManager::SetSessionDownloadsDir(const QString& dir) {
+    if (!dir.isEmpty()) {
+        s_sessionDownloadsDir = QDir::cleanPath(dir.trimmed());
+    } else {
+        s_sessionDownloadsDir.clear();
+    }
+}
+
 QString PathManager::GetDownloadsDir() {
     if (!s_initialized) Init();
+    QString custom = GetCustomDownloadsDir();
+    if (!custom.isEmpty()) {
+        QDir().mkpath(custom);
+        return custom;
+    }
+    if (!s_sessionDownloadsDir.isEmpty()) {
+        QDir().mkpath(s_sessionDownloadsDir);
+        return s_sessionDownloadsDir;
+    }
     return s_downloadsDir;
 }
 
@@ -76,8 +104,29 @@ QString PathManager::GetLogFilePath() {
     return GetLogsDir() + "/app.log";
 }
 
-QString PathManager::GetDownloadFilePath(const std::string& safeFilename, const QString& ext) {
+QString PathManager::GetDownloadFilePath(const std::string& safeFilename, const QString& ext, const QString& customDir) {
     QString extension = ext.startsWith('.') ? ext : ("." + ext);
+    if (!customDir.isEmpty()) {
+        return QDir::cleanPath(customDir) + "/" + QString::fromStdString(safeFilename) + extension;
+    }
+
+    QString cfgDir = GetCustomDownloadsDir();
+    if (!cfgDir.isEmpty()) {
+        return cfgDir + "/" + QString::fromStdString(safeFilename) + extension;
+    }
+
+    if (!s_sessionDownloadsDir.isEmpty()) {
+        QString sessionPath = s_sessionDownloadsDir + "/" + QString::fromStdString(safeFilename) + extension;
+        if (QFile::exists(sessionPath)) {
+            return sessionPath;
+        }
+    }
+
+    QString defaultPath = s_downloadsDir + "/" + QString::fromStdString(safeFilename) + extension;
+    if (QFile::exists(defaultPath)) {
+        return defaultPath;
+    }
+
     return GetDownloadsDir() + "/" + QString::fromStdString(safeFilename) + extension;
 }
 
