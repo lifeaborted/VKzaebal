@@ -96,13 +96,8 @@ void ConsoleController::SetState(ConsoleState state) {
 void ConsoleController::Start() {
     if (m_isRunning) return;
 
-    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
-    int mode = settings.value("Visualizer/Mode", 0).toInt();
-
-    if (mode == 1) {
-        std::cout << "\033[?1049h\033[2J\033[999;1H> ";
-        std::cout.flush();
-    }
+    std::cout << "\033[?1049h\033[2J\033[999;1H> ";
+    std::cout.flush();
 
     m_isRunning = true;
     m_uiTimer->start(16); // Запуск визуализатора
@@ -117,12 +112,7 @@ void ConsoleController::Stop() {
 
     m_uiTimer->stop();
 
-    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
-    if (settings.value("Visualizer/Mode", 0).toInt() == 1) {
-        std::cout << "\033[?1049l\033[?25h";
-    } else {
-        std::cout << "\033[?25h";
-    }
+    std::cout << "\033[?1049l\033[?25h";
     std::cout.flush();
 
 #ifdef _WIN32
@@ -216,11 +206,7 @@ void ConsoleController::OnUiTick() {
         m_renderer->Render();
 
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
-    int mode = settings.value("Visualizer/Mode", 0).toInt();
-
-    int fps = 2;
-    if (mode == 1) fps = m_renderer->GetFramerate();
-    else fps = m_renderer->IsVisualizerEnabled() ? 15 : 2;
+    int fps = m_renderer->GetFramerate();
 
     if (fps < 1) fps = 1;
 

@@ -23,13 +23,9 @@ public:
     bool IsVisualizerEnabled() const { return m_showVisualizer; }
 
 private:
-    void RenderBasic();
-
     IAudioEngine& m_audio;
     PlaylistManager& m_playlist;
     std::unique_ptr<UltimateRenderer> m_ultimateRenderer;
 
-    int m_mode = 0;
     bool m_showVisualizer = true;
-    std::string m_lastPrintedStr = "";
 };

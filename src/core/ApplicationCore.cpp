@@ -31,10 +31,9 @@ bool ApplicationCore::Initialize() {
 
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
     m_activeSource = settings.value("General/source", "VK").toString().toStdString();
-    int uiMode = settings.value("Visualizer/Mode", 0).toInt();
 
-    // Запрет логирования в консоль для Ultimate режима
-    Logger::SetConsoleOutputEnabled(uiMode == 0);
+    // Запрет прямого вывода логов в консоль, чтобы не ломать TUI
+    Logger::SetConsoleOutputEnabled(false);
 
     // 1. Создание базовых сервисов
     m_dbManager = std::make_unique<DatabaseManager>();
@@ -76,7 +75,6 @@ void ApplicationCore::EnsureDefaultConfig() {
         settings.setValue("Session/CurrentTrackIndex", -1);
         settings.setValue("General/source", "VK");
         settings.setValue("Ui/ShowVisualizer", true);
-        settings.setValue("Visualizer/Mode", 1);
         settings.sync();
     }
 
@@ -235,10 +233,6 @@ void ApplicationCore::InitPlaylistAndStart(bool isOnline) {
     }
 
     if (m_playlist->HasTracks()) {
-        if (settings.value("Visualizer/Mode", 0).toInt() == 0) {
-            std::cout << "\r\033[2K=== ПЛЕЕР ГОТОВ К РАБОТЕ ===\nРежим: " << (isShuffle ? "Шафл" : "Стандартный") << "\nВведите 'h' для справки\n\n> ";
-            std::cout.flush();
-        }
         m_isPlaybackStarted = true;
         if (savedTrackIndex >= 0 && savedTrackIndex < m_playlist->GetAllTracks().size()) {
             m_playlist->JumpTo(savedTrackIndex);
