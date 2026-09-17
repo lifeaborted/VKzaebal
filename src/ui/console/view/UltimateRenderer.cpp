@@ -379,7 +379,21 @@ void UltimateRenderer::Render() {
             std::string cleanMsg = m_statusMessage;
             cleanMsg.erase(std::remove(cleanMsg.begin(), cleanMsg.end(), '\n'), cleanMsg.end());
             cleanMsg.erase(std::remove(cleanMsg.begin(), cleanMsg.end(), '\r'), cleanMsg.end());
-            m_cStatusMsg = "\033[38;2;255;180;80mℹ " + cleanMsg + "\033[0m";
+
+            bool isError = (cleanMsg.find("[Ошибка]") != std::string::npos ||
+                            cleanMsg.find("[ERROR]") != std::string::npos ||
+                            cleanMsg.find("Error") != std::string::npos ||
+                            cleanMsg.find("error") != std::string::npos ||
+                            cleanMsg.find("Ошибка") != std::string::npos ||
+                            cleanMsg.find("ошибка") != std::string::npos ||
+                            cleanMsg.find("Failed") != std::string::npos ||
+                            cleanMsg.find("failed") != std::string::npos);
+
+            if (isError) {
+                m_cStatusMsg = "\033[38;2;255;85;85m✖ " + cleanMsg + "\033[0m";
+            } else {
+                m_cStatusMsg = "\033[38;2;255;180;80mℹ " + cleanMsg + "\033[0m";
+            }
         } else {
             m_cStatusMsg = "";
         }

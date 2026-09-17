@@ -16,6 +16,12 @@ std::mutex Logger::s_mutex;
 // Инициализация минимального уровня логов
 LogLevel Logger::s_minLogLevel = LogLevel::INFO;
 bool Logger::s_consoleOutputEnabled = true;
+Logger::LogCallback Logger::s_callback = nullptr;
+
+void Logger::SetLogCallback(LogCallback callback) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    s_callback = std::move(callback);
+}
 
 void Logger::Init() {
     PathManager::Init();
@@ -84,6 +90,16 @@ void Logger::Log(LogLevel level, const std::string& message) {
         logFile << fullMessage << std::endl;
         logFile.flush();
     }
+
+    // Уведомляем подписчиков (например, строку состояния консоли)
+    LogCallback cb = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        cb = s_callback;
+    }
+    if (cb) {
+        cb(level, message);
+    }
 }
 
 void Logger::SetConsoleOutputEnabled(bool enabled) {
@@ -91,6 +107,10 @@ void Logger::SetConsoleOutputEnabled(bool enabled) {
 }
 
 void Logger::Close() {
+    {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        s_callback = nullptr;
+    }
     if (logFile.is_open()) {
         logFile.close();
     }

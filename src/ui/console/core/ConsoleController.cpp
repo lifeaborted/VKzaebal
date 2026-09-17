@@ -79,6 +79,17 @@ ConsoleController::ConsoleController(
         emit QuitRequested();
     };
 
+    // Подписка на ошибки логгера для вывода в строку состояния
+    Logger::SetLogCallback([this](LogLevel level, const std::string& message) {
+        if (level == LogLevel::ERROR) {
+            std::string statusMsg = message;
+            if (statusMsg.find("[Ошибка]") == std::string::npos && statusMsg.find("[ERROR]") == std::string::npos) {
+                statusMsg = "[Ошибка] " + statusMsg;
+            }
+            SetStatusMessage(statusMsg);
+        }
+    });
+
     // Таймер для отрисовки интерфейса (Главный поток)
     m_uiTimer = new QTimer(this);
     m_uiTimer->setTimerType(Qt::PreciseTimer);
@@ -86,6 +97,7 @@ ConsoleController::ConsoleController(
 }
 
 ConsoleController::~ConsoleController() {
+    Logger::SetLogCallback(nullptr);
     Stop();
 }
 
@@ -131,6 +143,12 @@ void ConsoleController::Stop() {
 void ConsoleController::SetCurrentProvider(IAudioProvider* provider) {
     m_currentProvider = provider;
     if (m_dispatcher) m_dispatcher->SetCurrentProvider(provider);
+}
+
+void ConsoleController::SetStatusMessage(const std::string& msg) {
+    if (m_renderer) {
+        m_renderer->SetStatusMessage(msg);
+    }
 }
 
 void ConsoleController::InputLoop() {

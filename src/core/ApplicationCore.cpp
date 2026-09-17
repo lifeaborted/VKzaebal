@@ -141,8 +141,9 @@ void ApplicationCore::WireConnections() {
     connect(m_streamer.get(), &NetworkStreamer::DownloadFinished, [&]() {
         m_audio->SetNetworkStreamFinished();
     });
-    connect(m_streamer.get(), &NetworkStreamer::DownloadError, [&](const std::string&) {
+    connect(m_streamer.get(), &NetworkStreamer::DownloadError, [&](const std::string& err) {
         m_audio->SetNetworkStreamFinished();
+        m_console->SetStatusMessage("[Ошибка] Ошибка стриминга: " + err);
     });
 
     // Аудио -> Воспроизведение
@@ -155,6 +156,7 @@ void ApplicationCore::WireConnections() {
     m_audio->OnTrackNearEnd = [&]() { m_playbackCtrl->HandleTrackNearEnd(); };
     m_audio->OnPlaybackError = [&](const std::string& err) {
         Logger::Log(LogLevel::ERROR, "Playback failed: " + err + ". Skipping to next track...");
+        m_console->SetStatusMessage("[Ошибка] Ошибка воспроизведения: " + err);
         m_playlist->Next();
     };
 

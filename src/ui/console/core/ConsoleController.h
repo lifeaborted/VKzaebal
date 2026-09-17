@@ -44,6 +44,7 @@ public:
     ConsoleState GetState() const { return m_currentState; }
 
     void SetCurrentProvider(IAudioProvider* provider);
+    void SetStatusMessage(const std::string& msg);
 
     std::function<void(bool)> OnGaplessModeChanged;
 

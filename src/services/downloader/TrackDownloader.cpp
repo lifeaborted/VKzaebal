@@ -114,7 +114,7 @@ void TrackDownloader::Download(const Track& track, const std::string& urlStr) {
     NetworkStreamer* streamer = new NetworkStreamer(this);
     std::shared_ptr<QFile> file = std::make_shared<QFile>(filePath);
     if (!file->open(QIODevice::WriteOnly)) {
-        syncPrint("[Ошибка] Не удалось создать файл для сохранения: " + safeName);
+        Logger::Log(LogLevel::ERROR, "[Ошибка] Не удалось создать файл для сохранения: " + safeName);
         streamer->deleteLater();
         return;
     }
@@ -131,6 +131,13 @@ void TrackDownloader::Download(const Track& track, const std::string& urlStr) {
 
     connect(streamer, &NetworkStreamer::DataReceived, [demuxer](const QByteArray& data) {
         demuxer->ProcessBytes(reinterpret_cast<const uint8_t*>(data.constData()), data.size());
+    });
+
+    connect(streamer, &NetworkStreamer::DownloadError, this, [streamer, file, safeName](const std::string& err) {
+        file->close();
+        file->remove();
+        streamer->deleteLater();
+        Logger::Log(LogLevel::ERROR, "[Загрузчик] Ошибка скачивания " + safeName + ": " + err);
     });
 
     QPointer<TrackDownloader> safeThis(this);
