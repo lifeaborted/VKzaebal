@@ -114,13 +114,90 @@ namespace {
     };
 
     class SeekCommand : public IConsoleCommand {
-        void Execute(const std::string& arg, CommandContext& ctx) override {
+        static std::string Trim(const std::string& str) {
+            size_t start = str.find_first_not_of(" \t\r\n");
+            if (start == std::string::npos) return "";
+            size_t end = str.find_last_not_of(" \t\r\n");
+            return str.substr(start, end - start + 1);
+        }
+
+        static bool ParseDoubleStrict(const std::string& str, double& outVal) {
+            std::string s = Trim(str);
+            if (s.empty()) return false;
             try {
-                double pos = std::stod(arg);
-                RunInMainThread([ctx, pos]() { ctx.audio.SetPositionSeconds(pos); });
-                if (ctx.print) ctx.print("[Перемотка] Переход на " + std::to_string(static_cast<int>(pos)) + " сек.\n\n> ");
+                size_t idx = 0;
+                double val = std::stod(s, &idx);
+                if (idx != s.length()) return false;
+                outVal = val;
+                return true;
             } catch (...) {
-                if (ctx.print) ctx.print("[Ошибка] Неверный формат. Используй: seek <секунды>\n\n> ");
+                return false;
+            }
+        }
+
+        static bool ParseTime(const std::string& rawStr, double& outSeconds) {
+            std::string str = Trim(rawStr);
+            if (str.empty()) return false;
+
+            size_t firstColon = str.find(':');
+            if (firstColon != std::string::npos) {
+                size_t secondColon = str.find(':', firstColon + 1);
+                if (secondColon != std::string::npos) {
+                    // hh:mm:ss
+                    double hours = 0.0, mins = 0.0, secs = 0.0;
+                    if (!ParseDoubleStrict(str.substr(0, firstColon), hours) ||
+                        !ParseDoubleStrict(str.substr(firstColon + 1, secondColon - firstColon - 1), mins) ||
+                        !ParseDoubleStrict(str.substr(secondColon + 1), secs)) {
+                        return false;
+                    }
+                    if (hours < 0 || mins < 0 || mins >= 60 || secs < 0 || secs >= 60) return false;
+                    outSeconds = hours * 3600.0 + mins * 60.0 + secs;
+                    return true;
+                } else {
+                    // mm:ss or m:s
+                    double mins = 0.0, secs = 0.0;
+                    if (!ParseDoubleStrict(str.substr(0, firstColon), mins) ||
+                        !ParseDoubleStrict(str.substr(firstColon + 1), secs)) {
+                        return false;
+                    }
+                    if (mins < 0 || secs < 0 || secs >= 60) return false;
+                    outSeconds = mins * 60.0 + secs;
+                    return true;
+                }
+            } else {
+                double val = 0.0;
+                if (!ParseDoubleStrict(str, val) || val < 0) return false;
+                outSeconds = val;
+                return true;
+            }
+        }
+
+        static std::string FormatTime(double seconds) {
+            int totalSec = static_cast<int>(seconds);
+            if (totalSec < 0) totalSec = 0;
+            int hrs = totalSec / 3600;
+            int mins = (totalSec % 3600) / 60;
+            int secs = totalSec % 60;
+            char buf[32];
+            if (hrs > 0) {
+                std::snprintf(buf, sizeof(buf), "%d:%02d:%02d", hrs, mins, secs);
+            } else {
+                std::snprintf(buf, sizeof(buf), "%02d:%02d", mins, secs);
+            }
+            return std::string(buf);
+        }
+
+        void Execute(const std::string& arg, CommandContext& ctx) override {
+            double pos = 0.0;
+            if (ParseTime(arg, pos)) {
+                RunInMainThread([ctx, pos]() { ctx.audio.SetPositionSeconds(pos); });
+                if (ctx.print) {
+                    ctx.print("[Перемотка] Переход на " + FormatTime(pos) + " (" + std::to_string(static_cast<int>(pos)) + " сек.)\n\n> ");
+                }
+            } else {
+                if (ctx.print) {
+                    ctx.print("[Ошибка] Неверный формат времени. Используй: seek 1:30 (или seek 90)\n\n> ");
+                }
             }
         }
     };
@@ -481,7 +558,7 @@ namespace {
                 if (ctx.onQuit) ctx.onQuit();
             } else if (m_cmdType == "help") {
                 std::string s(50, '*');
-                std::string helpText = "\n" + s + "\n [P] Play/Pause\n [N] Next\n [B] Prev\n [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n [st] Standard Order\n [sh] Shuffle\n [R] Repeat Mode\n [J <num>] Jump to track\n [cv] Current volume\n [rs] Reset Session\n [mode <0/1>] 0 - Standard, 1 - Gapless transition\n [search <text>] Search tracks in playlist\n [ly] Show lyrics for current track\n [logout <service>] Logout from choosen service\n [source] Select audio source\n [tl] Export tracklist to TXT\n [dl] / [dl <num>] Download track\n [rm] / [rm <num>] Delete downloaded track\n [vis] Toggle visualizer\n [Q] Quit\n" + s + "\n\n> ";
+                std::string helpText = "\n" + s + "\n [P] Play/Pause\n [N] Next\n [B] Prev\n [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n [seek <time>] Seek (e.g. seek 1:30 or seek 90)\n [st] Standard Order\n [sh] Shuffle\n [R] Repeat Mode\n [J <num>] Jump to track\n [cv] Current volume\n [rs] Reset Session\n [mode <0/1>] 0 - Standard, 1 - Gapless transition\n [search <text>] Search tracks in playlist\n [ly] Show lyrics for current track\n [logout <service>] Logout from choosen service\n [source] Select audio source\n [tl] Export tracklist to TXT\n [dl] / [dl <num>] Download track\n [rm] / [rm <num>] Delete downloaded track\n [vis] Toggle visualizer\n [Q] Quit\n" + s + "\n\n> ";
                 if (ctx.print) ctx.print(helpText);
             }
         }
