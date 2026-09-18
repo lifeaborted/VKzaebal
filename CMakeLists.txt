@@ -58,9 +58,6 @@ set(PROJECT_SOURCES
         src/core/api/BaseApiProvider.h
 
         # Audio
-        src/core/audio/bass/BassEngine.h
-        src/core/audio/bass/BassEngine.cpp
-
         src/core/audio/miniaudio/miniaudio_impl.cpp
 
         src/core/audio/miniaudio/MiniaudioEngine.h
@@ -156,7 +153,6 @@ add_executable(${PROJECT_NAME}
 # Привязываем путь к заголовкам
 target_include_directories(${PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass
         ${CMAKE_CURRENT_SOURCE_DIR}/libs/fdk-aac/libAACdec/include
         ${CMAKE_CURRENT_SOURCE_DIR}/libs/tiny-aes
         ${CMAKE_CURRENT_SOURCE_DIR}/libs/minimp3
@@ -175,41 +171,19 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         Qt6::Concurrent
 )
 
-# --- Платформозависимая линковка BASS ---
+# --- Внешние библиотеки и FFI ---
+
+target_link_libraries(${PROJECT_NAME} PRIVATE fdk-aac)
 
 if (WIN32)
-    # Для Windows ищем .lib файлы
     target_link_libraries(${PROJECT_NAME} PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/bass.lib
-            ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/basshls.lib
-            ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/bassenc.lib
-            ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/bassenc_mp3.lib
-            fdk-aac
             "${CMAKE_CURRENT_SOURCE_DIR}/shazam_ffi/target/release/shazam_ffi.dll.lib"
     )
-elseif (UNIX AND NOT APPLE)
-    # Для Linux ищем .so файлы (Shared Objects)
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/libbass.so
-            ${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/libbasshls.so
-    )
-endif()
 
-# --- Автоматическое копирование DLL в папку сборки ---
-if (WIN32)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
             # Копируем DLL Шазама
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/shazam_ffi/target/release/shazam_ffi.dll"
-            $<TARGET_FILE_DIR:${PROJECT_NAME}>
-
-            # Заодно копируем DLL BASS (пока ты его не вырезал)
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/bass.dll"
-            $<TARGET_FILE_DIR:${PROJECT_NAME}>
-
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_CURRENT_SOURCE_DIR}/libs/bass/basshls.dll"
             $<TARGET_FILE_DIR:${PROJECT_NAME}>
     )
 endif()
