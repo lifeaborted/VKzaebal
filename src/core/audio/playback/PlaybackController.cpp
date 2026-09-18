@@ -62,8 +62,17 @@ void PlaybackController::HandleTrackNearEnd() {
 void PlaybackController::AttemptPlay(const Track& track, int attempt) {
 
     if (attempt == 1) {
-        bool shouldSavePos = QSettings(PathManager::GetConfigPath(), QSettings::IniFormat).value("Playback/SavePosition", true).toBool();
-        if (!shouldSavePos) {
+        int savePosMode = 2;
+        QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+        QVariant val = settings.value("Playback/SavePosition", 2);
+        if (val.typeId() == QMetaType::Bool) {
+            savePosMode = val.toBool() ? 2 : 1;
+        } else {
+            bool ok = false;
+            int m = val.toInt(&ok);
+            if (ok) savePosMode = std::clamp(m, 0, 2);
+        }
+        if (savePosMode < 2) {
             m_savedPosition = 0.0;
         }
     }

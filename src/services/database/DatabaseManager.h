@@ -3,12 +3,20 @@
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <vector>
+#include <optional>
 #include "models/Track.h"
 
 struct PlaylistInfo {
     int id = 0;
     std::string name;
     int trackCount = 0;
+};
+
+struct SourceSession {
+    std::string source;
+    std::string trackId;
+    int trackIndex = 0;
+    double positionSeconds = 0.0;
 };
 
 class DatabaseManager {
@@ -48,6 +56,11 @@ public:
 
     // Обновление локального кэша текста
     void UpdateTrackLyrics(const std::string& trackId, const std::string& lyrics);
+
+    // --- Сессии воспроизведения источников ---
+    void SaveSourceSession(const std::string& source, const std::string& trackId, int trackIndex, double positionSeconds);
+    std::optional<SourceSession> LoadSourceSession(const std::string& source) const;
+    void ClearSourceSession(const std::string& source);
 
 private:
     QSqlDatabase m_db;

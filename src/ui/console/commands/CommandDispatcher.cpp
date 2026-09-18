@@ -301,6 +301,7 @@ namespace {
                 std::string src = QSettings(PathManager::GetConfigPath(), QSettings::IniFormat).value("General/source", "VK").toString().toStdString();
                 ctx.dbManager.SaveQueue(ctx.playlist.GetQueueTracks(), src, ctx.playlist.IsShuffle());
                 ctx.dbManager.ExportQueueToTxt(ctx.playlist.GetQueueTracks(), "playlist.txt", ctx.playlist.IsShuffle());
+                ctx.dbManager.ClearSourceSession(src);
             });
             if (ctx.print) ctx.print("[Сессия] Плейлист сброшен: стандартный порядок, 1-й трек.\n\n> ");
         }
@@ -634,7 +635,7 @@ namespace {
                 if (ctx.onQuit) ctx.onQuit();
             } else if (m_cmdType == "help") {
                 std::string s(50, '*');
-                std::string helpText = "\n" + s + "\n [P] Play/Pause\n [N] Next\n [B] Prev\n [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n [seek <time>] Seek (e.g. seek 1:30 or seek 90)\n [st] Standard Order\n [sh] Shuffle\n [R] Repeat Mode\n [J <num>] Jump to track\n [cv] Current volume\n [rs] Reset Session\n [mode <0/1>] 0 - Standard, 1 - Gapless transition\n [search <text>] Search tracks in playlist\n [ly] Show lyrics for current track\n [logout / logout <service>] Logout and clear service cache\n [source] Select audio source\n [tl] Export tracklist to TXT\n [dl] / [dl <num>] Download track\n [rm] / [rm <num>] Delete downloaded track\n [pl <name>] Create playlist\n [pls] List playlists\n [pl play] Play playlist\n [pl rm <name>] Delete playlist\n [add] / [add <num>] Add track to playlist\n [drop <num>] Remove track from queue\n [vis] Toggle visualizer\n [Q] Quit\n" + s + "\n\n> ";
+                std::string helpText = "\n" + s + "\n [P] Play/Pause\n [N] Next\n [B] Prev\n [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n [seek <time>] Seek (e.g. seek 1:30 or seek 90)\n [st] Standard Order\n [sh] Shuffle\n [R] Repeat Mode\n [J <num>] Jump to track\n [cv] Current volume\n [rs] Reset Session\n [mode <0/1>] 0 - Standard, 1 - Gapless transition\n [savepos <0/1/2>] 0 - Off, 1 - Track only, 2 - Track + Position\n [search <text>] Search tracks in playlist\n [ly] Show lyrics for current track\n [logout / logout <service>] Logout and clear service cache\n [source] Select audio source\n [tl] Export tracklist to TXT\n [dl] / [dl <num>] Download track\n [rm] / [rm <num>] Delete downloaded track\n [pl <name>] Create playlist\n [pls] List playlists\n [pl play] Play playlist\n [pl rm <name>] Delete playlist\n [add] / [add <num>] Add track to playlist\n [drop <num>] Remove track from queue\n [vis] Toggle visualizer\n [Q] Quit\n" + s + "\n\n> ";
                 if (ctx.print) ctx.print(helpText);
             }
         }
@@ -876,17 +877,22 @@ class SavePosCommand : public IConsoleCommand {
     void Execute(const std::string& arg, CommandContext& ctx) override {
         try {
             int mode = std::stoi(arg);
-            if (mode == 0 || mode == 1) {
-                bool savePos = (mode == 1);
-                QSettings(PathManager::GetConfigPath(), QSettings::IniFormat).setValue("Playback/SavePosition", savePos);
-                std::string msg = savePos ? "[Режим] Теперь плеер запоминает позицию в треке при выходе.\n\n> "
-                                          : "[Режим] Теперь плеер запоминает только трек.\n\n> ";
+            if (mode >= 0 && mode <= 2) {
+                QSettings(PathManager::GetConfigPath(), QSettings::IniFormat).setValue("Playback/SavePosition", mode);
+                std::string msg;
+                if (mode == 0) {
+                    msg = "[Режим] Сохранение позиции отключено (всегда сначала).\n\n> ";
+                } else if (mode == 1) {
+                    msg = "[Режим] Теперь плеер запоминает только трек (время с 0:00).\n\n> ";
+                } else {
+                    msg = "[Режим] Теперь плеер запоминает трек и точную позицию по времени.\n\n> ";
+                }
                 if (ctx.print) ctx.print(msg);
             } else {
-                if (ctx.print) ctx.print("[Ошибка] Используй: savepos 0 (только трек) или savepos 1 (трек + время)\n\n> ");
+                if (ctx.print) ctx.print("[Ошибка] Используй: savepos 0 (выкл), savepos 1 (только трек), savepos 2 (трек + время)\n\n> ");
             }
         } catch (...) {
-            if (ctx.print) ctx.print("[Ошибка] Неверный формат. Используй: savepos 0 или savepos 1\n\n> ");
+            if (ctx.print) ctx.print("[Ошибка] Неверный формат. Используй: savepos 0, 1 или 2\n\n> ");
         }
     }
 };

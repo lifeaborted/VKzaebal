@@ -71,6 +71,13 @@ void DatabaseManager::CreateTables() {
                "FOREIGN KEY(track_id) REFERENCES Tracks(id) ON DELETE CASCADE)");
 
     query.exec("CREATE INDEX IF NOT EXISTS idx_playlist_tracks_lookup ON PlaylistTracks(playlist_id, position)");
+
+    query.exec("CREATE TABLE IF NOT EXISTS SourceSessions ("
+               "source TEXT PRIMARY KEY, "
+               "track_id TEXT, "
+               "track_index INTEGER, "
+               "position_seconds REAL, "
+               "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
 }
 
 void DatabaseManager::SetSetting(const QString& key, const QString& value) {
@@ -346,6 +353,19 @@ bool DatabaseManager::CreatePlaylist(const std::string& name) {
 }
 
 bool DatabaseManager::DeletePlaylist(int playlistId) {
+    std::string plName;
+    {
+        QSqlQuery q(m_db);
+        q.prepare("SELECT name FROM Playlists WHERE id = :id");
+        q.bindValue(":id", playlistId);
+        if (q.exec() && q.next()) {
+            plName = q.value(0).toString().toStdString();
+        }
+    }
+    if (!plName.empty()) {
+        ClearSourceSession("Custom:" + plName);
+    }
+
     QSqlQuery q1(m_db);
     q1.prepare("DELETE FROM PlaylistTracks WHERE playlist_id = :id");
     q1.bindValue(":id", playlistId);
@@ -465,4 +485,42 @@ std::vector<Track> DatabaseManager::LoadPlaylistTracksByName(const std::string& 
         return LoadPlaylistTracks(outId);
     }
     return {};
+}
+
+void DatabaseManager::SaveSourceSession(const std::string& source, const std::string& trackId, int trackIndex, double positionSeconds) {
+    if (source.empty()) return;
+    QSqlQuery query(m_db);
+    query.prepare("INSERT OR REPLACE INTO SourceSessions (source, track_id, track_index, position_seconds, updated_at) "
+                  "VALUES (:source, :track_id, :track_index, :position_seconds, CURRENT_TIMESTAMP)");
+    query.bindValue(":source", QString::fromStdString(source));
+    query.bindValue(":track_id", QString::fromStdString(trackId));
+    query.bindValue(":track_index", trackIndex);
+    query.bindValue(":position_seconds", positionSeconds > 0.0 ? positionSeconds : 0.0);
+    if (!query.exec()) {
+        Logger::Log(LogLevel::WARNING, "DB: Failed to save source session for '" + source + "': " + query.lastError().text().toStdString());
+    }
+}
+
+std::optional<SourceSession> DatabaseManager::LoadSourceSession(const std::string& source) const {
+    if (source.empty()) return std::nullopt;
+    QSqlQuery query(m_db);
+    query.prepare("SELECT source, track_id, track_index, position_seconds FROM SourceSessions WHERE source = :source");
+    query.bindValue(":source", QString::fromStdString(source));
+    if (query.exec() && query.next()) {
+        SourceSession session;
+        session.source = query.value(0).toString().toStdString();
+        session.trackId = query.value(1).toString().toStdString();
+        session.trackIndex = query.value(2).toInt();
+        session.positionSeconds = query.value(3).toDouble();
+        return session;
+    }
+    return std::nullopt;
+}
+
+void DatabaseManager::ClearSourceSession(const std::string& source) {
+    if (source.empty()) return;
+    QSqlQuery query(m_db);
+    query.prepare("DELETE FROM SourceSessions WHERE source = :source");
+    query.bindValue(":source", QString::fromStdString(source));
+    query.exec();
 }

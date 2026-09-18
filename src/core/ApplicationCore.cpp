@@ -70,15 +70,25 @@ void ApplicationCore::EnsureDefaultConfig() {
         settings.setValue("Session/Volume", 1.0f);
         settings.setValue("Session/Shuffle", false);
         settings.setValue("Session/AutoPlay", false);
-        settings.setValue("Session/Position", 0.0);
         settings.setValue("Session/Repeat", 1);
-        settings.setValue("Session/CurrentTrackIndex", -1);
+        settings.setValue("Playback/SavePosition", 2);
         settings.setValue("General/source", "VK");
         settings.setValue("Ui/ShowVisualizer", true);
         settings.setValue("Downloads/Path", "");
         settings.sync();
-    } else if (!settings.contains("Downloads/Path")) {
-        settings.setValue("Downloads/Path", "");
+    } else {
+        if (!settings.contains("Downloads/Path")) {
+            settings.setValue("Downloads/Path", "");
+        }
+        if (!settings.contains("Playback/SavePosition")) {
+            settings.setValue("Playback/SavePosition", 2);
+        }
+        if (settings.contains("Session/Position")) {
+            settings.remove("Session/Position");
+        }
+        if (settings.contains("Session/CurrentTrackIndex")) {
+            settings.remove("Session/CurrentTrackIndex");
+        }
         settings.sync();
     }
 
@@ -112,8 +122,6 @@ void ApplicationCore::RestoreSession() {
     
     m_playbackCtrl->SetCrossfadeEnabled(settings.value("Audio/CrossfadePlayback", false).toBool());
 
-    m_playbackCtrl->SetSavedPosition(settings.value("Session/Position", 0.0).toDouble());
-
     m_playbackCtrl->SetStartPaused(!settings.value("Session/AutoPlay", false).toBool());
 }
 
@@ -121,11 +129,18 @@ void ApplicationCore::SaveSession() {
     Logger::Log(LogLevel::INFO, "ApplicationCore: Saving session state...");
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
     settings.setValue("Session/Volume", m_audio->GetVolume());
-    settings.setValue("Session/CurrentTrackIndex", m_playlist->GetCurrentAbsoluteIndex());
-    settings.setValue("Session/Position", m_audio->GetPositionSeconds());
     settings.setValue("Session/Shuffle", m_playlist->IsShuffle());
     settings.setValue("Session/Repeat", m_playlist->GetRepeatMode());
+    settings.remove("Session/CurrentTrackIndex");
+    settings.remove("Session/Position");
     settings.sync();
+
+    if (!m_activeSource.empty() && m_playlist->HasTracks()) {
+        std::string currentTrackId = m_playlist->GetCurrentTrack().id;
+        int currentIndex = m_playlist->GetCurrentAbsoluteIndex();
+        double currentPos = m_audio->GetPositionSeconds();
+        m_dbManager->SaveSourceSession(m_activeSource, currentTrackId, currentIndex, currentPos);
+    }
 }
 
 void ApplicationCore::Start() {
@@ -183,6 +198,12 @@ void ApplicationCore::WireConnections() {
 
     // Роутер событий
     connect(m_router.get(), &SourceRouter::SourceChanged, [&](const std::string& newSource) {
+        if (!m_activeSource.empty() && m_playlist->HasTracks()) {
+            std::string currentTrackId = m_playlist->GetCurrentTrack().id;
+            int currentIndex = m_playlist->GetCurrentAbsoluteIndex();
+            double currentPos = m_audio->GetPositionSeconds();
+            m_dbManager->SaveSourceSession(m_activeSource, currentTrackId, currentIndex, currentPos);
+        }
         m_activeSource = newSource;
         m_playbackCtrl->ClearState();
         m_isPlaybackStarted = false;
@@ -227,7 +248,21 @@ void ApplicationCore::InitPlaylistAndStart(bool isOnline) {
     if (m_isPlaybackStarted) return;
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
     bool isShuffle = settings.value("Session/Shuffle", false).toBool();
-    int savedTrackIndex = settings.value("Session/CurrentTrackIndex", -1).toInt();
+
+    int savePosMode = 2; // 0 = off, 1 = track only, 2 = track + time
+    QVariant val = settings.value("Playback/SavePosition", 2);
+    if (val.typeId() == QMetaType::Bool) {
+        savePosMode = val.toBool() ? 2 : 1;
+    } else {
+        bool ok = false;
+        int m = val.toInt(&ok);
+        if (ok) savePosMode = std::clamp(m, 0, 2);
+    }
+
+    std::optional<SourceSession> sessionOpt;
+    if (savePosMode > 0) {
+        sessionOpt = m_dbManager->LoadSourceSession(m_activeSource);
+    }
 
     if (!m_playlist->HasTracks()) {
         std::vector<Track> cachedTracks;
@@ -255,8 +290,39 @@ void ApplicationCore::InitPlaylistAndStart(bool isOnline) {
 
     if (m_playlist->HasTracks()) {
         m_isPlaybackStarted = true;
-        if (savedTrackIndex >= 0 && savedTrackIndex < m_playlist->GetAllTracks().size()) {
-            m_playlist->JumpTo(savedTrackIndex);
+
+        int targetIndex = -1;
+        if (savePosMode > 0 && sessionOpt.has_value()) {
+            const auto& session = sessionOpt.value();
+            const auto& allTracks = m_playlist->GetAllTracks();
+
+            // 1. Поиск по trackId
+            if (!session.trackId.empty()) {
+                for (size_t i = 0; i < allTracks.size(); ++i) {
+                    if (allTracks[i].id == session.trackId) {
+                        targetIndex = static_cast<int>(i);
+                        break;
+                    }
+                }
+            }
+
+            // 2. Фолбэк на trackIndex
+            if (targetIndex < 0 && session.trackIndex >= 0 && session.trackIndex < static_cast<int>(allTracks.size())) {
+                targetIndex = session.trackIndex;
+            }
+
+            // 3. Выставляем сохраненную позицию, если режим 2
+            if (savePosMode == 2 && session.positionSeconds > 0.0) {
+                m_playbackCtrl->SetSavedPosition(session.positionSeconds);
+            } else {
+                m_playbackCtrl->SetSavedPosition(0.0);
+            }
+        } else {
+            m_playbackCtrl->SetSavedPosition(0.0);
+        }
+
+        if (targetIndex >= 0 && targetIndex < static_cast<int>(m_playlist->GetAllTracks().size())) {
+            m_playlist->JumpTo(targetIndex);
         } else {
             m_playlist->OnTrackRequested(m_playlist->GetCurrentTrack());
         }
@@ -326,6 +392,7 @@ void ApplicationCore::HandleLogout(const std::string& service) {
     for (const auto& svc : servicesToClear) {
         m_router->Logout(svc);
         m_dbManager->ClearTracksForSource(svc);
+        m_dbManager->ClearSourceSession(svc);
     }
 
     bool activeAffected = false;
@@ -351,8 +418,8 @@ void ApplicationCore::HandleLogout(const std::string& service) {
     QFile::remove(PathManager::GetPlaylistExportPath("playlist.txt"));
 
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
-    settings.setValue("Session/CurrentTrackIndex", -1);
-    settings.setValue("Session/Position", 0.0);
+    settings.remove("Session/CurrentTrackIndex");
+    settings.remove("Session/Position");
     settings.sync();
 
     m_router->FindNextAuthorizedSource(canonicalSvc, [this, canonicalSvc](const std::string& nextSource) {
