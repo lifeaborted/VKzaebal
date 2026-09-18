@@ -257,6 +257,22 @@ void PlaylistManager::Clear() {
     m_queueIndex = 0;
 }
 
+void PlaylistManager::RemoveTrack(int index) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (index < 0 || index >= static_cast<int>(m_tracks.size())) return;
+
+    m_tracks.erase(m_tracks.begin() + index);
+    if (m_tracks.empty()) {
+        m_playQueue.clear();
+        m_queueIndex = 0;
+    } else {
+        RebuildQueue(true);
+        if (m_queueIndex >= static_cast<int>(m_tracks.size())) {
+            m_queueIndex = static_cast<int>(m_tracks.size()) - 1;
+        }
+    }
+}
+
 void PlaylistManager::RestoreShuffleQueue(const std::vector<std::string>& shuffledIds) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_isShuffle = true;

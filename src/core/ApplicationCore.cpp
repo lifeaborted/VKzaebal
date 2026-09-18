@@ -212,6 +212,10 @@ void ApplicationCore::WireConnections() {
         });
     };
 
+    m_playbackCtrl->SetProviderResolver([this](const std::string& source) {
+        return m_router->GetProvider(source);
+    });
+
     bindProvider(m_router->GetVkClient());
     bindProvider(m_router->GetSpotifyClient());
     bindProvider(m_router->GetSoundCloudClient());
@@ -226,7 +230,17 @@ void ApplicationCore::InitPlaylistAndStart(bool isOnline) {
     int savedTrackIndex = settings.value("Session/CurrentTrackIndex", -1).toInt();
 
     if (!m_playlist->HasTracks()) {
-        std::vector<Track> cachedTracks = m_dbManager->LoadTracks(m_activeSource);
+        std::vector<Track> cachedTracks;
+        if (m_activeSource == "All") {
+            cachedTracks = m_dbManager->LoadAllSourcesTracks();
+        } else if (m_activeSource.rfind("Custom:", 0) == 0) {
+            std::string plName = m_activeSource.substr(7);
+            int plId = -1;
+            cachedTracks = m_dbManager->LoadPlaylistTracksByName(plName, plId);
+        } else {
+            cachedTracks = m_dbManager->LoadTracks(m_activeSource);
+        }
+
         for (const auto& t : cachedTracks) {
             if (isOnline || QFile::exists(PathManager::GetDownloadFilePath(t.GetSafeFilename(), "mp3")) || QFile::exists(PathManager::GetDownloadFilePath(t.GetSafeFilename(), "aac"))) {
                 m_playlist->AddTrack(t);

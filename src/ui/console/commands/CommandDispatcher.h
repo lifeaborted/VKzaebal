@@ -3,6 +3,7 @@
 #include <map>
 #include <functional>
 #include <memory>
+#include "models/Track.h"
 
 class IAudioEngine;
 class PlaylistManager;
@@ -27,6 +28,8 @@ struct CommandContext {
     std::function<void()> onQuit;
     std::function<void(const std::string&)> onLogout;
     std::function<void()> onReloadUi;
+    std::function<void(const Track&)> onSelectPlaylist;
+    std::function<void()> onSelectPlaylistToPlay;
 };
 
 // --- 2. Абстракция паттерна Command ---
@@ -53,6 +56,8 @@ public:
     std::function<void()> OnQuitRequested;
     std::function<void(const std::string&)> OnLogoutRequested;
     std::function<void()> OnReloadUiRequested;
+    std::function<void(const Track&)> OnSelectPlaylistRequested;
+    std::function<void()> OnSelectPlaylistToPlayRequested;
 
     void Dispatch(const std::string& input);
 

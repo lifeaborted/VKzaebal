@@ -18,6 +18,10 @@ void PlaybackController::SetCurrentProvider(IAudioProvider* provider) {
     m_currentProvider = provider;
 }
 
+void PlaybackController::SetProviderResolver(std::function<IAudioProvider*(const std::string& source)> resolver) {
+    m_providerResolver = resolver;
+}
+
 void PlaybackController::SetCrossfadeEnabled(bool enabled) {
     m_crossfadeEnabled = enabled;
 }
@@ -43,12 +47,14 @@ void PlaybackController::HandleTrackNearEnd() {
     Track nextTrack = m_playlist.PeekNextTrack();
     if (nextTrack.id.empty()) return;
 
-    if (!m_currentProvider) return;
-    m_currentProvider->FetchTrackUrl(nextTrack.id, [this, nextTrack](const std::string& freshUrl, bool isNetworkError) {
+    IAudioProvider* provider = (m_providerResolver && !nextTrack.source.empty()) ? m_providerResolver(nextTrack.source) : m_currentProvider;
+    if (!provider) return;
+
+    provider->FetchTrackUrl(nextTrack.id, [this, nextTrack](const std::string& freshUrl, bool isNetworkError) {
         if (!isNetworkError && !freshUrl.empty()) {
             m_cachedNextUrl = freshUrl;
             m_preloadedTrack = nextTrack;
-            Logger::Log(LogLevel::INFO, "PlaybackController: Next track URL pre-fetched successfully.");
+            Logger::Log(LogLevel::INFO, "PlaybackController: Next track URL pre-fetched successfully from " + nextTrack.source);
         }
     });
 }
@@ -150,8 +156,10 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
         }
     };
 
-    if (m_currentProvider) {
-        m_currentProvider->FetchTrackUrl(track.id, executePlay);
+    IAudioProvider* provider = (m_providerResolver && !track.source.empty()) ? m_providerResolver(track.source) : m_currentProvider;
+
+    if (provider) {
+        provider->FetchTrackUrl(track.id, executePlay);
     } else if (!isDownloaded) {
         QMetaObject::invokeMethod(QCoreApplication::instance(), [this]() {
             m_playlist.Next();

@@ -8,10 +8,12 @@
 #include <thread>
 
 // Forward declarations
+#include "models/Track.h"
+#include "services/database/DatabaseManager.h"
+
 class IAudioEngine;
 class PlaylistManager;
 class OAuthManager;
-class DatabaseManager;
 class IAudioProvider;
 class TrackDownloader;
 class LyricsFetcher;
@@ -22,7 +24,10 @@ class QTimer;
 enum class ConsoleState {
     COMMAND_MODE,
     WAITING_TOKEN_URL,
-    SELECT_SOURCE
+    SELECT_SOURCE,
+    SELECT_PLAYLIST,
+    SELECT_PLAYLIST_TO_PLAY,
+    CREATE_PLAYLIST_NAME
 };
 
 class ConsoleController : public QObject {
@@ -76,4 +81,7 @@ private:
 
     QTimer* m_uiTimer;
     std::thread m_inputThread;
+
+    Track m_pendingTrackToAdd;
+    std::vector<PlaylistInfo> m_cachedPlaylists;
 };

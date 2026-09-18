@@ -5,6 +5,12 @@
 #include <vector>
 #include "models/Track.h"
 
+struct PlaylistInfo {
+    int id = 0;
+    std::string name;
+    int trackCount = 0;
+};
+
 class DatabaseManager {
 public:
     DatabaseManager();
@@ -26,6 +32,19 @@ public:
     void ExportQueueToTxt(const std::vector<Track>& queue, const QString& filename, bool isShuffle) const;
     std::vector<Track> LoadTracks(const std::string& source);
     void ClearTracksForSource(const std::string& source);
+
+    // Общий плейлист (все источники)
+    std::vector<Track> LoadAllSourcesTracks();
+
+    // --- Пользовательские плейлисты ---
+    bool CreatePlaylist(const std::string& name);
+    bool DeletePlaylist(const std::string& name);
+    bool DeletePlaylist(int playlistId);
+    std::vector<PlaylistInfo> GetPlaylists();
+    bool AddTrackToPlaylist(int playlistId, const std::string& trackId);
+    bool RemoveTrackFromPlaylist(int playlistId, int position);
+    std::vector<Track> LoadPlaylistTracks(int playlistId);
+    std::vector<Track> LoadPlaylistTracksByName(const std::string& name, int& outId);
 
     // Обновление локального кэша текста
     void UpdateTrackLyrics(const std::string& trackId, const std::string& lyrics);

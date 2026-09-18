@@ -2,6 +2,7 @@
 #include <QObject>
 #include <atomic>
 #include <string>
+#include <functional>
 #include "models/Track.h"
 
 class IAudioEngine;
@@ -15,6 +16,7 @@ public:
     PlaybackController(IAudioEngine& audio, PlaylistManager& playlist, NetworkStreamer& streamer, QObject* parent = nullptr);
 
     void SetCurrentProvider(IAudioProvider* provider);
+    void SetProviderResolver(std::function<IAudioProvider*(const std::string& source)> resolver);
     void SetCrossfadeEnabled(bool enabled);
     void SetSavedPosition(double pos);
     void SetStartPaused(bool paused) { m_startPaused = paused; }
@@ -29,6 +31,7 @@ private:
     PlaylistManager& m_playlist;
     NetworkStreamer& m_streamer;
     IAudioProvider* m_currentProvider = nullptr;
+    std::function<IAudioProvider*(const std::string& source)> m_providerResolver;
 
     bool m_crossfadeEnabled = false;
     double m_savedPosition = 0.0;

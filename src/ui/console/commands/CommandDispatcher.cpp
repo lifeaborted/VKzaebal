@@ -579,7 +579,7 @@ namespace {
         explicit ConfigCommand(const std::string& type) : m_cmdType(type) {}
         void Execute(const std::string& arg, CommandContext& ctx) override {
             if (m_cmdType == "source") {
-                if (ctx.print) ctx.print("\n=== Выбор источника ===\n1 - ВКонтакте\n2 - Spotify\n3 - SoundCloud\n4 - Yandex\n5 - YouTube\n6 - Оффлайн режим\n\nВведите номер: ");
+                if (ctx.print) ctx.print("=== Выбор источника ===\n\n  [1] ВКонтакте\n  [2] Spotify\n  [3] SoundCloud\n  [4] Yandex\n  [5] YouTube\n  [6] Оффлайн режим\n  [7] Общий микс (Все сервисы)\n  [8] Плейлисты\n\n  [0] Отмена\n\nВыберите номер: ");
                 if (ctx.onSourceChange) ctx.onSourceChange("SELECT");
             } else if (m_cmdType == "vis") {
                 if (ctx.onVisualizerToggle) ctx.onVisualizerToggle();
@@ -634,8 +634,199 @@ namespace {
                 if (ctx.onQuit) ctx.onQuit();
             } else if (m_cmdType == "help") {
                 std::string s(50, '*');
-                std::string helpText = "\n" + s + "\n [P] Play/Pause\n [N] Next\n [B] Prev\n [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n [seek <time>] Seek (e.g. seek 1:30 or seek 90)\n [st] Standard Order\n [sh] Shuffle\n [R] Repeat Mode\n [J <num>] Jump to track\n [cv] Current volume\n [rs] Reset Session\n [mode <0/1>] 0 - Standard, 1 - Gapless transition\n [search <text>] Search tracks in playlist\n [ly] Show lyrics for current track\n [logout / logout <service>] Logout and clear service cache\n [source] Select audio source\n [tl] Export tracklist to TXT\n [dl] / [dl <num>] Download track\n [rm] / [rm <num>] Delete downloaded track\n [vis] Toggle visualizer\n [Q] Quit\n" + s + "\n\n> ";
+                std::string helpText = "\n" + s + "\n [P] Play/Pause\n [N] Next\n [B] Prev\n [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n [seek <time>] Seek (e.g. seek 1:30 or seek 90)\n [st] Standard Order\n [sh] Shuffle\n [R] Repeat Mode\n [J <num>] Jump to track\n [cv] Current volume\n [rs] Reset Session\n [mode <0/1>] 0 - Standard, 1 - Gapless transition\n [search <text>] Search tracks in playlist\n [ly] Show lyrics for current track\n [logout / logout <service>] Logout and clear service cache\n [source] Select audio source\n [tl] Export tracklist to TXT\n [dl] / [dl <num>] Download track\n [rm] / [rm <num>] Delete downloaded track\n [pl <name>] Create playlist\n [pls] List playlists\n [pl play] Play playlist\n [pl rm <name>] Delete playlist\n [add] / [add <num>] Add track to playlist\n [drop <num>] Remove track from queue\n [vis] Toggle visualizer\n [Q] Quit\n" + s + "\n\n> ";
                 if (ctx.print) ctx.print(helpText);
+            }
+        }
+    };
+
+    class PlaylistControlCommand : public IConsoleCommand {
+        static std::string Trim(const std::string& str) {
+            size_t start = str.find_first_not_of(" \t\r\n");
+            if (start == std::string::npos) return "";
+            size_t end = str.find_last_not_of(" \t\r\n");
+            return str.substr(start, end - start + 1);
+        }
+
+    public:
+        void Execute(const std::string& rawArg, CommandContext& ctx) override {
+            std::string arg = Trim(rawArg);
+            if (arg.empty() || arg == "help") {
+                std::string help = "\n[Плейлисты] Команды управления плейлистами:\n"
+                                   "  pl <название>       - Создать новый плейлист\n"
+                                   "  pl play             - Выбрать плейлист для воспроизведения\n"
+                                   "  pl play <название>  - Запустить плейлист с указанным названием\n"
+                                   "  pl rm <название>    - Удалить плейлист\n"
+                                   "  pls                 - Список всех плейлистов\n"
+                                   "  add                 - Добавить текущий трек в плейлист\n"
+                                   "  add <номер>         - Добавить трек из очереди в плейлист\n"
+                                   "  drop <номер>        - Удалить трек из текущей очереди\n\n> ";
+                if (ctx.print) ctx.print(help);
+                return;
+            }
+
+            if (arg == "play") {
+                if (ctx.onSelectPlaylistToPlay) {
+                    RunInMainThread([ctx]() { ctx.onSelectPlaylistToPlay(); });
+                }
+                return;
+            }
+
+            if (arg.rfind("play ", 0) == 0) {
+                std::string plName = Trim(arg.substr(5));
+                if (plName.empty()) {
+                    if (ctx.onSelectPlaylistToPlay) {
+                        RunInMainThread([ctx]() { ctx.onSelectPlaylistToPlay(); });
+                    }
+                    return;
+                }
+                auto pls = ctx.dbManager.GetPlaylists();
+                bool found = false;
+                for (const auto& p : pls) {
+                    if (p.name == plName) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (found) {
+                    if (ctx.onSourceChange) {
+                        RunInMainThread([ctx, plName]() { ctx.onSourceChange("Custom:" + plName); });
+                    }
+                } else {
+                    if (ctx.print) ctx.print("[Ошибка] Плейлист '" + plName + "' не найден.\n\n> ");
+                }
+                return;
+            }
+
+            if (arg.rfind("rm ", 0) == 0) {
+                std::string plName = Trim(arg.substr(3));
+                if (plName.empty()) {
+                    if (ctx.print) ctx.print("[Ошибка] Укажите название плейлиста для удаления. Например: pl rm Мой Плейлист\n\n> ");
+                    return;
+                }
+                bool ok = ctx.dbManager.DeletePlaylist(plName);
+                if (ctx.print) {
+                    ctx.print(ok ? ("[Плейлисты] Плейлист '" + plName + "' успешно удален.\n\n> ")
+                                 : ("[Ошибка] Плейлист '" + plName + "' не найден.\n\n> "));
+                }
+                return;
+            }
+
+            // Создание плейлиста
+            bool ok = ctx.dbManager.CreatePlaylist(arg);
+            if (ctx.print) {
+                ctx.print(ok ? ("[Плейлисты] Плейлист '" + arg + "' успешно создан!\n\n> ")
+                             : ("[Ошибка] Плейлист с именем '" + arg + "' уже существует или ошибка создания.\n\n> "));
+            }
+        }
+    };
+
+    class PlaylistListCommand : public IConsoleCommand {
+    public:
+        void Execute(const std::string&, CommandContext& ctx) override {
+            auto playlists = ctx.dbManager.GetPlaylists();
+            if (playlists.empty()) {
+                if (ctx.print) ctx.print("[Плейлисты] Нет сохраненных плейлистов. Создай через: pl <название>\n\n> ");
+                return;
+            }
+
+            std::string s(50, '=');
+            std::string res = "\n" + s + "\n=== Ваши плейлисты ===\n";
+            for (size_t i = 0; i < playlists.size(); ++i) {
+                res += " [" + std::to_string(i + 1) + "] " + playlists[i].name
+                     + " (" + std::to_string(playlists[i].trackCount) + " треков)\n";
+            }
+            res += s + "\nИспользуй 'pl play' для запуска или 'pl <название>' для создания нового.\n\n> ";
+            if (ctx.print) ctx.print(res);
+        }
+    };
+
+    class AddTrackToPlaylistCommand : public IConsoleCommand {
+    public:
+        void Execute(const std::string& arg, CommandContext& ctx) override {
+            Track targetTrack;
+            if (arg.empty()) {
+                targetTrack = ctx.playlist.GetCurrentTrack();
+                if (targetTrack.id.empty()) {
+                    if (ctx.print) ctx.print("[Ошибка] Сейчас никакой трек не играет.\n\n> ");
+                    return;
+                }
+            } else {
+                try {
+                    int num = std::stoi(arg);
+                    int idx = num - 1;
+                    std::vector<Track> queue = ctx.playlist.GetQueueTracks();
+                    if (idx >= 0 && idx < static_cast<int>(queue.size())) {
+                        targetTrack = queue[idx];
+                    } else {
+                        if (ctx.print) ctx.print("[Ошибка] Неверный номер трека.\n\n> ");
+                        return;
+                    }
+                } catch (...) {
+                    if (ctx.print) ctx.print("[Ошибка] Неверный формат. Используй: add или add <номер>\n\n> ");
+                    return;
+                }
+            }
+
+            if (!targetTrack.id.empty() && ctx.onSelectPlaylist) {
+                RunInMainThread([ctx, targetTrack]() {
+                    ctx.onSelectPlaylist(targetTrack);
+                });
+            }
+        }
+    };
+
+    class DropTrackFromPlaylistCommand : public IConsoleCommand {
+    public:
+        void Execute(const std::string& arg, CommandContext& ctx) override {
+            if (arg.empty()) {
+                if (ctx.print) ctx.print("[Ошибка] Используй: drop <номер трека в очереди>\n\n> ");
+                return;
+            }
+
+            try {
+                int num = std::stoi(arg);
+                int idx = num - 1;
+                std::vector<Track> queue = ctx.playlist.GetQueueTracks();
+                if (idx < 0 || idx >= static_cast<int>(queue.size())) {
+                    if (ctx.print) ctx.print("[Ошибка] Неверный номер трека.\n\n> ");
+                    return;
+                }
+
+                Track droppedTrack = queue[idx];
+
+                RunInMainThread([ctx, droppedTrack, num]() {
+                    auto allTracks = ctx.playlist.GetAllTracks();
+                    int absIndex = -1;
+                    for (size_t i = 0; i < allTracks.size(); ++i) {
+                        if (allTracks[i].id == droppedTrack.id) {
+                            absIndex = static_cast<int>(i);
+                            break;
+                        }
+                    }
+
+                    // Если сейчас играет кастомный плейлист, удаляем и из БД
+                    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+                    std::string activeSource = settings.value("General/source", "").toString().toStdString();
+                    if (activeSource.rfind("Custom:", 0) == 0 && absIndex >= 0) {
+                        std::string plName = activeSource.substr(7);
+                        int plId = -1;
+                        ctx.dbManager.LoadPlaylistTracksByName(plName, plId);
+                        if (plId > 0) {
+                            ctx.dbManager.RemoveTrackFromPlaylist(plId, absIndex);
+                        }
+                    }
+
+                    if (absIndex >= 0) {
+                        ctx.playlist.RemoveTrack(absIndex);
+                    }
+
+                    if (ctx.print) {
+                        ctx.print("[Очередь] Трек #" + std::to_string(num) + " (" + droppedTrack.artist + " - " + droppedTrack.title + ") удален.\n\n> ");
+                    }
+                });
+            } catch (...) {
+                if (ctx.print) ctx.print("[Ошибка] Неверный формат. Используй: drop <номер трека>\n\n> ");
             }
         }
     };
@@ -655,26 +846,25 @@ void CommandDispatcher::Print(const std::string& msg) { if (m_printCb) m_printCb
 void CommandDispatcher::Dispatch(const std::string& input) {
     if (input.empty()) return;
 
-    std::string lowerInput = input;
-    for (char& c : lowerInput) c = std::tolower(c);
-
     std::string cmd;
     std::string arg;
-    size_t spacePos = lowerInput.find(' ');
+    size_t spacePos = input.find(' ');
 
     if (spacePos != std::string::npos) {
-        cmd = lowerInput.substr(0, spacePos);
-        arg = lowerInput.substr(spacePos + 1);
+        cmd = input.substr(0, spacePos);
+        arg = input.substr(spacePos + 1);
     } else {
-        cmd = lowerInput;
+        cmd = input;
     }
+    for (char& c : cmd) c = std::tolower(c);
 
     auto it = m_commands.find(cmd);
     if (it != m_commands.end()) {
         CommandContext ctx {
             m_audio, m_playlist, m_dbManager, m_downloader, m_lyricsFetcher, m_currentProvider,
             m_printCb, OnSourceChangeRequested, OnGaplessModeChanged, OnVisualizerToggled,
-            OnQuitRequested, OnLogoutRequested, OnReloadUiRequested
+            OnQuitRequested, OnLogoutRequested, OnReloadUiRequested,
+            OnSelectPlaylistRequested, OnSelectPlaylistToPlayRequested
         };
         it->second->Execute(arg, ctx);
     } else {
@@ -723,6 +913,11 @@ void CommandDispatcher::RegisterCommands() {
     m_commands["ly"] = std::make_unique<LyricsCommand>();
     m_commands["lyrics"] = std::make_unique<LyricsCommand>();
     m_commands["shazam"] = std::make_unique<ShazamCommand>();
+
+    m_commands["pl"] = std::make_unique<PlaylistControlCommand>();
+    m_commands["pls"] = std::make_unique<PlaylistListCommand>();
+    m_commands["add"] = std::make_unique<AddTrackToPlaylistCommand>();
+    m_commands["drop"] = std::make_unique<DropTrackFromPlaylistCommand>();
 
     m_commands["source"] = std::make_unique<ConfigCommand>("source");
     m_commands["vis"] = std::make_unique<ConfigCommand>("vis");

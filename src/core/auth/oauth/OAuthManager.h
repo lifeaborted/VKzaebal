@@ -2,6 +2,7 @@
 #include <QObject>
 #include <QString>
 #include <string>
+#include <vector>
 #include <functional>
 
 class QSettings;
@@ -12,6 +13,7 @@ public:
     ~OAuthManager();
 
     void GetSavedToken(const QString& service, std::function<void(const std::string&)> callback) const;
+    void GetSavedTokens(const QString& service, std::function<void(const std::vector<std::string>&)> callback) const;
     void SaveToken(const std::string& token, const QString& service = "VK") const;
     void ClearSavedToken(const QString& service = "VK") const;
 

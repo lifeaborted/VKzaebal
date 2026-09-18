@@ -173,35 +173,51 @@ void SourceRouter::OnSpotifyAuthError(const std::string& err) {
 }
 
 void SourceRouter::OnVkTokenExpired() {
-    Logger::Log(LogLevel::WARNING, "SourceRouter: Token VK expired.");
-    std::cout << "\n[ВНИМАНИЕ] Токен ВК устарел.\n";
-    m_authManager->ClearSavedToken("VK");
-    m_vkClient->SetAccessToken("");
-    StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
+    Logger::Log(LogLevel::WARNING, "SourceRouter: Token VK expired or rejected (possibly IP changed). Testing token pool...");
+    m_authManager->GetSavedTokens("VK", [this](const std::vector<std::string>& savedTokens) {
+        if (savedTokens.empty()) {
+            m_vkClient->SetAccessToken("");
+            StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
+        } else {
+            TryValidateVkTokens(savedTokens, 0);
+        }
+    });
 }
 
 void SourceRouter::StartVkService() {
-    m_authManager->GetSavedToken("VK", [this](const std::string& savedToken) {
-        if (savedToken.empty()) {
+    m_authManager->GetSavedTokens("VK", [this](const std::vector<std::string>& savedTokens) {
+        if (savedTokens.empty()) {
             std::cout << "\n[VK] Токен не найден. Открываем окно авторизации...\n";
             std::cout.flush();
             StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
         } else {
-            std::cout << "\n[VK] Проверка сохраненного токена...\n";
+            std::cout << "\n[VK] Проверка сохраненных токенов (" << savedTokens.size() << " в пуле)...\n";
             std::cout.flush();
-            m_vkClient->SetAccessToken(savedToken);
+            TryValidateVkTokens(savedTokens, 0);
+        }
+    });
+}
 
-            m_vkClient->ValidateToken([this](bool isValid) {
-                if (isValid) {
-                    emit AuthUiStateChanged(false);
-                    emit ProviderReady(true);
-                    m_vkClient->FetchAllUserAudio(0, 200);
-                } else {
-                    m_authManager->ClearSavedToken("VK");
-                    m_vkClient->SetAccessToken("");
-                    StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
-                }
-            });
+void SourceRouter::TryValidateVkTokens(const std::vector<std::string>& tokens, size_t index) {
+    if (index >= tokens.size()) {
+        std::cout << "\n[VK] Ни один токен из пула не подошел под текущий IP. Получение токена...\n";
+        std::cout.flush();
+        m_vkClient->SetAccessToken("");
+        StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
+        return;
+    }
+
+    const std::string& currentToken = tokens[index];
+    m_vkClient->SetAccessToken(currentToken);
+    m_vkClient->ValidateToken([this, tokens, index, currentToken](bool isValid) {
+        if (isValid) {
+            Logger::Log(LogLevel::INFO, "SourceRouter: VK token from pool (index " + std::to_string(index) + ") is valid for current IP.");
+            m_authManager->SaveToken(currentToken, "VK");
+            emit AuthUiStateChanged(false);
+            emit ProviderReady(true);
+            m_vkClient->FetchAllUserAudio(0, 200);
+        } else {
+            TryValidateVkTokens(tokens, index + 1);
         }
     });
 }
@@ -347,10 +363,10 @@ void SourceRouter::SwitchSource(const std::string& newSource) {
         m_currentProvider = m_soundCloudClient.get();
     } else if (newSource == "Yandex") {
         m_currentProvider = m_yandexClient.get();
-    } else if (newSource == "Offline") {
-        m_currentProvider = nullptr;
     } else if (newSource == "YouTube") {
         m_currentProvider = m_youtubeClient.get();
+    } else if (newSource == "Offline" || newSource == "All" || newSource.rfind("Custom:", 0) == 0) {
+        m_currentProvider = nullptr;
     }
 
     emit SourceChanged(newSource);
@@ -368,7 +384,19 @@ void SourceRouter::SwitchSource(const std::string& newSource) {
     } else if (newSource == "Offline") {
         emit AuthUiStateChanged(false);
         emit ProviderReady(false);
+    } else if (newSource == "All" || newSource.rfind("Custom:", 0) == 0) {
+        emit AuthUiStateChanged(false);
+        emit ProviderReady(true);
     }
+}
+
+IAudioProvider* SourceRouter::GetProvider(const std::string& sourceName) const {
+    if (sourceName == "VK" || sourceName == "vk") return m_vkClient.get();
+    if (sourceName == "Spotify" || sourceName == "spotify") return m_spotifyClient.get();
+    if (sourceName == "SoundCloud" || sourceName == "soundcloud" || sourceName == "sc") return m_soundCloudClient.get();
+    if (sourceName == "Yandex" || sourceName == "yandex") return m_yandexClient.get();
+    if (sourceName == "YouTube" || sourceName == "youtube" || sourceName == "yt") return m_youtubeClient.get();
+    return nullptr;
 }
 
 void SourceRouter::Logout(const std::string& service) {

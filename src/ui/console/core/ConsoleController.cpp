@@ -71,6 +71,45 @@ ConsoleController::ConsoleController(
         emit QuitRequested();
     };
 
+    m_dispatcher->OnSelectPlaylistRequested = [this](const Track& trackToAdd) {
+        m_pendingTrackToAdd = trackToAdd;
+        m_cachedPlaylists = m_dbManager.GetPlaylists();
+
+        std::string menu = "=== Добавить в плейлист: " + trackToAdd.artist + " - " + trackToAdd.title;
+        if (!trackToAdd.source.empty()) menu += " [" + trackToAdd.source + "]";
+        menu += " ===\n";
+
+        if (m_cachedPlaylists.empty()) {
+            menu += "\n  (Пока нет созданных плейлистов)\n";
+        } else {
+            menu += "\n";
+            for (size_t i = 0; i < m_cachedPlaylists.size(); ++i) {
+                menu += "  [" + std::to_string(i + 1) + "] " + m_cachedPlaylists[i].name
+                      + " (" + std::to_string(m_cachedPlaylists[i].trackCount) + " треков)\n";
+            }
+        }
+        menu += "\n  [+] Создать новый плейлист\n  [0] Отмена\n\nВыберите номер: ";
+        m_renderer->SetOverlay(menu);
+        m_currentState = ConsoleState::SELECT_PLAYLIST;
+    };
+
+    m_dispatcher->OnSelectPlaylistToPlayRequested = [this]() {
+        m_cachedPlaylists = m_dbManager.GetPlaylists();
+        if (m_cachedPlaylists.empty()) {
+            m_renderer->SetStatusMessage("[Плейлисты] Нет сохраненных плейлистов. Создай через: pl <название>");
+            return;
+        }
+
+        std::string menu = "=== Выберите плейлист для воспроизведения ===\n\n";
+        for (size_t i = 0; i < m_cachedPlaylists.size(); ++i) {
+            menu += "  [" + std::to_string(i + 1) + "] " + m_cachedPlaylists[i].name
+                  + " (" + std::to_string(m_cachedPlaylists[i].trackCount) + " треков)\n";
+        }
+        menu += "\n  [0] Отмена\n\nВыберите номер: ";
+        m_renderer->SetOverlay(menu);
+        m_currentState = ConsoleState::SELECT_PLAYLIST_TO_PLAY;
+    };
+
     // Подписка на ошибки логгера для вывода в строку состояния
     Logger::SetLogCallback([this](LogLevel level, const std::string& message) {
         if (level == LogLevel::ERROR) {
@@ -174,24 +213,152 @@ void ConsoleController::InputLoop() {
             }
 
             if (m_currentState == ConsoleState::SELECT_SOURCE) {
-                        size_t start = rawInput.find_first_not_of(" \t\r\n");
-                        if (start == std::string::npos) { std::cout << "> "; std::cout.flush(); return; }
+                size_t start = rawInput.find_first_not_of(" \t\r\n");
+                if (start == std::string::npos) return;
 
-                        std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
+                std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
 
-                        m_renderer->SetOverlay("");
-                        m_renderer->RequestFullRedraw();
+                m_renderer->SetOverlay("");
+                m_renderer->RequestFullRedraw();
 
-                        if (input == "1") emit SourceChanged("VK");
-                        else if (input == "2") emit SourceChanged("Spotify");
-                        else if (input == "3") emit SourceChanged("SoundCloud");
-                        else if (input == "4") emit SourceChanged("Yandex");
-                        else if (input == "5") emit SourceChanged("YouTube");
-                        else if (input == "6") emit SourceChanged("Offline");
+                if (input == "0" || input == "q" || input == "Q") {
+                    m_renderer->SetStatusMessage("[Источник] Выбор отменен.");
+                    m_currentState = ConsoleState::COMMAND_MODE;
+                    return;
+                }
 
+                if (input == "1") emit SourceChanged("VK");
+                else if (input == "2") emit SourceChanged("Spotify");
+                else if (input == "3") emit SourceChanged("SoundCloud");
+                else if (input == "4") emit SourceChanged("Yandex");
+                else if (input == "5") emit SourceChanged("YouTube");
+                else if (input == "6") emit SourceChanged("Offline");
+                else if (input == "7") emit SourceChanged("All");
+                else if (input == "8") {
+                    m_cachedPlaylists = m_dbManager.GetPlaylists();
+                    if (m_cachedPlaylists.empty()) {
+                        m_renderer->SetStatusMessage("[Плейлисты] Нет сохраненных плейлистов. Создай через: pl <название>");
                         m_currentState = ConsoleState::COMMAND_MODE;
                         return;
                     }
+
+                    std::string menu = "=== Выберите плейлист для воспроизведения ===\n\n";
+                    for (size_t i = 0; i < m_cachedPlaylists.size(); ++i) {
+                        menu += "  [" + std::to_string(i + 1) + "] " + m_cachedPlaylists[i].name
+                              + " (" + std::to_string(m_cachedPlaylists[i].trackCount) + " треков)\n";
+                    }
+                    menu += "\n  [0] Отмена\n\nВыберите номер: ";
+                    m_renderer->SetOverlay(menu);
+                    m_currentState = ConsoleState::SELECT_PLAYLIST_TO_PLAY;
+                    return;
+                }
+                else {
+                    m_renderer->SetStatusMessage("[Ошибка] Неверный номер источника.");
+                }
+
+                m_currentState = ConsoleState::COMMAND_MODE;
+                return;
+            }
+
+            if (m_currentState == ConsoleState::SELECT_PLAYLIST) {
+                size_t start = rawInput.find_first_not_of(" \t\r\n");
+                if (start == std::string::npos) return;
+
+                std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
+
+                if (input == "0" || input == "q" || input == "Q") {
+                    m_renderer->SetOverlay("");
+                    m_renderer->RequestFullRedraw();
+                    m_renderer->SetStatusMessage("[Плейлисты] Добавление отменено.");
+                    m_currentState = ConsoleState::COMMAND_MODE;
+                    return;
+                }
+
+                if (input == "+") {
+                    m_currentState = ConsoleState::CREATE_PLAYLIST_NAME;
+                    std::string prompt = "=== Создание нового плейлиста ===\n\nВведите название нового плейлиста:\n(или введите 0 для отмены)\n";
+                    m_renderer->SetOverlay(prompt);
+                    return;
+                }
+
+                m_renderer->SetOverlay("");
+                m_renderer->RequestFullRedraw();
+
+                try {
+                    int idx = std::stoi(input) - 1;
+                    if (idx >= 0 && idx < static_cast<int>(m_cachedPlaylists.size())) {
+                        const auto& pl = m_cachedPlaylists[idx];
+                        m_dbManager.AddTrackToPlaylist(pl.id, m_pendingTrackToAdd.id);
+                        m_renderer->SetStatusMessage("[Плейлисты] Трек добавлен в '" + pl.name + "'");
+                    } else {
+                        m_renderer->SetStatusMessage("[Ошибка] Неверный номер плейлиста.");
+                    }
+                } catch (...) {
+                    m_renderer->SetStatusMessage("[Ошибка] Неверный ввод.");
+                }
+
+                m_currentState = ConsoleState::COMMAND_MODE;
+                return;
+            }
+
+            if (m_currentState == ConsoleState::SELECT_PLAYLIST_TO_PLAY) {
+                size_t start = rawInput.find_first_not_of(" \t\r\n");
+                if (start == std::string::npos) return;
+
+                std::string input = rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1);
+                m_renderer->SetOverlay("");
+                m_renderer->RequestFullRedraw();
+
+                if (input == "0" || input == "q" || input == "Q") {
+                    m_renderer->SetStatusMessage("[Плейлисты] Выбор отменен.");
+                    m_currentState = ConsoleState::COMMAND_MODE;
+                    return;
+                }
+
+                try {
+                    int idx = std::stoi(input) - 1;
+                    if (idx >= 0 && idx < static_cast<int>(m_cachedPlaylists.size())) {
+                        const auto& pl = m_cachedPlaylists[idx];
+                        emit SourceChanged("Custom:" + pl.name);
+                        m_renderer->SetStatusMessage("[Плейлисты] Воспроизведение плейлиста '" + pl.name + "'");
+                    } else {
+                        m_renderer->SetStatusMessage("[Ошибка] Неверный номер плейлиста.");
+                    }
+                } catch (...) {
+                    m_renderer->SetStatusMessage("[Ошибка] Неверный ввод.");
+                }
+
+                m_currentState = ConsoleState::COMMAND_MODE;
+                return;
+            }
+
+            if (m_currentState == ConsoleState::CREATE_PLAYLIST_NAME) {
+                size_t start = rawInput.find_first_not_of(" \t\r\n");
+                std::string plName = (start != std::string::npos) ? rawInput.substr(start, rawInput.find_last_not_of(" \t\r\n") - start + 1) : "";
+
+                m_renderer->SetOverlay("");
+                m_renderer->RequestFullRedraw();
+
+                if (!plName.empty() && plName != "0") {
+                    if (m_dbManager.CreatePlaylist(plName)) {
+                        auto pls = m_dbManager.GetPlaylists();
+                        for (const auto& p : pls) {
+                            if (p.name == plName) {
+                                m_dbManager.AddTrackToPlaylist(p.id, m_pendingTrackToAdd.id);
+                                break;
+                            }
+                        }
+                        m_renderer->SetStatusMessage("[Плейлисты] Создан плейлист '" + plName + "' и добавлен трек.");
+                    } else {
+                        m_renderer->SetStatusMessage("[Ошибка] Не удалось создать плейлист '" + plName + "'.");
+                    }
+                } else {
+                    m_renderer->SetStatusMessage("[Плейлисты] Создание отменено.");
+                }
+
+                m_currentState = ConsoleState::COMMAND_MODE;
+                return;
+            }
 
             if (m_currentState == ConsoleState::COMMAND_MODE) {
                 m_renderer->RequestFullRedraw();
@@ -213,7 +380,7 @@ void ConsoleController::OnUiTick() {
         return;
     }
 
-        m_renderer->Render();
+    m_renderer->Render();
 
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
     int fps = m_renderer->GetFramerate();

@@ -130,6 +130,25 @@ static void GetConsoleSize(int& width, int& height) {
     width = 80; height = 24;
 }
 
+static std::string GetSourceBadge(const std::string& source) {
+    if (source == "VK") {
+        return "\033[38;2;70;130;255m[VK]\033[0m ";
+    } else if (source == "Spotify") {
+        return "\033[38;2;30;215;96m[SP]\033[0m ";
+    } else if (source == "SoundCloud") {
+        return "\033[38;2;255;85;0m[SC]\033[0m ";
+    } else if (source == "Yandex") {
+        return "\033[38;2;255;200;0m[YA]\033[0m ";
+    } else if (source == "YouTube") {
+        return "\033[38;2;255;50;50m[YT]\033[0m ";
+    } else if (source == "Offline") {
+        return "\033[38;2;160;160;160m[OFF]\033[0m ";
+    } else if (!source.empty()) {
+        return "\033[38;2;180;180;180m[" + source + "]\033[0m ";
+    }
+    return "";
+}
+
 // --- ОСНОВНОЙ КЛАСС ---
 
 UltimateRenderer::UltimateRenderer(IAudioEngine& audio, PlaylistManager& playlist)
@@ -277,9 +296,11 @@ void UltimateRenderer::Render() {
     if (updateUi) {
         Track currentTrack = m_playlist.GetCurrentTrack();
 
+        std::string badge = GetSourceBadge(currentTrack.source);
+        int badgeVisibleLen = currentTrack.source.empty() ? 0 : 5;
         std::string trackTitle = currentTrack.artist + " - " + currentTrack.title;
         if (trackTitle == " - ") trackTitle = "No Track Loaded";
-        m_cTrackTitle = safeTruncate(trackTitle, consoleWidth - 20);
+        m_cTrackTitle = badge + "\033[38;2;250;250;250m\033[1m" + safeTruncate(trackTitle, std::max(10, consoleWidth - 20 - badgeVisibleLen)) + "\033[0m";
 
         double currentSec = m_audio.GetPositionSeconds();
         double totalSec = m_audio.GetLengthSeconds();
@@ -338,13 +359,7 @@ void UltimateRenderer::Render() {
         m_cVolumeEq = volStr;
 
         m_cPlaylistLines.clear();
-        static std::vector<Track> cachedQueue;
-        static std::string lastTrackId = "";
-
-        if (cachedQueue.empty() || currentTrack.id != lastTrackId) {
-            cachedQueue = m_playlist.GetQueueTracks();
-            lastTrackId = currentTrack.id;
-        }
+        std::vector<Track> cachedQueue = m_playlist.GetQueueTracks();
 
         int trackIndex = 0;
         for (size_t i = 0; i < cachedQueue.size(); ++i) {
@@ -367,11 +382,13 @@ void UltimateRenderer::Render() {
         }
 
         for (int i = startIdx; i <= endIdx; ++i) {
-            std::string tName = safeTruncate(cachedQueue[i].artist + " - " + cachedQueue[i].title, consoleWidth - 15);
+            std::string itemBadge = GetSourceBadge(cachedQueue[i].source);
+            int itemBadgeLen = cachedQueue[i].source.empty() ? 0 : 5;
+            std::string tName = safeTruncate(cachedQueue[i].artist + " - " + cachedQueue[i].title, std::max(10, consoleWidth - 15 - itemBadgeLen));
             if (i == trackIndex) {
-                m_cPlaylistLines.push_back("\033[38;2;80;255;150m▶ " + std::to_string(i + 1) + ". " + tName + "\033[0m");
+                m_cPlaylistLines.push_back("\033[38;2;80;255;150m▶ " + std::to_string(i + 1) + ". \033[0m" + itemBadge + "\033[38;2;80;255;150m" + tName + "\033[0m");
             } else {
-                m_cPlaylistLines.push_back("  \033[38;2;150;150;150m" + std::to_string(i + 1) + ". " + tName + "\033[0m");
+                m_cPlaylistLines.push_back("  \033[38;2;150;150;150m" + std::to_string(i + 1) + ". \033[0m" + itemBadge + "\033[38;2;150;150;150m" + tName + "\033[0m");
             }
         }
 
@@ -440,7 +457,7 @@ void UltimateRenderer::Render() {
         }
     } else {
         addLine("\033[38;2;80;255;150m \033[0m");
-        addLine("\033[38;2;250;250;250m\033[1m" + m_cTrackTitle + "\033[0m");
+        addLine(m_cTrackTitle);
 
         addLine("");
         addLine(m_cTimeStatus);

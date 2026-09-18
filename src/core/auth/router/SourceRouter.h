@@ -26,6 +26,7 @@ public:
 
     void SwitchSource(const std::string& newSource);
     IAudioProvider* GetCurrentProvider() const { return m_currentProvider; }
+    IAudioProvider* GetProvider(const std::string& sourceName) const;
 
     VkClient* GetVkClient() const { return m_vkClient.get(); }
     SpotifyClient* GetSpotifyClient() const { return m_spotifyClient.get(); }
@@ -60,6 +61,7 @@ private:
     void StartYouTubeService();
 
     void StartAuthFlow(const QString& service, const QString& authUrl);
+    void TryValidateVkTokens(const std::vector<std::string>& tokens, size_t index);
 
     std::unique_ptr<VkClient> m_vkClient;
     std::unique_ptr<SpotifyClient> m_spotifyClient;

@@ -16,4 +16,5 @@ protected:
 
 private:
     std::string m_apiVersion = "5.131";
+    bool m_isValidatingToken = false;
 };

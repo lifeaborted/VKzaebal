@@ -24,7 +24,7 @@ bool VkClient::HandleApiError(const QJsonDocument& json, int /*httpStatusCode*/)
 
         Logger::Log(LogLevel::ERROR, "VK API Error [" + std::to_string(errCode) + "]: " + errMsg);
 
-        if (errCode == 5) {
+        if (errCode == 5 && !m_isValidatingToken) {
             emit TokenExpired();
         }
         return true;
@@ -35,6 +35,8 @@ bool VkClient::HandleApiError(const QJsonDocument& json, int /*httpStatusCode*/)
 void VkClient::ValidateToken(std::function<void(bool)> callback) {
     if (m_accessToken.empty()) { callback(false); return; }
 
+    m_isValidatingToken = true;
+
     QUrl url("https://api.vk.com/method/users.get");
     QUrlQuery query;
     query.addQueryItem("v", QString::fromStdString(m_apiVersion));
@@ -44,10 +46,12 @@ void VkClient::ValidateToken(std::function<void(bool)> callback) {
     QNetworkRequest request(url);
     request.setRawHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
-    SendJsonRequest(request, [callback](const QJsonDocument&) {
+    SendJsonRequest(request, [this, callback](const QJsonDocument&) {
+        m_isValidatingToken = false;
         Logger::Log(LogLevel::INFO, "api: Token is valid.");
         callback(true);
-    }, [callback](const std::string&) {
+    }, [this, callback](const std::string&) {
+        m_isValidatingToken = false;
         callback(false);
     });
 }
