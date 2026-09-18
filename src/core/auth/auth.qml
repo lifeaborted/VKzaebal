@@ -54,7 +54,18 @@ Window {
             else if (cppAuthUrl.indexOf("oauth.vk.com") !== -1) {
                 var vkCode = `
                     (function() {
-                        var btn = document.querySelector('button[type="submit"]') || document.querySelector('.oauth_button .flat_button');
+                        // Если на странице есть поля логина или пароля, пользователь должен ввести их сам
+                        var hasLoginInputs = document.querySelector('input[type="password"]') ||
+                                             document.querySelector('input[name="login"]') ||
+                                             document.querySelector('input[type="tel"]');
+                        if (hasLoginInputs) {
+                            return false;
+                        }
+
+                        // Автоматически нажимаем только кнопку подтверждения прав ("Разрешить")
+                        var btn = document.querySelector('.oauth_button .flat_button') ||
+                                  document.querySelector('button.flat_button[type="submit"]') ||
+                                  document.querySelector('.oauth_button');
                         if (btn && !btn.disabled) {
                             btn.click();
                             return true;
@@ -64,7 +75,7 @@ Window {
                 `;
                 webView.runJavaScript(vkCode, function(result) {
                     if (result === true) {
-                        console.log("[QML] VK: Authorization.");
+                        console.log("[QML] VK: Authorization consent approved.");
                     }
                 });
             }

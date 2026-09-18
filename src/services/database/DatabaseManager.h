@@ -25,6 +25,7 @@ public:
     // Вывод в TXT прямо из БД
     void ExportQueueToTxt(const std::vector<Track>& queue, const QString& filename, bool isShuffle) const;
     std::vector<Track> LoadTracks(const std::string& source);
+    void ClearTracksForSource(const std::string& source);
 
     // Обновление локального кэша текста
     void UpdateTrackLyrics(const std::string& trackId, const std::string& lyrics);

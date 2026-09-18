@@ -13,6 +13,8 @@
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QSqlError>
+#include <QCoreApplication>
+#include <QDateTime>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -186,5 +188,116 @@ std::string WebViewCookieReader::GetFullYouTubeCookies() {
     return fullCookie;
 #else
     return "";
+#endif
+}
+
+bool WebViewCookieReader::ClearServiceCache(const std::string& service) {
+#ifdef _WIN32
+    QString localAppData = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    QString appData = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+
+    QStringList possibleDirs = {
+        appData + "/WebView2/EBWebView",
+        localAppData + "/VKAudioTeam/VKAudioPlayer/WebView2/EBWebView",
+        localAppData + "/VKAudioPlayer/WebView2/EBWebView",
+        QCoreApplication::applicationDirPath() + "/VKAudioPlayer.exe.WebView2/EBWebView",
+        QDir::currentPath() + "/VKAudioPlayer.exe.WebView2/EBWebView"
+    };
+    possibleDirs.removeDuplicates();
+
+    QString svc = QString::fromStdString(service).trimmed().toLower();
+    QString whereClause;
+
+    if (svc == "vk") {
+        whereClause = "host_key LIKE '%vk.com%' OR host_key LIKE '%vk.ru%' OR host_key LIKE '%userapi.com%' OR host_key LIKE '%mail.ru%'";
+    } else if (svc == "spotify") {
+        whereClause = "host_key LIKE '%spotify.com%'";
+    } else if (svc == "sc" || svc == "soundcloud") {
+        whereClause = "host_key LIKE '%soundcloud.com%'";
+    } else if (svc == "yandex") {
+        whereClause = "host_key LIKE '%yandex%' OR host_key LIKE '%ya.ru%'";
+    } else if (svc == "youtube" || svc == "yt") {
+        whereClause = "host_key LIKE '%youtube.com%' OR host_key LIKE '%google.com%' OR host_key LIKE '%google.ru%' OR host_key LIKE '%googlevideo.com%'";
+    } else if (svc == "all") {
+        whereClause = "";
+    } else {
+        Logger::Log(LogLevel::WARNING, "WebViewCookieReader: Unknown service for cookie clearing: " + service);
+        return false;
+    }
+
+    bool anyFound = false;
+    for (int i = 0; i < possibleDirs.size(); ++i) {
+        const QString& baseDir = possibleDirs[i];
+        if (!QDir(baseDir).exists()) continue;
+
+        anyFound = true;
+        QString dbPath = baseDir + "/Default/Network/Cookies";
+        if (QFile::exists(dbPath)) {
+            QString connName = QString("webview_cookie_cleaner_%1_%2").arg(i).arg(QDateTime::currentMSecsSinceEpoch());
+            {
+                QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connName);
+                db.setDatabaseName(dbPath);
+                if (db.open()) {
+                    QSqlQuery q(db);
+                    QString sql = "DELETE FROM cookies";
+                    if (!whereClause.isEmpty()) {
+                        sql += " WHERE " + whereClause;
+                    }
+                    if (q.exec(sql)) {
+                        Logger::Log(LogLevel::INFO, "WebViewCookieReader: Cleared cookies for " + service + " from " + dbPath.toStdString());
+                    } else {
+                        Logger::Log(LogLevel::ERROR, "WebViewCookieReader: Failed to delete cookies: " + q.lastError().text().toStdString());
+                    }
+                    q.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+                    db.close();
+                } else {
+                    Logger::Log(LogLevel::ERROR, "WebViewCookieReader: Failed to open Cookies DB for cleaning: " + db.lastError().text().toStdString());
+                }
+            }
+            QSqlDatabase::removeDatabase(connName);
+        }
+
+        // Удаление специфичных папок IndexedDB
+        QDir indexedDbDir(baseDir + "/Default/IndexedDB");
+        if (indexedDbDir.exists()) {
+            QStringList subDirs = indexedDbDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+            for (const QString& subDir : subDirs) {
+                bool shouldDelete = false;
+                QString lowerName = subDir.toLower();
+                if (svc == "all") {
+                    shouldDelete = true;
+                } else if (svc == "vk" && (lowerName.contains("vk.com") || lowerName.contains("vk.ru"))) {
+                    shouldDelete = true;
+                } else if (svc == "spotify" && lowerName.contains("spotify.com")) {
+                    shouldDelete = true;
+                } else if ((svc == "sc" || svc == "soundcloud") && lowerName.contains("soundcloud.com")) {
+                    shouldDelete = true;
+                } else if (svc == "yandex" && lowerName.contains("yandex")) {
+                    shouldDelete = true;
+                } else if ((svc == "youtube" || svc == "yt") && (lowerName.contains("youtube") || lowerName.contains("google"))) {
+                    shouldDelete = true;
+                }
+
+                if (shouldDelete) {
+                    QDir(indexedDbDir.filePath(subDir)).removeRecursively();
+                    Logger::Log(LogLevel::INFO, "WebViewCookieReader: Removed IndexedDB directory: " + subDir.toStdString());
+                }
+            }
+        }
+
+        // Очищаем Cache и Code Cache
+        QDir(baseDir + "/Default/Cache").removeRecursively();
+        QDir(baseDir + "/Default/Code Cache").removeRecursively();
+
+        if (svc == "all" || svc == "sc" || svc == "soundcloud") {
+            QDir(baseDir + "/Default/Local Storage").removeRecursively();
+            QDir(baseDir + "/Default/Session Storage").removeRecursively();
+            QDir(baseDir + "/Default/Service Worker").removeRecursively();
+        }
+    }
+
+    return anyFound;
+#else
+    return true;
 #endif
 }

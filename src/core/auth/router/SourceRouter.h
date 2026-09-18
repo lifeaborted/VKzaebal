@@ -5,6 +5,8 @@
 #include <QMap>
 #include <memory>
 #include <string>
+#include <vector>
+#include <functional>
 
 class VkClient;
 class SpotifyClient;
@@ -33,10 +35,16 @@ public:
 
     OAuthManager* GetAuthManager() const { return m_authManager.get(); }
 
+    void CheckSourceAuthorized(const std::string& source, std::function<void(bool isAuth)> callback) const;
+    void FindNextAuthorizedSource(const std::string& excludedSource, std::function<void(const std::string& nextSource)> callback) const;
+
     signals:
     void SourceChanged(const std::string& newSource);
     void ProviderReady(bool isOnline);
     void AuthUiStateChanged(bool isWaiting);
+
+public slots:
+    void Logout(const std::string& service);
 
 private slots:
     void OnVkTokenReceived(const std::string& token);

@@ -71,6 +71,9 @@ void OAuthManager::ClearSavedToken(const QString& service) const {
     });
 
     job->start();
+
+    // Удаляем связанные cookies и веб-кэш для данного сервиса
+    WebViewCookieReader::ClearServiceCache(service.toStdString());
 }
 
 void OAuthManager::onUrlIntercepted(const QString& urlStr) {

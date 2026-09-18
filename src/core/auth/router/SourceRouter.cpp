@@ -177,7 +177,7 @@ void SourceRouter::OnVkTokenExpired() {
     std::cout << "\n[ВНИМАНИЕ] Токен ВК устарел.\n";
     m_authManager->ClearSavedToken("VK");
     m_vkClient->SetAccessToken("");
-    StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=2685278&scope=audio,offline&redirect_uri=https://oauth.vk.com/blank.html&display=page&response_type=token&v=5.131");
+    StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
 }
 
 void SourceRouter::StartVkService() {
@@ -185,7 +185,7 @@ void SourceRouter::StartVkService() {
         if (savedToken.empty()) {
             std::cout << "\n[VK] Токен не найден. Открываем окно авторизации...\n";
             std::cout.flush();
-            StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=2685278&scope=audio,offline&redirect_uri=https://oauth.vk.com/blank.html&display=page&response_type=token&v=5.131");
+            StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
         } else {
             std::cout << "\n[VK] Проверка сохраненного токена...\n";
             std::cout.flush();
@@ -199,7 +199,7 @@ void SourceRouter::StartVkService() {
                 } else {
                     m_authManager->ClearSavedToken("VK");
                     m_vkClient->SetAccessToken("");
-                    StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=2685278&scope=audio,offline&redirect_uri=https://oauth.vk.com/blank.html&display=page&response_type=token&v=5.131");
+                    StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
                 }
             });
         }
@@ -369,4 +369,103 @@ void SourceRouter::SwitchSource(const std::string& newSource) {
         emit AuthUiStateChanged(false);
         emit ProviderReady(false);
     }
+}
+
+void SourceRouter::Logout(const std::string& service) {
+    if (m_authEngine) {
+        m_authEngine->deleteLater();
+        m_authEngine = nullptr;
+        emit AuthUiStateChanged(false);
+    }
+
+    auto processLogout = [this](const QString& svcName, IAudioProvider* client) {
+        m_authManager->ClearSavedToken(svcName);
+        WebViewCookieReader::ClearServiceCache(svcName.toStdString());
+        if (client) client->SetAccessToken("");
+    };
+
+    std::string lowerSvc = service;
+    for (char& c : lowerSvc) c = std::tolower(c);
+
+    if (lowerSvc == "vk" || lowerSvc == "all") processLogout("VK", m_vkClient.get());
+    if (lowerSvc == "spotify" || lowerSvc == "all") processLogout("Spotify", m_spotifyClient.get());
+    if (lowerSvc == "sc" || lowerSvc == "soundcloud" || lowerSvc == "all") processLogout("SoundCloud", m_soundCloudClient.get());
+    if (lowerSvc == "yandex" || lowerSvc == "all") processLogout("Yandex", m_yandexClient.get());
+    if (lowerSvc == "youtube" || lowerSvc == "yt" || lowerSvc == "all") processLogout("YouTube", m_youtubeClient.get());
+}
+
+void SourceRouter::CheckSourceAuthorized(const std::string& source, std::function<void(bool isAuth)> callback) const {
+    if (source == "VK") {
+        m_authManager->GetSavedToken("VK", [callback](const std::string& token) {
+            callback(!token.empty());
+        });
+    } else if (source == "Yandex") {
+        m_authManager->GetSavedToken("Yandex", [callback](const std::string& token) {
+            callback(!token.empty());
+        });
+    } else if (source == "SoundCloud") {
+        m_authManager->GetSavedToken("SoundCloud", [callback](const std::string& token) {
+            callback(!token.empty());
+        });
+    } else if (source == "Spotify") {
+        QString spDc = m_envVars.value("SPOTIFY_SP_DC", "");
+        if (!spDc.isEmpty()) {
+            callback(true);
+            return;
+        }
+        m_authManager->GetSavedToken("Spotify", [callback](const std::string& token) {
+            callback(!token.empty());
+        });
+    } else if (source == "YouTube") {
+        QString envCookie = m_envVars.value("YOUTUBE_COOKIE", "");
+        if (!envCookie.isEmpty()) {
+            callback(true);
+            return;
+        }
+        m_authManager->GetSavedToken("YouTube", [callback](const std::string& savedToken) {
+            std::string token = savedToken;
+            if (token.find("LOGIN_INFO=") == std::string::npos) {
+                std::string fullCookies = WebViewCookieReader::GetFullYouTubeCookies();
+                if (fullCookies.find("LOGIN_INFO=") != std::string::npos) {
+                    token = fullCookies;
+                }
+            }
+            bool hasValidCookies = (token.find("LOGIN_INFO=") != std::string::npos);
+            callback(hasValidCookies);
+        });
+    } else {
+        callback(false);
+    }
+}
+
+void SourceRouter::FindNextAuthorizedSource(const std::string& excludedSource, std::function<void(const std::string& nextSource)> callback) const {
+    if (excludedSource == "all" || excludedSource == "ALL") {
+        callback("Offline");
+        return;
+    }
+
+    std::vector<std::string> allSources = {"VK", "Yandex", "Spotify", "SoundCloud", "YouTube"};
+    std::vector<std::string> candidates;
+    for (const auto& s : allSources) {
+        if (QString::compare(QString::fromStdString(s), QString::fromStdString(excludedSource), Qt::CaseInsensitive) != 0) {
+            candidates.push_back(s);
+        }
+    }
+
+    auto checkNext = std::make_shared<std::function<void(size_t)>>();
+    *checkNext = [this, candidates, callback, checkNext](size_t index) {
+        if (index >= candidates.size()) {
+            callback("Offline");
+            return;
+        }
+        const std::string& cand = candidates[index];
+        CheckSourceAuthorized(cand, [checkNext, index, cand, callback](bool isAuth) {
+            if (isAuth) {
+                callback(cand);
+            } else {
+                (*checkNext)(index + 1);
+            }
+        });
+    };
+    (*checkNext)(0);
 }

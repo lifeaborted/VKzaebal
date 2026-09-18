@@ -52,6 +52,7 @@ public:
         void QuitRequested();
     void OfflineModeRequested();
     void SourceChanged(const std::string& sourceName);
+    void LogoutRequested(const std::string& service);
 
 private slots:
     void OnUiTick();

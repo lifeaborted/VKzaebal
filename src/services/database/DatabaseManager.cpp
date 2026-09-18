@@ -240,3 +240,33 @@ std::vector<std::string> DatabaseManager::LoadQueueIds(const std::string& source
     }
     return ids;
 }
+
+void DatabaseManager::ClearTracksForSource(const std::string& source) {
+    if (source == "all" || source == "ALL") {
+        QSqlQuery q1(m_db);
+        if (!q1.exec("DELETE FROM Tracks")) {
+            Logger::Log(LogLevel::ERROR, "DB: Failed to clear Tracks: " + q1.lastError().text().toStdString());
+        }
+        QSqlQuery q2(m_db);
+        if (!q2.exec("DELETE FROM PlayQueue")) {
+            Logger::Log(LogLevel::ERROR, "DB: Failed to clear PlayQueue: " + q2.lastError().text().toStdString());
+        }
+        Logger::Log(LogLevel::INFO, "DB: Cleared all tracks and queues from database.");
+    } else {
+        QSqlQuery q1(m_db);
+        q1.prepare("DELETE FROM Tracks WHERE source = :source");
+        q1.bindValue(":source", QString::fromStdString(source));
+        if (!q1.exec()) {
+            Logger::Log(LogLevel::ERROR, "DB: Failed to clear Tracks for source " + source + ": " + q1.lastError().text().toStdString());
+        }
+
+        QSqlQuery q2(m_db);
+        q2.prepare("DELETE FROM PlayQueue WHERE source = :source");
+        q2.bindValue(":source", QString::fromStdString(source));
+        if (!q2.exec()) {
+            Logger::Log(LogLevel::ERROR, "DB: Failed to clear PlayQueue for source " + source + ": " + q2.lastError().text().toStdString());
+        }
+
+        Logger::Log(LogLevel::INFO, "DB: Cleared tracks and queue for source: " + source);
+    }
+}

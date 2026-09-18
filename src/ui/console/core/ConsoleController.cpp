@@ -6,6 +6,7 @@
 #include "core/audio/IAudioEngine.h"
 #include "core/playlist/PlaylistManager.h"
 #include "core/auth/oauth/OAuthManager.h"
+#include "core/auth/oauth/WebViewCookieReader.h"
 #include "services/database/DatabaseManager.h"
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
@@ -58,16 +59,7 @@ ConsoleController::ConsoleController(
     m_dispatcher->OnSourceChangeRequested = [this](const std::string&) { m_currentState = ConsoleState::SELECT_SOURCE; };
 
     m_dispatcher->OnLogoutRequested = [this](const std::string& service) {
-        auto processLogout = [this](const QString& svcName, const std::string& internalName) {
-            m_authManager.ClearSavedToken(svcName);
-            m_renderer->SetStatusMessage("[Выход] Токен для " + internalName + " удален.");
-        };
-
-        if (service == "vk" || service == "all") processLogout("VK", "ВКонтакте");
-        if (service == "spotify" || service == "all") processLogout("Spotify", "Spotify");
-        if (service == "sc" || service == "all") processLogout("SoundCloud", "SoundCloud");
-        if (service == "yandex" || service == "all") processLogout("Yandex", "Yandex");
-        if (service == "youtube" || service == "yt" || service == "all") processLogout("YouTube", "YouTube Music");
+        emit LogoutRequested(service);
     };
 
     m_dispatcher->OnGaplessModeChanged = [this](bool isGapless) {

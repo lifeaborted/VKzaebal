@@ -45,6 +45,7 @@ private:
     void InitPlaylistAndStart(bool isOnline);
     void OnAudioFetched(const std::vector<Track>& tracks);
     void OnFinishedFetching();
+    void HandleLogout(const std::string& service);
 
     // --- DI Контейнер (хранилище зависимостей) ---
     std::unique_ptr<DatabaseManager> m_dbManager;

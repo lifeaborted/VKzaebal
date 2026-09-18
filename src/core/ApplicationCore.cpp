@@ -173,6 +173,7 @@ void ApplicationCore::WireConnections() {
     connect(m_console.get(), &ConsoleController::SourceChanged, m_router.get(), [&](const std::string& source) {
         m_router->SwitchSource(source);
     }, Qt::QueuedConnection);
+    connect(m_console.get(), &ConsoleController::LogoutRequested, this, &ApplicationCore::HandleLogout, Qt::QueuedConnection);
 
     m_console->OnGaplessModeChanged = [&](bool isCrossfade) {
         QSettings(PathManager::GetConfigPath(), QSettings::IniFormat).setValue("Audio/CrossfadePlayback", isCrossfade);
@@ -284,4 +285,69 @@ void ApplicationCore::OnFinishedFetching() {
     m_dbManager->SaveQueue(m_playlist->GetAllTracks(), m_activeSource, false);
     m_dbManager->SaveQueue(m_playlist->GetQueueTracks(), m_activeSource, m_playlist->IsShuffle());
     m_dbManager->ExportQueueToTxt(m_playlist->GetQueueTracks(), "playlist.txt", m_playlist->IsShuffle());
+}
+
+void ApplicationCore::HandleLogout(const std::string& service) {
+    Logger::Log(LogLevel::INFO, "ApplicationCore: Handling logout for service: " + service);
+
+    std::string lowerSvc = service;
+    for (char& c : lowerSvc) c = std::tolower(c);
+
+    std::string canonicalSvc = "";
+    if (lowerSvc == "vk") canonicalSvc = "VK";
+    else if (lowerSvc == "spotify") canonicalSvc = "Spotify";
+    else if (lowerSvc == "sc" || lowerSvc == "soundcloud") canonicalSvc = "SoundCloud";
+    else if (lowerSvc == "yandex") canonicalSvc = "Yandex";
+    else if (lowerSvc == "youtube" || lowerSvc == "yt") canonicalSvc = "YouTube";
+    else if (lowerSvc == "all") canonicalSvc = "all";
+    else canonicalSvc = service;
+
+    std::vector<std::string> servicesToClear;
+    if (canonicalSvc == "all") {
+        servicesToClear = {"VK", "Spotify", "SoundCloud", "Yandex", "YouTube"};
+    } else {
+        servicesToClear = {canonicalSvc};
+    }
+
+    for (const auto& svc : servicesToClear) {
+        m_router->Logout(svc);
+        m_dbManager->ClearTracksForSource(svc);
+    }
+
+    bool activeAffected = false;
+    if (canonicalSvc == "all") {
+        activeAffected = true;
+    } else {
+        if (QString::compare(QString::fromStdString(m_activeSource), QString::fromStdString(canonicalSvc), Qt::CaseInsensitive) == 0) {
+            activeAffected = true;
+        }
+    }
+
+    if (!activeAffected) {
+        m_console->SetStatusMessage("[Выход] Токен, кэш и треки в БД для " + canonicalSvc + " удалены.");
+        return;
+    }
+
+    // Активный сервис отключен — останавливаем воспроизведение и очищаем очередь
+    m_playbackCtrl->ClearState();
+    m_audio->Pause();
+    m_isPlaybackStarted = false;
+    m_playlist->Clear();
+
+    QFile::remove(PathManager::GetPlaylistExportPath("playlist.txt"));
+
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    settings.setValue("Session/CurrentTrackIndex", -1);
+    settings.setValue("Session/Position", 0.0);
+    settings.sync();
+
+    m_router->FindNextAuthorizedSource(canonicalSvc, [this, canonicalSvc](const std::string& nextSource) {
+        if (nextSource != "Offline") {
+            m_console->SetStatusMessage("[Выход] Переключение на авторизованный сервис: " + nextSource);
+            m_router->SwitchSource(nextSource);
+        } else {
+            m_console->SetStatusMessage("[Выход] Авторизованных аккаунтов не найдено. Переключено в Оффлайн режим.");
+            m_router->SwitchSource("Offline");
+        }
+    });
 }

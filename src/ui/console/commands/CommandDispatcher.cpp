@@ -608,8 +608,16 @@ namespace {
         explicit SystemCommand(const std::string& type) : m_cmdType(type) {}
         void Execute(const std::string& arg, CommandContext& ctx) override {
             if (m_cmdType == "logout") {
-                if (arg == "vk" || arg == "spotify" || arg == "sc" || arg == "yandex" || arg == "youtube" || arg == "yt" || arg == "all") {
+                if (arg == "vk" || arg == "spotify" || arg == "sc" || arg == "soundcloud" || arg == "yandex" || arg == "youtube" || arg == "yt" || arg == "all") {
                     if (ctx.onLogout) RunInMainThread([ctx, arg]() { ctx.onLogout(arg); });
+                } else if (arg.empty()) {
+                    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+                    QString currentSrc = settings.value("General/source", "").toString().toLower();
+                    if (currentSrc == "vk" || currentSrc == "spotify" || currentSrc == "sc" || currentSrc == "soundcloud" || currentSrc == "yandex" || currentSrc == "youtube") {
+                        if (ctx.onLogout) RunInMainThread([ctx, currentSrc]() { ctx.onLogout(currentSrc.toStdString()); });
+                    } else {
+                        if (ctx.print) ctx.print("[Ошибка] Укажите сервис: logout vk | logout spotify | logout sc | logout yandex | logout youtube | logout all\n\n> ");
+                    }
                 } else {
                     if (ctx.print) ctx.print("[Ошибка] Укажите сервис: logout vk | logout spotify | logout sc | logout yandex | logout youtube | logout all\n\n> ");
                 }
@@ -626,7 +634,7 @@ namespace {
                 if (ctx.onQuit) ctx.onQuit();
             } else if (m_cmdType == "help") {
                 std::string s(50, '*');
-                std::string helpText = "\n" + s + "\n [P] Play/Pause\n [N] Next\n [B] Prev\n [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n [seek <time>] Seek (e.g. seek 1:30 or seek 90)\n [st] Standard Order\n [sh] Shuffle\n [R] Repeat Mode\n [J <num>] Jump to track\n [cv] Current volume\n [rs] Reset Session\n [mode <0/1>] 0 - Standard, 1 - Gapless transition\n [search <text>] Search tracks in playlist\n [ly] Show lyrics for current track\n [logout <service>] Logout from choosen service\n [source] Select audio source\n [tl] Export tracklist to TXT\n [dl] / [dl <num>] Download track\n [rm] / [rm <num>] Delete downloaded track\n [vis] Toggle visualizer\n [Q] Quit\n" + s + "\n\n> ";
+                std::string helpText = "\n" + s + "\n [P] Play/Pause\n [N] Next\n [B] Prev\n [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n [seek <time>] Seek (e.g. seek 1:30 or seek 90)\n [st] Standard Order\n [sh] Shuffle\n [R] Repeat Mode\n [J <num>] Jump to track\n [cv] Current volume\n [rs] Reset Session\n [mode <0/1>] 0 - Standard, 1 - Gapless transition\n [search <text>] Search tracks in playlist\n [ly] Show lyrics for current track\n [logout / logout <service>] Logout and clear service cache\n [source] Select audio source\n [tl] Export tracklist to TXT\n [dl] / [dl <num>] Download track\n [rm] / [rm <num>] Delete downloaded track\n [vis] Toggle visualizer\n [Q] Quit\n" + s + "\n\n> ";
                 if (ctx.print) ctx.print(helpText);
             }
         }
