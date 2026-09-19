@@ -52,16 +52,17 @@ int main(int argc, char *argv[]) {
     Logger::Log(LogLevel::INFO, "--- VK Audio Player Started ---");
     Logger::Log(LogLevel::INFO, "DB Path: " + PathManager::GetDbPath().toStdString());
 
-    ApplicationCore appCore(envVars);
+    auto appCore = std::make_unique<ApplicationCore>(envVars);
 
-    if (!appCore.Initialize()) {
+    if (!appCore->Initialize()) {
         Logger::Log(LogLevel::ERROR, "Main: Failed to initialize ApplicationCore. Exiting.");
         return -1;
     }
 
-    appCore.Start();
+    appCore->Start();
 
     int exitCode = app.exec();
+    appCore.reset();
     Logger::Close();
     return exitCode;
 }

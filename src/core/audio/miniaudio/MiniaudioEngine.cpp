@@ -7,7 +7,6 @@
 #include <QString>
 #include <algorithm>
 #include <chrono>
-#include <QCoreApplication>
 #include <QSettings>
 #include <complex>
 #include <cmath>
@@ -101,12 +100,16 @@ void MiniaudioEngine::SetPositionSeconds(double pos) {
 
             m_nearEndTriggered = false;
             m_finishedTriggered = false;
+            m_nearEndSignaled.store(false, std::memory_order_release);
+            m_finishedSignaled.store(false, std::memory_order_release);
             std::memset(m_mainBuffer.data(), 0, m_mainBuffer.size() * sizeof(int16_t));
             Logger::Log(LogLevel::INFO, "Miniaudio: Exact seeked to " + std::to_string(m_playbackFrameCount.load() / static_cast<double>(SAMPLE_RATE)) + "s");
         } else {
             m_playbackFrameCount = static_cast<ma_uint64>(pos * static_cast<double>(SAMPLE_RATE));
             m_nearEndTriggered = false;
             m_finishedTriggered = false;
+            m_nearEndSignaled.store(false, std::memory_order_release);
+            m_finishedSignaled.store(false, std::memory_order_release);
             m_pcmBuffer.Clear();
         }
     }
@@ -333,11 +336,7 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
         if (totalSec > 0.0 || (framesRead == 0 && engine->m_decoder)) {
             if (totalSec > 0.0 && !engine->m_nearEndTriggered && currentSec >= totalSec - 10.0) {
                 engine->m_nearEndTriggered = true;
-                if (engine->OnTrackNearEnd) {
-                    QMetaObject::invokeMethod(QCoreApplication::instance(), [engine]() {
-                        engine->OnTrackNearEnd();
-                    }, Qt::QueuedConnection);
-                }
+                engine->m_nearEndSignaled.store(true, std::memory_order_release);
             }
 
             double endTriggerSec = totalSec;
@@ -347,11 +346,7 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
 
             if (!engine->m_finishedTriggered && currentSec >= endTriggerSec) {
                 engine->m_finishedTriggered = true;
-                if (engine->OnTrackFinished) {
-                    QMetaObject::invokeMethod(QCoreApplication::instance(), [engine]() {
-                        engine->OnTrackFinished();
-                    }, Qt::QueuedConnection);
-                }
+                engine->m_finishedSignaled.store(true, std::memory_order_release);
             }
         }
     }
@@ -376,6 +371,8 @@ bool MiniaudioEngine::PlayStream(const std::string& url, int durationSec, bool c
     m_currentDurationSec = durationSec;
     m_nearEndTriggered = false;
     m_finishedTriggered = false;
+    m_nearEndSignaled.store(false, std::memory_order_release);
+    m_finishedSignaled.store(false, std::memory_order_release);
     m_playbackFrameCount = 0;
 
     if (crossfade && m_crossfadeDurationMs > 0) {
@@ -591,6 +588,8 @@ void MiniaudioEngine::ClearBuffers(bool crossfade, int nextDurationSec) {
         m_currentDurationSec = nextDurationSec;
         m_nearEndTriggered = false;
         m_finishedTriggered = false;
+        m_nearEndSignaled.store(false, std::memory_order_release);
+        m_finishedSignaled.store(false, std::memory_order_release);
         m_playbackFrameCount = 0;
 
         if (crossfade && m_crossfadeDurationMs > 0) {
@@ -639,4 +638,18 @@ void MiniaudioEngine::StopFadeOut() {
     m_fadeOutDecoder.reset();
     m_fadeOutPcm.clear();
     m_isCrossfading = false;
+}
+
+void MiniaudioEngine::PollEvents() {
+    if (m_nearEndSignaled.exchange(false, std::memory_order_acq_rel)) {
+        if (OnTrackNearEnd) {
+            OnTrackNearEnd();
+        }
+    }
+
+    if (m_finishedSignaled.exchange(false, std::memory_order_acq_rel)) {
+        if (OnTrackFinished) {
+            OnTrackFinished();
+        }
+    }
 }

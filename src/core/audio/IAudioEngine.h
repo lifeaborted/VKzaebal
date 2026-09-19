@@ -25,6 +25,7 @@ public:
     virtual void SetNetworkSkipSeconds(double seconds) {}
 
     virtual void SetNetworkStreamFinished() {}
+    virtual void PollEvents() {}
 
     std::function<void()> OnTrackNearEnd;
     std::function<void()> OnTrackFinished;

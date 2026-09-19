@@ -37,6 +37,7 @@ public:
     // Метод, куда NetworkStreamer будет пушить скачанные байты AAC
     void PushNetworkData(const uint8_t* data, size_t size);
     void ClearBuffers(bool crossfade = false, int nextDurationSec = 0);
+    void PollEvents() override;
 
     void SetNetworkSkipSeconds(double seconds) override {
         m_networkDiscardFrames = static_cast<ma_uint64>(seconds * SAMPLE_RATE);
@@ -90,6 +91,8 @@ private:
     int m_currentDurationSec = 0;
     bool m_nearEndTriggered = false;
     bool m_finishedTriggered = false;
+    std::atomic<bool> m_nearEndSignaled{false};
+    std::atomic<bool> m_finishedSignaled{false};
 
     bool m_isCrossfading = false;
     ma_uint32 m_crossfadeFramesTotal = 0;

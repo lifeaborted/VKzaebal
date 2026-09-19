@@ -2,6 +2,7 @@
 #include <QCoreApplication>
 #include <QSettings>
 #include <QFile>
+#include <QTimer>
 #include <iostream>
 #include <cmath>
 #include <unordered_set>
@@ -23,6 +24,9 @@ ApplicationCore::ApplicationCore(const QMap<QString, QString>& envVars, QObject*
 }
 
 ApplicationCore::~ApplicationCore() {
+    if (m_audioPollTimer) {
+        m_audioPollTimer->stop();
+    }
     SaveSession();
 }
 
@@ -58,6 +62,14 @@ bool ApplicationCore::Initialize() {
 
     RestoreSession();
     WireConnections();
+
+    m_audioPollTimer = new QTimer(this);
+    connect(m_audioPollTimer, &QTimer::timeout, this, [this]() {
+        if (m_audio) {
+            m_audio->PollEvents();
+        }
+    });
+    m_audioPollTimer->start(20);
 
     return true;
 }

@@ -22,6 +22,7 @@ class NetworkStreamer;
 class PlaybackController;
 class SourceRouter;
 class ConsoleController;
+class QTimer;
 struct Track;
 
 class ApplicationCore : public QObject {
@@ -62,4 +63,5 @@ private:
     std::string m_activeSource;
     bool m_isPlaybackStarted = false;
     int m_vkSyncIndex = 0;
+    QTimer* m_audioPollTimer = nullptr;
 };
