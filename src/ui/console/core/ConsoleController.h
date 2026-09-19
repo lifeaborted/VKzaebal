@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <QObject>
+#include <QPointer>
 #include <QString>
 #include <atomic>
 #include <functional>
@@ -63,7 +64,8 @@ private slots:
     void OnUiTick();
 
 private:
-    void InputLoop();
+    void InputLoop(std::shared_ptr<std::atomic<bool>> isAlive);
+    void ProcessInput(const std::string& rawInput);
 
     IAudioEngine& m_audio;
     PlaylistManager& m_playlist;
@@ -80,6 +82,7 @@ private:
     std::atomic<bool> m_isRunning;
 
     QTimer* m_uiTimer;
+    std::shared_ptr<std::atomic<bool>> m_inputAlive;
     std::thread m_inputThread;
 
     Track m_pendingTrackToAdd;
