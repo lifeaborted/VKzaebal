@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QPointer>
 #include <QString>
 #include <QMap>
 #include <memory>
@@ -62,6 +63,9 @@ private:
 
     void StartAuthFlow(const QString& service, const QString& authUrl);
     void TryValidateVkTokens(const std::vector<std::string>& tokens, size_t index);
+    void CheckNextCandidate(const std::shared_ptr<const std::vector<std::string>>& candidates,
+                            size_t index,
+                            std::function<void(const std::string& nextSource)> callback) const;
 
     std::unique_ptr<VkClient> m_vkClient;
     std::unique_ptr<SpotifyClient> m_spotifyClient;

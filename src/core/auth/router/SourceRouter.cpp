@@ -468,32 +468,39 @@ void SourceRouter::CheckSourceAuthorized(const std::string& source, std::functio
 
 void SourceRouter::FindNextAuthorizedSource(const std::string& excludedSource, std::function<void(const std::string& nextSource)> callback) const {
     if (excludedSource == "all" || excludedSource == "ALL") {
-        callback("Offline");
+        if (callback) callback("Offline");
         return;
     }
 
-    std::vector<std::string> allSources = {"VK", "Yandex", "Spotify", "SoundCloud", "YouTube"};
-    std::vector<std::string> candidates;
+    const std::vector<std::string> allSources = {"VK", "Yandex", "Spotify", "SoundCloud", "YouTube"};
+    auto candidates = std::make_shared<std::vector<std::string>>();
+    candidates->reserve(allSources.size());
     for (const auto& s : allSources) {
         if (QString::compare(QString::fromStdString(s), QString::fromStdString(excludedSource), Qt::CaseInsensitive) != 0) {
-            candidates.push_back(s);
+            candidates->push_back(s);
         }
     }
 
-    auto checkNext = std::make_shared<std::function<void(size_t)>>();
-    *checkNext = [this, candidates, callback, checkNext](size_t index) {
-        if (index >= candidates.size()) {
-            callback("Offline");
-            return;
+    CheckNextCandidate(candidates, 0, std::move(callback));
+}
+
+void SourceRouter::CheckNextCandidate(const std::shared_ptr<const std::vector<std::string>>& candidates,
+                                      size_t index,
+                                      std::function<void(const std::string& nextSource)> callback) const {
+    if (!candidates || index >= candidates->size()) {
+        if (callback) callback("Offline");
+        return;
+    }
+
+    QPointer<const SourceRouter> safeThis(this);
+    const std::string cand = (*candidates)[index];
+
+    CheckSourceAuthorized(cand, [safeThis, candidates, index, cand, callback = std::move(callback)](bool isAuth) mutable {
+        if (!safeThis) return;
+        if (isAuth) {
+            if (callback) callback(cand);
+        } else {
+            safeThis->CheckNextCandidate(candidates, index + 1, std::move(callback));
         }
-        const std::string& cand = candidates[index];
-        CheckSourceAuthorized(cand, [checkNext, index, cand, callback](bool isAuth) {
-            if (isAuth) {
-                callback(cand);
-            } else {
-                (*checkNext)(index + 1);
-            }
-        });
-    };
-    (*checkNext)(0);
+    });
 }
