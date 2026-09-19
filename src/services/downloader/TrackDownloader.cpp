@@ -3,6 +3,7 @@
 #include "utils/path/PathManager.h"
 #include "services/network/NetworkStreamer.h"
 #include "utils/parser/MpegTsDemuxer.h"
+#include "utils/parser/Id3Utils.h"
 
 #include <QDir>
 #include <QFile>
@@ -15,15 +16,6 @@
 #include <QPointer>
 
 namespace {
-    QByteArray makeSyncSafe(uint32_t size) {
-        QByteArray b(4, 0);
-        b[0] = (size >> 21) & 0x7F;
-        b[1] = (size >> 14) & 0x7F;
-        b[2] = (size >> 7) & 0x7F;
-        b[3] = size & 0x7F;
-        return b;
-    }
-
     QByteArray makeUInt32BE(uint32_t size) {
         QByteArray b(4, 0);
         b[0] = (size >> 24) & 0xFF;
@@ -78,15 +70,52 @@ namespace {
         header.append((char)0x03);
         header.append('\0');
         header.append('\0');
-        header.append(makeSyncSafe(tagData.size()));
+        header.append(Id3Utils::MakeSyncSafe(static_cast<uint32_t>(tagData.size())));
 
-        QFile file(filePath);
-        if (file.open(QIODevice::ReadWrite)) {
-            QByteArray rawAudioData = file.readAll();
-            file.seek(0);
-            file.write(header + tagData);
-            file.write(rawAudioData);
-            file.close();
+        QFile srcFile(filePath);
+        if (!srcFile.open(QIODevice::ReadOnly)) {
+            Logger::Log(LogLevel::ERROR, "TrackDownloader: Failed to open source file for ID3 tagging: " + filePath.toStdString());
+            return;
+        }
+
+        QString tempPath = filePath + ".tmp_id3";
+        QFile dstFile(tempPath);
+        if (!dstFile.open(QIODevice::WriteOnly)) {
+            Logger::Log(LogLevel::ERROR, "TrackDownloader: Failed to create temp file for ID3 tagging: " + tempPath.toStdString());
+            srcFile.close();
+            return;
+        }
+
+        dstFile.write(header);
+        dstFile.write(tagData);
+
+        constexpr qint64 kChunkSize = 64 * 1024; // 64 KB streaming buffer
+        char buffer[kChunkSize];
+        bool readError = false;
+
+        while (!srcFile.atEnd()) {
+            qint64 bytesRead = srcFile.read(buffer, sizeof(buffer));
+            if (bytesRead < 0) {
+                readError = true;
+                break;
+            }
+            if (bytesRead > 0) {
+                dstFile.write(buffer, bytesRead);
+            }
+        }
+
+        srcFile.close();
+        dstFile.close();
+
+        if (readError) {
+            Logger::Log(LogLevel::ERROR, "TrackDownloader: Error while streaming audio data during ID3 tagging: " + filePath.toStdString());
+            QFile::remove(tempPath);
+            return;
+        }
+
+        if (!QFile::remove(filePath) || !QFile::rename(tempPath, filePath)) {
+            Logger::Log(LogLevel::ERROR, "TrackDownloader: Failed to replace original file with tagged file: " + filePath.toStdString());
+            QFile::remove(tempPath);
         }
     }
 }

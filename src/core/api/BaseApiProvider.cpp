@@ -46,7 +46,10 @@ void BaseApiProvider::SendJsonRequest(QNetworkRequest request, std::function<voi
             QJsonDocument json = QJsonDocument::fromJson(data);
 
             QMetaObject::invokeMethod(QCoreApplication::instance(), [safeThis, json, statusCode, onSuccess, onFail]() {
-                if (!safeThis) return;
+                if (!safeThis) {
+                    if (onFail) onFail("Provider was destroyed before response completed");
+                    return;
+                }
 
                 if (json.isNull()) {
                     Logger::Log(LogLevel::ERROR, "API Error: Invalid JSON response");

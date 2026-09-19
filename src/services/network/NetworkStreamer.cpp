@@ -1,4 +1,5 @@
 #include "NetworkStreamer.h"
+#include "utils/parser/Id3Utils.h"
 #include "utils/logger/Logger.h"
 
 #include <QNetworkRequest>
@@ -266,10 +267,11 @@ void NetworkStreamer::OnChunkFinished() {
                     uint8_t firstByte = static_cast<uint8_t>(chunkData[0]);
                     if (!(firstByte == 0x47 && chunkData.size() % 188 == 0)) {
                         int id3Size = 0;
-                        if (chunkData.size() >= 10 && chunkData.startsWith("ID3")) {
-                            const uint8_t* d = reinterpret_cast<const uint8_t*>(chunkData.constData());
-                            id3Size = 10 + ((d[6] << 21) | (d[7] << 14) | (d[8] << 7) | d[9]);
-                            if (id3Size > chunkData.size()) id3Size = 0;
+                        size_t parsedId3 = Id3Utils::ParseHeaderTotalSize(
+                            reinterpret_cast<const uint8_t*>(chunkData.constData()),
+                            static_cast<size_t>(chunkData.size()));
+                        if (parsedId3 > 0 && parsedId3 <= static_cast<size_t>(chunkData.size())) {
+                            id3Size = static_cast<int>(parsedId3);
                         }
 
                         int cipherSize = chunkData.size() - id3Size;
@@ -328,12 +330,11 @@ void NetworkStreamer::OnChunkFinished() {
             m_currentChunkData.append(newData);
             if (!m_currentChunkData.isEmpty()) {
                 // Если чанк начинается с ID3-тегов (типично для HLS AAC чанков YouTube/Apple)
-                if (m_currentChunkData.size() >= 10 && m_currentChunkData.startsWith("ID3")) {
-                    const uint8_t* d = reinterpret_cast<const uint8_t*>(m_currentChunkData.constData());
-                    int id3Size = 10 + (((d[6] & 0x7F) << 21) | ((d[7] & 0x7F) << 14) | ((d[8] & 0x7F) << 7) | (d[9] & 0x7F));
-                    if (id3Size <= m_currentChunkData.size()) {
-                        m_currentChunkData.remove(0, id3Size);
-                    }
+                size_t parsedId3 = Id3Utils::ParseHeaderTotalSize(
+                    reinterpret_cast<const uint8_t*>(m_currentChunkData.constData()),
+                    static_cast<size_t>(m_currentChunkData.size()));
+                if (parsedId3 > 0 && parsedId3 <= static_cast<size_t>(m_currentChunkData.size())) {
+                    m_currentChunkData.remove(0, static_cast<qsizetype>(parsedId3));
                 }
                 if (!m_currentChunkData.isEmpty()) {
                     emit DataReceived(m_currentChunkData);
@@ -374,10 +375,11 @@ void NetworkStreamer::DecryptAndPushChunk() {
     }
 
     int id3Size = 0;
-    if (m_currentChunkData.size() >= 10 && m_currentChunkData.startsWith("ID3")) {
-        const uint8_t* d = reinterpret_cast<const uint8_t*>(m_currentChunkData.constData());
-        id3Size = 10 + ((d[6] << 21) | (d[7] << 14) | (d[8] << 7) | d[9]);
-        if (id3Size > m_currentChunkData.size()) id3Size = 0;
+    size_t parsedId3 = Id3Utils::ParseHeaderTotalSize(
+        reinterpret_cast<const uint8_t*>(m_currentChunkData.constData()),
+        static_cast<size_t>(m_currentChunkData.size()));
+    if (parsedId3 > 0 && parsedId3 <= static_cast<size_t>(m_currentChunkData.size())) {
+        id3Size = static_cast<int>(parsedId3);
         Logger::Log(LogLevel::INFO, "Found unencrypted ID3 tag. Size: " + std::to_string(id3Size) + " bytes.");
     }
 

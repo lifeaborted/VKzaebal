@@ -27,9 +27,6 @@ signals:
     void tokenError(const QString& errorMessage);
 
 private:
-    void setupPolyfillEnvironment();
-    QString generateWebPoTokenFallback();
-
-    QJSEngine m_engine;
-    bool m_isPolyfillReady = false;
+    static void setupPolyfillEnvironment(QJSEngine& engine);
+    static QString generateWebPoTokenFallback();
 };

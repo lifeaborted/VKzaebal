@@ -344,7 +344,6 @@ void ApplicationCore::InitPlaylistAndStart(bool isOnline) {
 }
 
 void ApplicationCore::OnAudioFetched(const std::vector<Track>& tracks) {
-    bool hasNewTracks = false;
     auto allTracks = m_playlist->GetAllTracks();
 
     std::unordered_set<std::string> existingIds;
@@ -357,19 +356,12 @@ void ApplicationCore::OnAudioFetched(const std::vector<Track>& tracks) {
         if (existingIds.find(track.id) == existingIds.end()) {
             m_playlist->InsertTrack(m_vkSyncIndex, track);
             existingIds.insert(track.id); // Защита от дублей внутри самого чанка
-            hasNewTracks = true;
         }
         m_vkSyncIndex++;
     }
 
     m_dbManager->SaveTracks(tracks);
     if (!m_isPlaybackStarted) InitPlaylistAndStart(true);
-
-    if (!m_isPlaybackStarted || hasNewTracks) {
-        m_dbManager->SaveQueue(m_playlist->GetAllTracks(), m_activeSource, false);
-        m_dbManager->SaveQueue(m_playlist->GetQueueTracks(), m_activeSource, m_playlist->IsShuffle());
-        m_dbManager->ExportQueueToTxt(m_playlist->GetQueueTracks(), "playlist.txt", m_playlist->IsShuffle());
-    }
 }
 
 void ApplicationCore::OnFinishedFetching() {

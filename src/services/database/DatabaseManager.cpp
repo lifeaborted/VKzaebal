@@ -10,6 +10,20 @@
 #include <QtConcurrent>
 #include <QUuid>
 
+namespace {
+int ParseDurationSeconds(const QString& durationStr) {
+    const QStringList parts = durationStr.split(':');
+    if (parts.size() == 3) {
+        return parts[0].toInt() * 3600 + parts[1].toInt() * 60 + parts[2].toInt();
+    } else if (parts.size() == 2) {
+        return parts[0].toInt() * 60 + parts[1].toInt();
+    } else if (parts.size() == 1) {
+        return parts[0].toInt();
+    }
+    return 0;
+}
+}
+
 DatabaseManager::DatabaseManager() {
     m_db = QSqlDatabase::addDatabase("QSQLITE");
     m_db.setConnectOptions("QSQLITE_BUSY_TIMEOUT=5000");
@@ -27,6 +41,11 @@ bool DatabaseManager::Init() {
         Logger::Log(LogLevel::ERROR, "DB: Failed to open database: " + m_db.lastError().text().toStdString());
         return false;
     }
+    QSqlQuery pragma(m_db);
+    pragma.exec("PRAGMA journal_mode = WAL;");
+    pragma.exec("PRAGMA synchronous = NORMAL;");
+    pragma.exec("PRAGMA busy_timeout = 5000;");
+
     CreateTables();
     return true;
 }
@@ -173,8 +192,18 @@ void DatabaseManager::SaveTracks(const std::vector<Track>& tracks) {
             if (db.open()) {
                 db.transaction();
                 QSqlQuery query(db);
-                query.prepare("INSERT OR REPLACE INTO Tracks (id, source, artist, title, duration, cover_url, lyrics_id, lyrics) "
-                              "VALUES (:id, :source, :artist, :title, :duration, :cover_url, :lyrics_id, :lyrics)");
+                query.prepare(
+                    "INSERT INTO Tracks (id, source, artist, title, duration, cover_url, lyrics_id, lyrics) "
+                    "VALUES (:id, :source, :artist, :title, :duration, :cover_url, :lyrics_id, :lyrics) "
+                    "ON CONFLICT(id) DO UPDATE SET "
+                    "source = excluded.source, "
+                    "artist = excluded.artist, "
+                    "title = excluded.title, "
+                    "duration = excluded.duration, "
+                    "cover_url = excluded.cover_url, "
+                    "lyrics_id = CASE WHEN excluded.lyrics_id != '' THEN excluded.lyrics_id ELSE Tracks.lyrics_id END, "
+                    "lyrics = CASE WHEN excluded.lyrics != '' THEN excluded.lyrics ELSE Tracks.lyrics END"
+                );
 
                 for (const auto& track : tracks) {
                     query.bindValue(":id", QString::fromStdString(track.id));
@@ -221,13 +250,7 @@ std::vector<Track> DatabaseManager::LoadTracks(const std::string& source) {
         t.artist = query.value(1).toString().toStdString();
         t.title = query.value(2).toString().toStdString();
 
-        QString durationStr = query.value(3).toString();
-        QStringList parts = durationStr.split(':');
-        if (parts.size() == 2) {
-            t.duration = parts[0].toInt() * 60 + parts[1].toInt();
-        } else {
-            t.duration = 0;
-        }
+        t.duration = ParseDurationSeconds(query.value(3).toString());
 
         t.coverUrl = query.value(4).toString().toStdString();
         t.lyrics_id = query.value(5).toString().toStdString();
@@ -321,13 +344,7 @@ std::vector<Track> DatabaseManager::LoadAllSourcesTracks() {
             t.artist = query.value(1).toString().toStdString();
             t.title = query.value(2).toString().toStdString();
 
-            QString durationStr = query.value(3).toString();
-            QStringList parts = durationStr.split(':');
-            if (parts.size() == 2) {
-                t.duration = parts[0].toInt() * 60 + parts[1].toInt();
-            } else {
-                t.duration = durationStr.toInt();
-            }
+            t.duration = ParseDurationSeconds(query.value(3).toString());
 
             t.coverUrl = query.value(4).toString().toStdString();
             t.lyrics_id = query.value(5).toString().toStdString();
@@ -457,13 +474,7 @@ std::vector<Track> DatabaseManager::LoadPlaylistTracks(int playlistId) {
             t.artist = query.value(1).toString().toStdString();
             t.title = query.value(2).toString().toStdString();
 
-            QString durationStr = query.value(3).toString();
-            QStringList parts = durationStr.split(':');
-            if (parts.size() == 2) {
-                t.duration = parts[0].toInt() * 60 + parts[1].toInt();
-            } else {
-                t.duration = durationStr.toInt();
-            }
+            t.duration = ParseDurationSeconds(query.value(3).toString());
 
             t.coverUrl = query.value(4).toString().toStdString();
             t.lyrics_id = query.value(5).toString().toStdString();

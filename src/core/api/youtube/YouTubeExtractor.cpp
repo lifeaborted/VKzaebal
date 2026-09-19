@@ -8,6 +8,9 @@
 #include <QJsonArray>
 #include <QRegularExpression>
 #include <QSet>
+#include <QThreadPool>
+#include <QPointer>
+#include <QCoreApplication>
 #include <algorithm>
 
 YouTubeExtractor::YouTubeExtractor(QNetworkAccessManager* networkManager, YouTubePoTokenGenerator* tokenGen, QObject* parent)
@@ -431,52 +434,62 @@ bool YouTubeExtractor::parseDirectFormats(const QJsonObject& root, const QString
 
     Logger::Log(LogLevel::INFO, "YouTubeExtractor: Selected format itag=" + std::to_string(selectedItag) + ", mime=" + selectedFormat["mimeType"].toString().toStdString());
 
-    // 3. Извлечение базовой ссылки или signatureCipher
-    QString streamUrl;
-    if (selectedFormat.contains("url")) {
-        streamUrl = selectedFormat["url"].toString();
-        Logger::Log(LogLevel::INFO, "YouTubeExtractor: Format contains direct stream URL.");
-    } else if (selectedFormat.contains("signatureCipher") || selectedFormat.contains("cipher")) {
-        QString cipher = selectedFormat.contains("signatureCipher")
-                             ? selectedFormat["signatureCipher"].toString()
-                             : selectedFormat["cipher"].toString();
-        Logger::Log(LogLevel::INFO, "YouTubeExtractor: Stream URL is ciphered. Decrypting signature via C++ AST decoder...");
-        streamUrl = decryptSignature(cipher, baseJs);
-    }
-
-    if (streamUrl.isEmpty()) {
-        Logger::Log(LogLevel::WARNING, "YouTubeExtractor: Failed to resolve stream URL from selected format!");
-        return false;
-    }
-
-    // 4. Проверка и трансформация n-token параметра (защита от троттлинга YouTube)
-    QUrl parsedUrl(streamUrl);
-    QUrlQuery query(parsedUrl);
-    if (query.hasQueryItem("n")) {
-        QString rawN = query.queryItemValue("n", QUrl::FullyDecoded);
-        Logger::Log(LogLevel::INFO, "YouTubeExtractor: Detected n-token parameter: " + rawN.toStdString());
-        QString transformedN = transformNToken(rawN, baseJs);
-        if (!transformedN.isEmpty() && transformedN != rawN) {
-            Logger::Log(LogLevel::INFO, "YouTubeExtractor: Successfully transformed n-token: " + transformedN.toStdString());
-            query.removeQueryItem("n");
-            query.addQueryItem("n", transformedN);
-            parsedUrl.setQuery(query);
-            streamUrl = parsedUrl.toString();
-        } else {
-            Logger::Log(LogLevel::INFO, "YouTubeExtractor: n-token unchanged, using raw.");
+    // Выносим тяжелый regex-парсинг base.js и JS-расчеты подписи/n-токена в пул рабочих потоков
+    QThreadPool::globalInstance()->start([safeThis = QPointer<YouTubeExtractor>(this), selectedFormat, selectedItag, baseJs, videoId, callback]() {
+        // 3. Извлечение базовой ссылки или signatureCipher
+        QString streamUrl;
+        if (selectedFormat.contains("url")) {
+            streamUrl = selectedFormat["url"].toString();
+            Logger::Log(LogLevel::INFO, "YouTubeExtractor: Format contains direct stream URL.");
+        } else if (selectedFormat.contains("signatureCipher") || selectedFormat.contains("cipher")) {
+            QString cipher = selectedFormat.contains("signatureCipher")
+                                 ? selectedFormat["signatureCipher"].toString()
+                                 : selectedFormat["cipher"].toString();
+            Logger::Log(LogLevel::INFO, "YouTubeExtractor: Stream URL is ciphered. Decrypting signature via C++ AST decoder...");
+            streamUrl = decryptSignature(cipher, baseJs);
         }
-    }
 
-    // 5. Кросс-линк если использовался комбинированный itag 18
-    if (selectedItag == 18) {
-        streamUrl.replace(QRegularExpression("&itag=\\d+"), "&itag=140");
-        streamUrl.replace("mime=video", "mime=audio");
-        Logger::Log(LogLevel::INFO, "YouTubeExtractor: Applied itag 18 cross-link substitution to audio/140.");
-    }
+        if (streamUrl.isEmpty()) {
+            Logger::Log(LogLevel::WARNING, "YouTubeExtractor: Failed to resolve stream URL from selected format!");
+            QMetaObject::invokeMethod(QCoreApplication::instance(), [safeThis, videoId, callback]() {
+                if (safeThis) emit safeThis->extractionFailed(videoId, "Failed to resolve stream URL");
+                if (callback) callback("", true);
+            });
+            return;
+        }
 
-    Logger::Log(LogLevel::INFO, "YouTubeExtractor: Final resolved stream URL: " + streamUrl.left(90).toStdString() + "...");
-    emit extractionFinished(videoId, streamUrl);
-    callback(streamUrl, false);
+        // 4. Проверка и трансформация n-token параметра (защита от троттлинга YouTube)
+        QUrl parsedUrl(streamUrl);
+        QUrlQuery query(parsedUrl);
+        if (query.hasQueryItem("n")) {
+            QString rawN = query.queryItemValue("n", QUrl::FullyDecoded);
+            Logger::Log(LogLevel::INFO, "YouTubeExtractor: Detected n-token parameter: " + rawN.toStdString());
+            QString transformedN = transformNToken(rawN, baseJs);
+            if (!transformedN.isEmpty() && transformedN != rawN) {
+                Logger::Log(LogLevel::INFO, "YouTubeExtractor: Successfully transformed n-token: " + transformedN.toStdString());
+                query.removeQueryItem("n");
+                query.addQueryItem("n", transformedN);
+                parsedUrl.setQuery(query);
+                streamUrl = parsedUrl.toString();
+            } else {
+                Logger::Log(LogLevel::INFO, "YouTubeExtractor: n-token unchanged, using raw.");
+            }
+        }
+
+        // 5. Кросс-линк если использовался комбинированный itag 18
+        if (selectedItag == 18) {
+            streamUrl.replace(QRegularExpression("&itag=\\d+"), "&itag=140");
+            streamUrl.replace("mime=video", "mime=audio");
+            Logger::Log(LogLevel::INFO, "YouTubeExtractor: Applied itag 18 cross-link substitution to audio/140.");
+        }
+
+        Logger::Log(LogLevel::INFO, "YouTubeExtractor: Final resolved stream URL: " + streamUrl.left(90).toStdString() + "...");
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [safeThis, videoId, streamUrl, callback]() {
+            if (safeThis) emit safeThis->extractionFinished(videoId, streamUrl);
+            if (callback) callback(streamUrl, false);
+        });
+    });
+
     return true;
 }
 

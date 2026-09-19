@@ -128,6 +128,7 @@ set(PROJECT_SOURCES
 
         src/utils/parser/MpegTsDemuxer.cpp
         src/utils/parser/MpegTsDemuxer.h
+        src/utils/parser/Id3Utils.h
 
         src/utils/path/PathManager.h
         src/utils/path/PathManager.cpp

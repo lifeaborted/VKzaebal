@@ -1,4 +1,5 @@
 #include "MpegTsDemuxer.h"
+#include "Id3Utils.h"
 #include "utils/logger/Logger.h"
 #include <algorithm>
 
@@ -36,10 +37,9 @@ void MpegTsDemuxer::ProcessBytes(const uint8_t* data, size_t size) {
     }
 
     if (!m_isTsStream) {
-        if (size >= 10 && data[0] == 'I' && data[1] == 'D' && data[2] == '3') {
-            uint32_t tagSize = ((data[6] & 0x7F) << 21) | ((data[7] & 0x7F) << 14) |
-                               ((data[8] & 0x7F) << 7)  | (data[9] & 0x7F);
-            m_id3BytesToSkip = 10 + tagSize;
+        size_t id3Size = Id3Utils::ParseHeaderTotalSize(data, size);
+        if (id3Size > 0) {
+            m_id3BytesToSkip = id3Size;
         }
 
         if (m_id3BytesToSkip > 0) {
@@ -97,10 +97,9 @@ void MpegTsDemuxer::ProcessBytes(const uint8_t* data, size_t size) {
                         payloadSize = 0;
                     }
 
-                    if (payloadSize >= 10 && payload[0] == 'I' && payload[1] == 'D' && payload[2] == '3') {
-                        uint32_t tagSize = ((payload[6] & 0x7F) << 21) | ((payload[7] & 0x7F) << 14) |
-                                           ((payload[8] & 0x7F) << 7)  | (payload[9] & 0x7F);
-                        m_id3BytesToSkip = 10 + tagSize;
+                    size_t id3Size = Id3Utils::ParseHeaderTotalSize(payload, payloadSize);
+                    if (id3Size > 0) {
+                        m_id3BytesToSkip = id3Size;
                     }
                 }
             }

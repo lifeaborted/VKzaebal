@@ -109,6 +109,7 @@ private:
 
     mp3dec_t m_mp3Decoder;
     std::vector<uint8_t> m_mp3Buffer;
+    size_t m_mp3ReadOffset = 0;
     MpegTsDemuxer m_demuxer;
 
     // --- ПЕРЕМЕННЫЕ ВИЗУАЛИЗАТОРА ---

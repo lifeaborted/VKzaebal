@@ -489,9 +489,11 @@ void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSiz
 
     aacDecoder_Fill(m_aacDecoder, &pBuffer, &bufferSize, &bytesValid);
 
+    int16_t pcmBuf[4096];
+    int16_t stereoBuf[4096 * 2];
+
     while (true) {
-        std::vector<int16_t> pcmBuf(4096);
-        AAC_DECODER_ERROR err = aacDecoder_DecodeFrame(m_aacDecoder, pcmBuf.data(), pcmBuf.size(), 0);
+        AAC_DECODER_ERROR err = aacDecoder_DecodeFrame(m_aacDecoder, pcmBuf, 4096, 0);
 
         if (err == AAC_DEC_NOT_ENOUGH_BITS) break;
         if (err != AAC_DEC_OK) break;
@@ -500,17 +502,16 @@ void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSiz
         if (info && info->numChannels > 0) {
             ma_uint32 framesToOutput = info->frameSize;
             int16_t* pcmDataPtr = nullptr;
-            std::vector<int16_t> stereoBuf;
 
             if (info->numChannels == 1) {
-                stereoBuf.resize(info->frameSize * 2);
-                for (int i = 0; i < info->frameSize; ++i) {
+                int count = std::min<int>(info->frameSize, 4096);
+                for (int i = 0; i < count; ++i) {
                     stereoBuf[i * 2]     = pcmBuf[i];
                     stereoBuf[i * 2 + 1] = pcmBuf[i];
                 }
-                pcmDataPtr = stereoBuf.data();
+                pcmDataPtr = stereoBuf;
             } else {
-                pcmDataPtr = pcmBuf.data();
+                pcmDataPtr = pcmBuf;
             }
 
             ma_uint64 discard = m_networkDiscardFrames.load();
@@ -535,31 +536,33 @@ void MiniaudioEngine::DecodeMp3Payload(const uint8_t* payload, size_t payloadSiz
     static constexpr size_t kMinBufferForDecode = 8192;
     static constexpr size_t kMaxFrameSize = 2048;
 
-    if (m_mp3Buffer.size() < kMinBufferForDecode) return;
+    if (m_mp3Buffer.size() - m_mp3ReadOffset < kMinBufferForDecode) return;
 
+    int16_t pcmBuf[MINIMP3_MAX_SAMPLES_PER_FRAME];
+    int16_t stereoBuf[MINIMP3_MAX_SAMPLES_PER_FRAME * 2];
     mp3dec_frame_info_t info;
-    while (m_mp3Buffer.size() > kMaxFrameSize) {
-        std::vector<int16_t> pcmBuf(MINIMP3_MAX_SAMPLES_PER_FRAME);
-        int samples = mp3dec_decode_frame(&m_mp3Decoder, m_mp3Buffer.data(),
-                                           static_cast<int>(m_mp3Buffer.size()),
-                                           pcmBuf.data(), &info);
+
+    while (m_mp3Buffer.size() - m_mp3ReadOffset > kMaxFrameSize) {
+        int samples = mp3dec_decode_frame(&m_mp3Decoder,
+                                          m_mp3Buffer.data() + m_mp3ReadOffset,
+                                          static_cast<int>(m_mp3Buffer.size() - m_mp3ReadOffset),
+                                          pcmBuf, &info);
 
         if (info.frame_bytes == 0) break;
 
         if (samples > 0 && info.channels > 0) {
             ma_uint32 framesToOutput = samples;
             int16_t* pcmDataPtr = nullptr;
-            std::vector<int16_t> stereoBuf;
 
             if (info.channels == 1) {
-                stereoBuf.resize(samples * 2);
-                for (int i = 0; i < samples; ++i) {
+                int count = std::min<int>(samples, MINIMP3_MAX_SAMPLES_PER_FRAME);
+                for (int i = 0; i < count; ++i) {
                     stereoBuf[i * 2]     = pcmBuf[i];
                     stereoBuf[i * 2 + 1] = pcmBuf[i];
                 }
-                pcmDataPtr = stereoBuf.data();
+                pcmDataPtr = stereoBuf;
             } else {
-                pcmDataPtr = pcmBuf.data();
+                pcmDataPtr = pcmBuf;
             }
 
             ma_uint64 discard = m_networkDiscardFrames.load();
@@ -575,7 +578,12 @@ void MiniaudioEngine::DecodeMp3Payload(const uint8_t* payload, size_t payloadSiz
                 m_pcmBuffer.Write(reinterpret_cast<uint8_t*>(pcmDataPtr), bytesToOutput);
             }
         }
-        m_mp3Buffer.erase(m_mp3Buffer.begin(), m_mp3Buffer.begin() + info.frame_bytes);
+        m_mp3ReadOffset += info.frame_bytes;
+    }
+
+    if (m_mp3ReadOffset >= 65536 || m_mp3ReadOffset >= m_mp3Buffer.size()) {
+        m_mp3Buffer.erase(m_mp3Buffer.begin(), m_mp3Buffer.begin() + m_mp3ReadOffset);
+        m_mp3ReadOffset = 0;
     }
 }
 
@@ -603,6 +611,7 @@ void MiniaudioEngine::ClearBuffers(bool crossfade, int nextDurationSec) {
 
     m_demuxer.Reset();
     m_mp3Buffer.clear();
+    m_mp3ReadOffset = 0;
     mp3dec_init(&m_mp3Decoder);
 
     {

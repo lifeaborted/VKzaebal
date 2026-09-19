@@ -2,11 +2,13 @@
 #include "utils/logger/Logger.h"
 #include <QTimer>
 #include <QRandomGenerator>
+#include <QPointer>
+#include <QThreadPool>
+#include <QCoreApplication>
 
 YouTubePoTokenGenerator::YouTubePoTokenGenerator(QObject* parent)
     : QObject(parent) {
-    Logger::Log(LogLevel::INFO, "YouTubePoTokenGenerator: Initializing QJSEngine with DOM/BOM polyfills...");
-    setupPolyfillEnvironment();
+    Logger::Log(LogLevel::INFO, "YouTubePoTokenGenerator: Headless generator created.");
 }
 
 /**
@@ -20,9 +22,7 @@ YouTubePoTokenGenerator::YouTubePoTokenGenerator(QObject* parent)
  * Данный метод создает полноценные mock-объекты со свойствами и методами,
  * имитирующими поведение современного Chromium (Win32), включая эмуляцию canvas 2D.
  */
-void YouTubePoTokenGenerator::setupPolyfillEnvironment() {
-    if (m_isPolyfillReady) return;
-
+void YouTubePoTokenGenerator::setupPolyfillEnvironment(QJSEngine& engine) {
     const char* polyfillJs = R"raw(
     (function() {
         var global = (typeof globalThis !== 'undefined') ? globalThis : this;
@@ -265,11 +265,10 @@ void YouTubePoTokenGenerator::setupPolyfillEnvironment() {
     })();
     )raw";
 
-    QJSValue res = m_engine.evaluate(polyfillJs);
+    QJSValue res = engine.evaluate(polyfillJs);
     if (res.isError()) {
         Logger::Log(LogLevel::ERROR, "YouTubePoTokenGenerator: Failed to initialize polyfill: " + res.toString().toStdString());
     } else {
-        m_isPolyfillReady = true;
         Logger::Log(LogLevel::INFO, "YouTubePoTokenGenerator: Polyfill environment initialized successfully.");
     }
 }
@@ -291,21 +290,36 @@ QString YouTubePoTokenGenerator::generateWebPoTokenFallback() {
 }
 
 void YouTubePoTokenGenerator::generateToken(const QString& jsCode, std::function<void(QString, QString)> callback) {
-    setupPolyfillEnvironment();
+    if (jsCode.isEmpty()) {
+        QString poToken = generateWebPoTokenFallback();
+        QString visitorData;
+        Logger::Log(LogLevel::INFO, "YouTubePoTokenGenerator: po_token ready (fallback): " + poToken.left(16).toStdString() + "... (length=" + std::to_string(poToken.length()) + ")");
+        emit tokenGenerated(poToken, visitorData);
+        if (callback) {
+            QTimer::singleShot(0, this, [callback, poToken, visitorData]() {
+                callback(poToken, visitorData);
+            });
+        }
+        return;
+    }
 
-    QString poToken;
-    QString visitorData;
+    QThreadPool::globalInstance()->start([safeThis = QPointer<YouTubePoTokenGenerator>(this), jsCode, callback]() {
+        QJSEngine engine;
+        setupPolyfillEnvironment(engine);
 
-    if (!jsCode.isEmpty()) {
-        Logger::Log(LogLevel::INFO, "YouTubePoTokenGenerator: Evaluating custom BotGuard script in QJSEngine...");
-        QJSValue result = m_engine.evaluate(jsCode);
+        Logger::Log(LogLevel::INFO, "YouTubePoTokenGenerator: Evaluating custom BotGuard script in worker thread...");
+        QJSValue result = engine.evaluate(jsCode);
+
+        QString poToken;
+        QString visitorData;
+        QString errStr;
+        bool hasError = false;
 
         if (result.isError()) {
-            QString errStr = QString("YouTubePoTokenGenerator JS Evaluation Error [line %1]: %2")
-                                 .arg(result.property("lineNumber").toInt())
-                                 .arg(result.toString());
-            Logger::Log(LogLevel::ERROR, errStr.toStdString());
-            emit tokenError(errStr);
+            errStr = QString("YouTubePoTokenGenerator JS Evaluation Error [line %1]: %2")
+                         .arg(result.property("lineNumber").toInt())
+                         .arg(result.toString());
+            hasError = true;
         } else {
             if (result.isObject()) {
                 if (result.hasProperty("poToken")) {
@@ -320,28 +334,32 @@ void YouTubePoTokenGenerator::generateToken(const QString& jsCode, std::function
                 poToken = result.toString();
             }
 
-            // Проверка глобальной области видимости window на случай, если скрипт записал токен туда
             if (poToken.isEmpty()) {
-                QJSValue globVal = m_engine.evaluate("window.poToken || window._poToken || window.botguardToken || ''");
+                QJSValue globVal = engine.evaluate("window.poToken || window._poToken || window.botguardToken || ''");
                 if (globVal.isString() && !globVal.toString().isEmpty()) {
                     poToken = globVal.toString();
                 }
             }
         }
-    }
 
-    if (poToken.isEmpty()) {
-        poToken = generateWebPoTokenFallback();
-    }
+        if (poToken.isEmpty()) {
+            poToken = generateWebPoTokenFallback();
+        }
 
-    Logger::Log(LogLevel::INFO, "YouTubePoTokenGenerator: po_token ready: " + poToken.left(16).toStdString() + "... (length=" + std::to_string(poToken.length()) + ")");
-
-    emit tokenGenerated(poToken, visitorData);
-
-    if (callback) {
-        // Гарантируем неблокирующий асинхронный вызов колбэка
-        QTimer::singleShot(0, this, [callback, poToken, visitorData]() {
-            callback(poToken, visitorData);
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [safeThis, poToken, visitorData, errStr, hasError, callback]() {
+            if (hasError) {
+                Logger::Log(LogLevel::ERROR, errStr.toStdString());
+                if (safeThis) {
+                    emit safeThis->tokenError(errStr);
+                }
+            }
+            Logger::Log(LogLevel::INFO, "YouTubePoTokenGenerator: po_token ready: " + poToken.left(16).toStdString() + "... (length=" + std::to_string(poToken.length()) + ")");
+            if (safeThis) {
+                emit safeThis->tokenGenerated(poToken, visitorData);
+            }
+            if (callback) {
+                callback(poToken, visitorData);
+            }
         });
-    }
+    });
 }

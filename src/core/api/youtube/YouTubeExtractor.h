@@ -36,12 +36,12 @@ public:
     /**
      * @brief C++ функция декодирования зашифрованной подписи (аналог yt-dlp AST парсера)
      */
-    QString decryptSignature(const QString& signatureCipher, const QString& baseJs);
+    static QString decryptSignature(const QString& signatureCipher, const QString& baseJs);
 
     /**
      * @brief C++ функция трансформации n-параметра (защита от троттлинга скорости YouTube)
      */
-    QString transformNToken(const QString& rawN, const QString& baseJs);
+    static QString transformNToken(const QString& rawN, const QString& baseJs);
 
 signals:
     void extractionFinished(const QString& videoId, const QString& streamUrl);
@@ -56,9 +56,9 @@ private:
     QString extractAudioUrlFromMasterManifest(const QString& manifest);
 
     // Вспомогательные методы C++ парсинга операций из base.js (AST)
-    QList<CipherOperation> parseCipherOperations(const QString& baseJs, QString& outObjName);
-    QString executeCipherOperations(QString s, const QList<CipherOperation>& ops);
-    QString evaluateSignatureInJs(const QString& s, const QString& baseJs);
+    static QList<CipherOperation> parseCipherOperations(const QString& baseJs, QString& outObjName);
+    static QString executeCipherOperations(QString s, const QList<CipherOperation>& ops);
+    static QString evaluateSignatureInJs(const QString& s, const QString& baseJs);
 
     QNetworkAccessManager* m_manager = nullptr;
     YouTubePoTokenGenerator* m_tokenGen = nullptr;
