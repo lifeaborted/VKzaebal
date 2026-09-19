@@ -13,6 +13,7 @@ public:
     ~BaseApiProvider() override;
 
     void SetAccessToken(const std::string& token) override;
+    [[nodiscard]] std::string GetAccessToken() const override { return m_accessToken; }
 
 protected:
     void SendJsonRequest(QNetworkRequest request, 

@@ -101,6 +101,8 @@ SourceRouter::SourceRouter(const QMap<QString, QString>& envVars, QObject* paren
         m_youtubeClient->SetAccessToken("");
         StartAuthFlow("YouTube", "https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fmusic.youtube.com%2F");
     });
+
+    EnsureAllProvidersInitialized();
 }
 
 SourceRouter::~SourceRouter() {
@@ -385,17 +387,43 @@ void SourceRouter::SwitchSource(const std::string& newSource) {
         emit AuthUiStateChanged(false);
         emit ProviderReady(false);
     } else if (newSource == "All" || newSource.rfind("Custom:", 0) == 0) {
+        const_cast<SourceRouter*>(this)->EnsureAllProvidersInitialized();
         emit AuthUiStateChanged(false);
         emit ProviderReady(true);
     }
 }
 
 IAudioProvider* SourceRouter::GetProvider(const std::string& sourceName) const {
-    if (sourceName == "VK" || sourceName == "vk") return m_vkClient.get();
-    if (sourceName == "Spotify" || sourceName == "spotify") return m_spotifyClient.get();
-    if (sourceName == "SoundCloud" || sourceName == "soundcloud" || sourceName == "sc") return m_soundCloudClient.get();
-    if (sourceName == "Yandex" || sourceName == "yandex") return m_yandexClient.get();
-    if (sourceName == "YouTube" || sourceName == "youtube" || sourceName == "yt") return m_youtubeClient.get();
+    if (sourceName == "VK" || sourceName == "vk") {
+        if (m_vkClient && m_vkClient->GetAccessToken().empty()) {
+            const_cast<SourceRouter*>(this)->PreinitializeVkClient();
+        }
+        return m_vkClient.get();
+    }
+    if (sourceName == "Spotify" || sourceName == "spotify") {
+        if (m_spotifyClient && m_spotifyClient->GetAccessToken().empty()) {
+            const_cast<SourceRouter*>(this)->EnsureAllProvidersInitialized();
+        }
+        return m_spotifyClient.get();
+    }
+    if (sourceName == "SoundCloud" || sourceName == "soundcloud" || sourceName == "sc") {
+        if (m_soundCloudClient && m_soundCloudClient->GetAccessToken().empty()) {
+            const_cast<SourceRouter*>(this)->EnsureAllProvidersInitialized();
+        }
+        return m_soundCloudClient.get();
+    }
+    if (sourceName == "Yandex" || sourceName == "yandex") {
+        if (m_yandexClient && m_yandexClient->GetAccessToken().empty()) {
+            const_cast<SourceRouter*>(this)->EnsureAllProvidersInitialized();
+        }
+        return m_yandexClient.get();
+    }
+    if (sourceName == "YouTube" || sourceName == "youtube" || sourceName == "yt") {
+        if (m_youtubeClient && m_youtubeClient->GetAccessToken().empty()) {
+            const_cast<SourceRouter*>(this)->EnsureAllProvidersInitialized();
+        }
+        return m_youtubeClient.get();
+    }
     return nullptr;
 }
 
@@ -503,4 +531,103 @@ void SourceRouter::CheckNextCandidate(const std::shared_ptr<const std::vector<st
             safeThis->CheckNextCandidate(candidates, index + 1, std::move(callback));
         }
     });
+}
+
+void SourceRouter::PreinitializeVkClient() {
+    if (!m_vkClient || !m_vkClient->GetAccessToken().empty()) return;
+
+    QPointer<SourceRouter> safeThis(this);
+    m_authManager->GetSavedTokens("VK", [safeThis](const std::vector<std::string>& savedTokens) {
+        if (!safeThis || savedTokens.empty() || !safeThis->m_vkClient) return;
+
+        if (safeThis->m_vkClient->GetAccessToken().empty()) {
+            safeThis->m_vkClient->SetAccessToken(savedTokens.front());
+            Logger::Log(LogLevel::INFO, "SourceRouter: Pre-initialized VK token from pool (front of pool).");
+        }
+
+        safeThis->ValidateVkPoolQuietly(savedTokens, 0);
+    });
+}
+
+void SourceRouter::ValidateVkPoolQuietly(const std::vector<std::string>& tokens, size_t index) {
+    if (index >= tokens.size() || !m_vkClient) return;
+
+    QPointer<SourceRouter> safeThis(this);
+    const std::string& currentToken = tokens[index];
+
+    m_vkClient->SetAccessToken(currentToken);
+    m_vkClient->ValidateToken([safeThis, tokens, index, currentToken](bool isValid) {
+        if (!safeThis || !safeThis->m_vkClient) return;
+
+        if (isValid) {
+            Logger::Log(LogLevel::INFO, "SourceRouter: Background VK token validated (index " + std::to_string(index) + ").");
+            safeThis->m_authManager->SaveToken(currentToken, "VK");
+        } else {
+            safeThis->ValidateVkPoolQuietly(tokens, index + 1);
+        }
+    });
+}
+
+void SourceRouter::EnsureAllProvidersInitialized() {
+    PreinitializeVkClient();
+
+    QPointer<SourceRouter> safeThis(this);
+
+    // Yandex
+    if (m_yandexClient && m_yandexClient->GetAccessToken().empty()) {
+        m_authManager->GetSavedToken("Yandex", [safeThis](const std::string& token) {
+            if (!safeThis || token.empty() || !safeThis->m_yandexClient) return;
+            if (safeThis->m_yandexClient->GetAccessToken().empty()) {
+                safeThis->m_yandexClient->SetAccessToken(token);
+                Logger::Log(LogLevel::INFO, "SourceRouter: Pre-initialized Yandex client with saved token.");
+            }
+        });
+    }
+
+    // SoundCloud
+    if (m_soundCloudClient && m_soundCloudClient->GetAccessToken().empty()) {
+        m_authManager->GetSavedToken("SoundCloud", [safeThis](const std::string& token) {
+            if (!safeThis || token.empty() || !safeThis->m_soundCloudClient) return;
+            if (safeThis->m_soundCloudClient->GetAccessToken().empty()) {
+                safeThis->m_soundCloudClient->SetAccessToken(token);
+                safeThis->m_soundCloudClient->InitializeWithToken();
+                Logger::Log(LogLevel::INFO, "SourceRouter: Pre-initialized SoundCloud client with saved token.");
+            }
+        });
+    }
+
+    // Spotify
+    if (m_spotifyClient && m_spotifyClient->GetAccessToken().empty()) {
+        QString spDc = m_envVars.value("SPOTIFY_SP_DC", "");
+        if (!spDc.isEmpty()) {
+            m_spotifyClient->AuthWithSpDc(spDc);
+        } else {
+            m_authManager->GetSavedToken("Spotify", [safeThis](const std::string& token) {
+                if (!safeThis || token.empty() || !safeThis->m_spotifyClient) return;
+                if (safeThis->m_spotifyClient->GetAccessToken().empty()) {
+                    safeThis->m_spotifyClient->SetAccessToken(token);
+                    Logger::Log(LogLevel::INFO, "SourceRouter: Pre-initialized Spotify client with saved token.");
+                }
+            });
+        }
+    }
+
+    // YouTube
+    if (m_youtubeClient && m_youtubeClient->GetAccessToken().empty()) {
+        QString envCookie = m_envVars.value("YOUTUBE_COOKIE", "");
+        m_authManager->GetSavedToken("YouTube", [safeThis, envCookie](const std::string& savedToken) {
+            if (!safeThis || !safeThis->m_youtubeClient) return;
+            std::string token = !envCookie.isEmpty() ? envCookie.toStdString() : savedToken;
+            if (token.find("LOGIN_INFO=") == std::string::npos) {
+                std::string fullCookies = WebViewCookieReader::GetFullYouTubeCookies();
+                if (!fullCookies.empty() && fullCookies.find("LOGIN_INFO=") != std::string::npos) {
+                    token = fullCookies;
+                }
+            }
+            if (!token.empty() && safeThis->m_youtubeClient->GetAccessToken().empty()) {
+                safeThis->m_youtubeClient->SetAccessToken(token);
+                Logger::Log(LogLevel::INFO, "SourceRouter: Pre-initialized YouTube client with saved cookies.");
+            }
+        });
+    }
 }

@@ -24,7 +24,7 @@ bool VkClient::HandleApiError(const QJsonDocument& json, int /*httpStatusCode*/)
 
         Logger::Log(LogLevel::ERROR, "VK API Error [" + std::to_string(errCode) + "]: " + errMsg);
 
-        if (errCode == 5 && !m_isValidatingToken) {
+        if ((errCode == 5 || errCode == 15 || errCode == 27) && !m_isValidatingToken) {
             emit TokenExpired();
         }
         return true;

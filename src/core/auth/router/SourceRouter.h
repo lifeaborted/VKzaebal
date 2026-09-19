@@ -39,6 +39,8 @@ public:
 
     void CheckSourceAuthorized(const std::string& source, std::function<void(bool isAuth)> callback) const;
     void FindNextAuthorizedSource(const std::string& excludedSource, std::function<void(const std::string& nextSource)> callback) const;
+    void EnsureAllProvidersInitialized();
+    void PreinitializeVkClient();
 
     signals:
     void SourceChanged(const std::string& newSource);
@@ -63,6 +65,7 @@ private:
 
     void StartAuthFlow(const QString& service, const QString& authUrl);
     void TryValidateVkTokens(const std::vector<std::string>& tokens, size_t index);
+    void ValidateVkPoolQuietly(const std::vector<std::string>& tokens, size_t index);
     void CheckNextCandidate(const std::shared_ptr<const std::vector<std::string>>& candidates,
                             size_t index,
                             std::function<void(const std::string& nextSource)> callback) const;

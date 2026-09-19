@@ -8,6 +8,7 @@
 
 #include <QFile>
 #include <QTimer>
+#include <QPointer>
 #include <QCoreApplication>
 #include <QSettings>
 
@@ -50,10 +51,12 @@ void PlaybackController::HandleTrackNearEnd() {
     IAudioProvider* provider = (m_providerResolver && !nextTrack.source.empty()) ? m_providerResolver(nextTrack.source) : m_currentProvider;
     if (!provider) return;
 
-    provider->FetchTrackUrl(nextTrack.id, [this, nextTrack](const std::string& freshUrl, bool isNetworkError) {
+    QPointer<PlaybackController> safeThis(this);
+    provider->FetchTrackUrl(nextTrack.id, [safeThis, nextTrack](const std::string& freshUrl, bool isNetworkError) {
+        if (!safeThis) return;
         if (!isNetworkError && !freshUrl.empty()) {
-            m_cachedNextUrl = freshUrl;
-            m_preloadedTrack = nextTrack;
+            safeThis->m_cachedNextUrl = freshUrl;
+            safeThis->m_preloadedTrack = nextTrack;
             Logger::Log(LogLevel::INFO, "PlaybackController: Next track URL pre-fetched successfully from " + nextTrack.source);
         }
     });
@@ -118,50 +121,56 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
         return;
     }
 
-    auto executePlay = [this, track, attempt, currentGen](const std::string& freshUrl, bool isNetworkError) {
-        if (currentGen != m_playbackGeneration.load()) return;
+    QPointer<PlaybackController> safeThis(this);
+    auto executePlay = [safeThis, track, attempt, currentGen](const std::string& freshUrl, bool isNetworkError) {
+        if (!safeThis) return;
+        if (currentGen != safeThis->m_playbackGeneration.load()) return;
 
         if (!isNetworkError && freshUrl.empty()) {
-            m_skipCount++;
-            if (m_skipCount >= 5) {
+            safeThis->m_skipCount++;
+            if (safeThis->m_skipCount >= 5) {
                 Logger::Log(LogLevel::ERROR, "Слишком много ошибок подряд. Остановка.");
-                m_skipCount = 0;
+                safeThis->m_skipCount = 0;
                 return;
             }
 
             Logger::Log(LogLevel::WARNING, "Track is restricted or token invalid. Skipping...");
-            m_playlist.Next();
+            safeThis->m_playlist.Next();
             return;
         }
 
-        m_skipCount = 0;
+        safeThis->m_skipCount = 0;
 
         if (!freshUrl.empty()) {
-            m_streamer.StopDownload();
-            m_audio.ClearBuffers(m_crossfadeEnabled, track.duration);
-            m_streamer.SetTrackDuration(track.duration);
-            m_streamer.StartDownload(freshUrl);
-            m_audio.Resume();
+            safeThis->m_streamer.StopDownload();
+            safeThis->m_audio.ClearBuffers(safeThis->m_crossfadeEnabled, track.duration);
+            safeThis->m_streamer.SetTrackDuration(track.duration);
+            safeThis->m_streamer.StartDownload(freshUrl);
+            safeThis->m_audio.Resume();
 
-            if (m_savedPosition > 0.0) {
-                double posToSeek = m_savedPosition;
-                m_savedPosition = 0.0;
+            if (safeThis->m_savedPosition > 0.0) {
+                double posToSeek = safeThis->m_savedPosition;
+                safeThis->m_savedPosition = 0.0;
 
-                m_audio.SetPositionSeconds(posToSeek);
+                safeThis->m_audio.SetPositionSeconds(posToSeek);
             }
 
-            if (m_startPaused) {
-                m_audio.Pause();
-                m_startPaused = false;
+            if (safeThis->m_startPaused) {
+                safeThis->m_audio.Pause();
+                safeThis->m_startPaused = false;
             }
             return;
         }
 
         if (attempt < 3) {
             Logger::Log(LogLevel::INFO, "Retrying stream in 2 seconds...");
-            QTimer::singleShot(2000, [this, track, attempt]() { AttemptPlay(track, attempt + 1); });
+            QTimer::singleShot(2000, safeThis.data(), [safeThis, track, attempt]() {
+                if (safeThis) {
+                    safeThis->AttemptPlay(track, attempt + 1);
+                }
+            });
         } else {
-            m_playlist.Next();
+            safeThis->m_playlist.Next();
         }
     };
 
@@ -170,8 +179,10 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
     if (provider) {
         provider->FetchTrackUrl(track.id, executePlay);
     } else if (!isDownloaded) {
-        QMetaObject::invokeMethod(QCoreApplication::instance(), [this]() {
-            m_playlist.Next();
+        QMetaObject::invokeMethod(this, [safeThis]() {
+            if (safeThis) {
+                safeThis->m_playlist.Next();
+            }
         }, Qt::QueuedConnection);
     }
 }
