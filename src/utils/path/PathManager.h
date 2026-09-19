@@ -12,6 +12,7 @@ public:
     static void SetSessionDownloadsDir(const QString& dir);
     static QString GetLyricsDir();
     static QString GetLogsDir();
+    static QString GetTempDir();
 
     static QString GetDbPath();
     static QString GetConfigPath();
@@ -29,5 +30,6 @@ private:
     static QString s_sessionDownloadsDir;
     static QString s_lyricsDir;
     static QString s_logsDir;
+    static QString s_tempDir;
     static bool s_initialized;
 };

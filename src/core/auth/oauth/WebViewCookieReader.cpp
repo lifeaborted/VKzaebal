@@ -1,10 +1,12 @@
 #include "WebViewCookieReader.h"
 #include "utils/logger/Logger.h"
+#include "utils/path/PathManager.h"
 
 #include <QStandardPaths>
 #include <QFile>
 #include <QDir>
 #include <QFileInfo>
+#include <QTemporaryFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QByteArray>
@@ -85,92 +87,142 @@ std::string WebViewCookieReader::GetFullYouTubeCookies() {
     QByteArray aesKey(reinterpret_cast<const char*>(outBlob.pbData), outBlob.cbData);
     LocalFree(outBlob.pbData);
 
-    // 3. Инициализируем BCrypt AES-GCM
-    BCRYPT_ALG_HANDLE hAlg = nullptr;
-    NTSTATUS st = BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_AES_ALGORITHM, nullptr, 0);
+    // 3. Инициализируем BCrypt AES-GCM через RAII
+    struct BCryptGuard {
+        BCRYPT_ALG_HANDLE hAlg = nullptr;
+        BCRYPT_KEY_HANDLE hKey = nullptr;
+        ~BCryptGuard() {
+            if (hKey) BCryptDestroyKey(hKey);
+            if (hAlg) BCryptCloseAlgorithmProvider(hAlg, 0);
+        }
+    } bcrypt;
+
+    NTSTATUS st = BCryptOpenAlgorithmProvider(&bcrypt.hAlg, BCRYPT_AES_ALGORITHM, nullptr, 0);
     if (st != 0) {
         Logger::Log(LogLevel::ERROR, "WebViewCookieReader: BCryptOpenAlgorithmProvider failed.");
         return "";
     }
 
-    st = BCryptSetProperty(hAlg, BCRYPT_CHAINING_MODE, (PUCHAR)BCRYPT_CHAIN_MODE_GCM, sizeof(BCRYPT_CHAIN_MODE_GCM), 0);
+    st = BCryptSetProperty(bcrypt.hAlg, BCRYPT_CHAINING_MODE, (PUCHAR)BCRYPT_CHAIN_MODE_GCM, sizeof(BCRYPT_CHAIN_MODE_GCM), 0);
     if (st != 0) {
-        BCryptCloseAlgorithmProvider(hAlg, 0);
+        Logger::Log(LogLevel::ERROR, "WebViewCookieReader: BCryptSetProperty failed.");
         return "";
     }
 
-    BCRYPT_KEY_HANDLE hKey = nullptr;
-    st = BCryptGenerateSymmetricKey(hAlg, &hKey, nullptr, 0, (PUCHAR)aesKey.data(), aesKey.size(), 0);
+    st = BCryptGenerateSymmetricKey(bcrypt.hAlg, &bcrypt.hKey, nullptr, 0, (PUCHAR)aesKey.data(), aesKey.size(), 0);
     if (st != 0) {
-        BCryptCloseAlgorithmProvider(hAlg, 0);
+        Logger::Log(LogLevel::ERROR, "WebViewCookieReader: BCryptGenerateSymmetricKey failed.");
         return "";
     }
 
-    // 4. Копируем базу данных Cookies во временный файл (во избежание блокировки процессом WebView)
-    QString tempCookiesPath = QDir::tempPath() + "/vkaudio_temp_cookies.db";
-    QFile::remove(tempCookiesPath);
+    // Удаляем устаревший незащищенный временный файл в системном %TEMP%, если он остался от старых версий
+    QString legacyTempPath = QDir::tempPath() + "/vkaudio_temp_cookies.db";
+    if (QFile::exists(legacyTempPath)) {
+        QFile::remove(legacyTempPath);
+    }
+
+    // 4. Копируем базу данных Cookies в изолированную защищенную директорию приложения
+    QString secureTempDir = PathManager::GetTempDir();
+    QDir().mkpath(secureTempDir);
+
+    // Удаляем любые оставшиеся временные файлы cookie в secureTempDir
+    QDir tempDirObj(secureTempDir);
+    const QStringList oldTempFiles = tempDirObj.entryList(QStringList() << "yt_cookie_*.db" << "yt_cookie_*.db-wal" << "yt_cookie_*.db-shm", QDir::Files);
+    for (const QString& oldFile : oldTempFiles) {
+        tempDirObj.remove(oldFile);
+    }
+
+    // Генерируем уникальное имя временного файла через QTemporaryFile в изолированной директории
+    QString tempCookiesPath;
+    {
+        QTemporaryFile tempFile(secureTempDir + "/yt_cookie_XXXXXX.db");
+        tempFile.setAutoRemove(false);
+        if (tempFile.open()) {
+            tempCookiesPath = tempFile.fileName();
+            tempFile.close();
+            QFile::remove(tempCookiesPath);
+        }
+    }
+
+    if (tempCookiesPath.isEmpty()) {
+        Logger::Log(LogLevel::ERROR, "WebViewCookieReader: Failed to allocate secure temporary database path.");
+        return "";
+    }
+
+    // RAII-страж, гарантирующий удаление временной базы и связанных журналов SQLite при любом выходе
+    struct TempDbGuard {
+        QString path;
+        ~TempDbGuard() {
+            if (!path.isEmpty()) {
+                QFile::remove(path);
+                QFile::remove(path + "-wal");
+                QFile::remove(path + "-shm");
+            }
+        }
+    } tempDbGuard{tempCookiesPath};
+
     if (!QFile::copy(baseDir + "/Default/Network/Cookies", tempCookiesPath)) {
-        Logger::Log(LogLevel::ERROR, "WebViewCookieReader: Failed to copy Cookies database to temp path.");
-        BCryptDestroyKey(hKey);
-        BCryptCloseAlgorithmProvider(hAlg, 0);
+        Logger::Log(LogLevel::ERROR, "WebViewCookieReader: Failed to copy Cookies database to secure temp path.");
         return "";
     }
 
     // 5. Читаем и расшифровываем куки из SQLite
     QMap<QString, QString> cookieMap;
     {
-        const QString connName = "webview_cookie_reader_conn";
-        QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connName);
-        db.setDatabaseName(tempCookiesPath);
-        if (db.open()) {
-            QSqlQuery query(db);
-            query.prepare("SELECT name, encrypted_value FROM cookies WHERE host_key LIKE '%youtube.com'");
-            if (query.exec()) {
-                while (query.next()) {
-                    QString name = query.value(0).toString();
-                    QByteArray enc = query.value(1).toByteArray();
-                    if (enc.startsWith("v10") || enc.startsWith("v11")) {
-                        if (enc.size() > 3 + 12 + 16) {
-                            QByteArray nonce = enc.mid(3, 12);
-                            QByteArray ciphertext = enc.mid(15, enc.size() - 3 - 12 - 16);
-                            QByteArray tag = enc.right(16);
+        const QString connName = QString("webview_cookie_reader_%1").arg(QDateTime::currentMSecsSinceEpoch());
+        {
+            QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connName);
+            db.setDatabaseName(tempCookiesPath);
+            if (db.open()) {
+                QSqlQuery query(db);
+                query.prepare("SELECT name, encrypted_value FROM cookies WHERE host_key LIKE '%youtube.com'");
+                if (query.exec()) {
+                    while (query.next()) {
+                        QString name = query.value(0).toString();
+                        QByteArray enc = query.value(1).toByteArray();
+                        if (enc.startsWith("v10") || enc.startsWith("v11")) {
+                            if (enc.size() > 3 + 12 + 16) {
+                                QByteArray nonce = enc.mid(3, 12);
+                                QByteArray ciphertext = enc.mid(15, enc.size() - 3 - 12 - 16);
+                                QByteArray tag = enc.right(16);
 
-                            BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO info;
-                            BCRYPT_INIT_AUTH_MODE_INFO(info);
-                            info.pbNonce = (PUCHAR)nonce.data();
-                            info.cbNonce = nonce.size();
-                            info.pbTag = (PUCHAR)tag.data();
-                            info.cbTag = tag.size();
+                                BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO info;
+                                BCRYPT_INIT_AUTH_MODE_INFO(info);
+                                info.pbNonce = (PUCHAR)nonce.data();
+                                info.cbNonce = nonce.size();
+                                info.pbTag = (PUCHAR)tag.data();
+                                info.cbTag = tag.size();
 
-                            QByteArray outBuf(ciphertext.size(), 0);
-                            ULONG outLen = 0;
-                            st = BCryptDecrypt(hKey, (PUCHAR)ciphertext.data(), ciphertext.size(), &info, nullptr, 0, (PUCHAR)outBuf.data(), outBuf.size(), &outLen, 0);
-                            if (st == 0) {
-                                outBuf.resize(outLen);
-                                // Chromium 120+ добавляет 32-байтный заголовок перед чистым значением
-                                if (outBuf.size() > 32) {
-                                    outBuf = outBuf.mid(32);
+                                QByteArray outBuf(ciphertext.size(), 0);
+                                ULONG outLen = 0;
+                                st = BCryptDecrypt(bcrypt.hKey, (PUCHAR)ciphertext.data(), ciphertext.size(), &info, nullptr, 0, (PUCHAR)outBuf.data(), outBuf.size(), &outLen, 0);
+                                if (st == 0) {
+                                    outBuf.resize(outLen);
+                                    // Chromium 120+ добавляет 32-байтный заголовок перед чистым значением
+                                    if (outBuf.size() > 32) {
+                                        outBuf = outBuf.mid(32);
+                                    }
+                                    cookieMap[name] = QString::fromUtf8(outBuf);
                                 }
-                                cookieMap[name] = QString::fromUtf8(outBuf);
                             }
+                        } else if (!enc.isEmpty()) {
+                            cookieMap[name] = QString::fromUtf8(enc);
                         }
-                    } else if (!enc.isEmpty()) {
-                        cookieMap[name] = QString::fromUtf8(enc);
                     }
+                } else {
+                    Logger::Log(LogLevel::ERROR, "WebViewCookieReader: SQL query failed: " + query.lastError().text().toStdString());
                 }
+                db.close();
             } else {
-                Logger::Log(LogLevel::ERROR, "WebViewCookieReader: SQL query failed: " + query.lastError().text().toStdString());
+                Logger::Log(LogLevel::ERROR, "WebViewCookieReader: Failed to open SQLite DB: " + db.lastError().text().toStdString());
             }
-            db.close();
-        } else {
-            Logger::Log(LogLevel::ERROR, "WebViewCookieReader: Failed to open SQLite DB: " + db.lastError().text().toStdString());
-        }
+        } // Здесь db закрывается и уничтожается, освобождая файловый дескриптор в ОС
         QSqlDatabase::removeDatabase(connName);
     }
 
     QFile::remove(tempCookiesPath);
-    BCryptDestroyKey(hKey);
-    BCryptCloseAlgorithmProvider(hAlg, 0);
+    QFile::remove(tempCookiesPath + "-wal");
+    QFile::remove(tempCookiesPath + "-shm");
 
     if (cookieMap.isEmpty()) {
         Logger::Log(LogLevel::WARNING, "WebViewCookieReader: No YouTube cookies found in SQLite database.");
