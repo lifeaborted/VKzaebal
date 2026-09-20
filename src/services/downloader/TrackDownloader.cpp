@@ -120,7 +120,8 @@ namespace {
     }
 }
 
-TrackDownloader::TrackDownloader(QObject* parent) : QObject(parent) {
+TrackDownloader::TrackDownloader(QObject* parent, QNetworkAccessManager* manager)
+    : QObject(parent), m_manager(manager ? manager : new QNetworkAccessManager(this)) {
     QDir().mkpath(PathManager::GetDownloadsDir());
 }
 
@@ -143,7 +144,7 @@ void TrackDownloader::Download(const Track& track, const std::string& urlStr, co
 
     Logger::Log(LogLevel::INFO, "[Загрузчик] Старт загрузки (Universal Native): " + safeName);
 
-    NetworkStreamer* streamer = new NetworkStreamer(this);
+    NetworkStreamer* streamer = new NetworkStreamer(this, m_manager);
     std::shared_ptr<QFile> file = std::make_shared<QFile>(filePath);
     if (!file->open(QIODevice::WriteOnly)) {
         Logger::Log(LogLevel::ERROR, "[Ошибка] Не удалось создать файл для сохранения: " + safeName);
@@ -193,7 +194,7 @@ void TrackDownloader::Download(const Track& track, const std::string& urlStr, co
         }
 
         QNetworkRequest request((QUrl(QString::fromStdString(track.coverUrl))));
-        QNetworkReply* reply = safeThis->m_manager.get(request);
+        QNetworkReply* reply = safeThis->m_manager->get(request);
 
         connect(reply, &QNetworkReply::finished, safeThis, [safeThis, reply, finalPath, track, syncPrint]() {
             reply->deleteLater();

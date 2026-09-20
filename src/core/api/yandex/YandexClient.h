@@ -6,7 +6,7 @@
 class YandexClient : public BaseApiProvider {
     Q_OBJECT
 public:
-    explicit YandexClient(QObject* parent = nullptr);
+    explicit YandexClient(QObject* parent = nullptr, QNetworkAccessManager* manager = nullptr);
     ~YandexClient() override;
 
     void FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) override;

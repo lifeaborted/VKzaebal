@@ -6,7 +6,7 @@
 #include <QCryptographicHash>
 #include <QRandomGenerator>
 
-SpotifyClient::SpotifyClient(QObject* parent) : BaseApiProvider(parent) {
+SpotifyClient::SpotifyClient(QObject* parent, QNetworkAccessManager* manager) : BaseApiProvider(parent, manager) {
     Logger::Log(LogLevel::INFO, "SpotifyClient created.");
 }
 SpotifyClient::~SpotifyClient() {

@@ -56,6 +56,7 @@ private:
     std::string m_overlayText = "";
 
     std::string m_lastPrintedStr = "";
+    uint64_t m_lastFrameHash = 0;
     int m_lastLinesCount = 0;
 
     int m_uiFps = 5;

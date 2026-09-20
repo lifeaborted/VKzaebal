@@ -599,6 +599,7 @@ void MiniaudioEngine::ClearBuffers(bool crossfade, int nextDurationSec) {
         m_nearEndSignaled.store(false, std::memory_order_release);
         m_finishedSignaled.store(false, std::memory_order_release);
         m_playbackFrameCount = 0;
+        m_networkDiscardFrames = 0;
 
         if (crossfade && m_crossfadeDurationMs > 0) {
             InitiateCrossfade();

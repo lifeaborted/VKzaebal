@@ -20,6 +20,7 @@ class TrackDownloader;
 class LyricsFetcher;
 class CommandDispatcher;
 class ConsoleRenderer;
+class QNetworkAccessManager;
 class QTimer;
 
 enum class ConsoleState {
@@ -41,6 +42,7 @@ public:
         DatabaseManager& dbManager,
         TrackDownloader& downloader,
         LyricsFetcher& lyricsFetcher,
+        QNetworkAccessManager* networkManager = nullptr,
         QObject* parent = nullptr);
     ~ConsoleController();
 

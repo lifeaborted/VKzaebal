@@ -9,7 +9,7 @@
 class BaseApiProvider : public IAudioProvider {
     Q_OBJECT
 public:
-    explicit BaseApiProvider(QObject* parent = nullptr);
+    explicit BaseApiProvider(QObject* parent = nullptr, QNetworkAccessManager* manager = nullptr);
     ~BaseApiProvider() override;
 
     void SetAccessToken(const std::string& token) override;

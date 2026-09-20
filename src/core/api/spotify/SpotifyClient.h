@@ -5,7 +5,7 @@
 class SpotifyClient : public BaseApiProvider {
     Q_OBJECT
 public:
-    explicit SpotifyClient(QObject* parent = nullptr);
+    explicit SpotifyClient(QObject* parent = nullptr, QNetworkAccessManager* manager = nullptr);
     ~SpotifyClient() override;
     void AuthWithSpDc(const QString& spDcCookie);
     std::string StartAuthPkce(const QString& clientId);

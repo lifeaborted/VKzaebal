@@ -25,12 +25,13 @@
 
 ConsoleController::ConsoleController(
     IAudioEngine& audio, PlaylistManager& playlist, OAuthManager& authManager,
-    DatabaseManager& dbManager, TrackDownloader& downloader, LyricsFetcher& lyricsFetcher, QObject* parent
+    DatabaseManager& dbManager, TrackDownloader& downloader, LyricsFetcher& lyricsFetcher,
+    QNetworkAccessManager* networkManager, QObject* parent
 ) : QObject(parent), m_audio(audio), m_playlist(playlist), m_authManager(authManager),
     m_dbManager(dbManager), m_downloader(downloader), m_lyricsFetcher(lyricsFetcher),
     m_currentState(ConsoleState::COMMAND_MODE), m_isRunning(false) {
 
-    m_dispatcher = std::make_unique<CommandDispatcher>(audio, playlist, dbManager, downloader, lyricsFetcher);
+    m_dispatcher = std::make_unique<CommandDispatcher>(audio, playlist, dbManager, downloader, lyricsFetcher, nullptr, nullptr, networkManager);
     m_renderer = std::make_unique<ConsoleRenderer>(audio, playlist);
 
     m_dispatcher->SetPrintCallback([this](const std::string& text) {

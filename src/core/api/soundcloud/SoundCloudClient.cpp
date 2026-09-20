@@ -5,7 +5,7 @@
 #include <QRegularExpression>
 #include <QJsonObject>
 
-SoundCloudClient::SoundCloudClient(QObject* parent) : BaseApiProvider(parent) {
+SoundCloudClient::SoundCloudClient(QObject* parent, QNetworkAccessManager* manager) : BaseApiProvider(parent, manager) {
     Logger::Log(LogLevel::INFO, "SoundCloudClient created.");
 }
 SoundCloudClient::~SoundCloudClient() {

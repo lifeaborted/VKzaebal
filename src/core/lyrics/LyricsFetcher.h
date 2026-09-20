@@ -8,7 +8,7 @@
 class LyricsFetcher : public QObject {
     Q_OBJECT
 public:
-    explicit LyricsFetcher(QObject* parent = nullptr);
+    explicit LyricsFetcher(QObject* parent = nullptr, QNetworkAccessManager* manager = nullptr);
     ~LyricsFetcher();
 
     void FetchLyrics(const std::string& artist, const std::string& title, std::function<void(const std::string&)> callback);

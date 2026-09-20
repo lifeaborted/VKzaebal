@@ -14,8 +14,8 @@
 #include <QRegularExpression>
 #include <QSet>
 
-YouTubeClient::YouTubeClient(QObject* parent)
-    : BaseApiProvider(parent) {
+YouTubeClient::YouTubeClient(QObject* parent, QNetworkAccessManager* manager)
+    : BaseApiProvider(parent, manager) {
     Logger::Log(LogLevel::INFO, "YouTubeClient: Initializing Headless Qt6 Engine (PoTokenGenerator + YouTubeExtractor)...");
     m_tokenGenerator = std::make_unique<YouTubePoTokenGenerator>(this);
     m_extractor = std::make_unique<YouTubeExtractor>(m_manager, m_tokenGenerator.get(), this);

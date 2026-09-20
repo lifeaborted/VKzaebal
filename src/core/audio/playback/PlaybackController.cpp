@@ -27,8 +27,9 @@ void PlaybackController::SetCrossfadeEnabled(bool enabled) {
     m_crossfadeEnabled = enabled;
 }
 
-void PlaybackController::SetSavedPosition(double pos) {
+void PlaybackController::SetSavedPosition(double pos, const std::string& trackId) {
     m_savedPosition = pos;
+    m_savedPositionTrackId = trackId;
 }
 
 void PlaybackController::ClearState() {
@@ -37,6 +38,8 @@ void PlaybackController::ClearState() {
     m_audio.Pause();
     m_preloadedTrack = Track();
     m_cachedNextUrl = "";
+    m_savedPosition = 0.0;
+    m_savedPositionTrackId = "";
 }
 
 void PlaybackController::HandleTrackFinished() {
@@ -63,24 +66,14 @@ void PlaybackController::HandleTrackNearEnd() {
 }
 
 void PlaybackController::AttemptPlay(const Track& track, int attempt) {
+    int currentGen = (attempt == 1) ? ++m_playbackGeneration : m_playbackGeneration.load();
 
     if (attempt == 1) {
-        int savePosMode = 2;
-        QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
-        QVariant val = settings.value("Playback/SavePosition", 2);
-        if (val.typeId() == QMetaType::Bool) {
-            savePosMode = val.toBool() ? 2 : 1;
-        } else {
-            bool ok = false;
-            int m = val.toInt(&ok);
-            if (ok) savePosMode = std::clamp(m, 0, 2);
-        }
-        if (savePosMode < 2) {
+        if (m_savedPositionTrackId != track.id) {
             m_savedPosition = 0.0;
+            m_savedPositionTrackId = "";
         }
     }
-
-    int currentGen = (attempt == 1) ? ++m_playbackGeneration : m_playbackGeneration.load();
 
     QString localPath = PathManager::GetDownloadFilePath(track.GetSafeFilename(), "mp3");
     if (!QFile::exists(localPath)) {
@@ -93,9 +86,10 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
             m_cachedNextUrl = "";
             m_skipCount = 0;
 
-            if (m_savedPosition > 0.0) {
+            if (m_savedPosition > 0.0 && m_savedPositionTrackId == track.id) {
                 m_audio.SetPositionSeconds(m_savedPosition);
                 m_savedPosition = 0.0;
+                m_savedPositionTrackId = "";
             }
 
             if (m_startPaused) { m_audio.Pause(); m_startPaused = false; }
@@ -103,15 +97,21 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
         }
     } else if (attempt == 1) {
         Logger::Log(LogLevel::INFO, "[Загрузка] " + track.artist + " - " + track.title + "...");
+        // При переключении трека НЕМЕДЛЕННО останавливаем предыдущий стрим и аудиопоток,
+        // чтобы старый трек не продолжал играть в фоне во время сетевой загрузки
+        m_streamer.StopDownload();
+        m_audio.Pause();
+        m_audio.ClearBuffers(false, track.duration);
     }
 
     if (isDownloaded) {
         m_skipCount = 0;
         if (m_audio.PlayStream("", track.duration, m_crossfadeEnabled, track.GetSafeFilename())) {
 
-            if (m_savedPosition > 0.0) {
+            if (m_savedPosition > 0.0 && m_savedPositionTrackId == track.id) {
                 m_audio.SetPositionSeconds(m_savedPosition);
                 m_savedPosition = 0.0;
+                m_savedPositionTrackId = "";
             }
 
             if (m_startPaused) { m_audio.Pause(); m_startPaused = false; }
@@ -148,9 +148,10 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
             safeThis->m_streamer.StartDownload(freshUrl);
             safeThis->m_audio.Resume();
 
-            if (safeThis->m_savedPosition > 0.0) {
+            if (safeThis->m_savedPosition > 0.0 && safeThis->m_savedPositionTrackId == track.id) {
                 double posToSeek = safeThis->m_savedPosition;
                 safeThis->m_savedPosition = 0.0;
+                safeThis->m_savedPositionTrackId = "";
 
                 safeThis->m_audio.SetPositionSeconds(posToSeek);
             }
@@ -164,8 +165,8 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
 
         if (attempt < 3) {
             Logger::Log(LogLevel::INFO, "Retrying stream in 2 seconds...");
-            QTimer::singleShot(2000, safeThis.data(), [safeThis, track, attempt]() {
-                if (safeThis) {
+            QTimer::singleShot(2000, safeThis.data(), [safeThis, track, attempt, currentGen]() {
+                if (safeThis && safeThis->m_playbackGeneration.load() == currentGen) {
                     safeThis->AttemptPlay(track, attempt + 1);
                 }
             });
@@ -179,8 +180,8 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
     if (provider) {
         provider->FetchTrackUrl(track.id, executePlay);
     } else if (!isDownloaded) {
-        QMetaObject::invokeMethod(this, [safeThis]() {
-            if (safeThis) {
+        QMetaObject::invokeMethod(this, [safeThis, currentGen]() {
+            if (safeThis && safeThis->m_playbackGeneration.load() == currentGen) {
                 safeThis->m_playlist.Next();
             }
         }, Qt::QueuedConnection);

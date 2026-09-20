@@ -11,6 +11,9 @@ class DatabaseManager;
 class TrackDownloader;
 class LyricsFetcher;
 class IAudioProvider;
+class IDialogService;
+class IAudioCaptureService;
+class QNetworkAccessManager;
 
 // --- 1. Контекст команд ---
 struct CommandContext {
@@ -20,6 +23,10 @@ struct CommandContext {
     TrackDownloader& downloader;
     LyricsFetcher& lyricsFetcher;
     IAudioProvider* currentProvider;
+
+    IDialogService& dialogService;
+    IAudioCaptureService& audioCapture;
+    QNetworkAccessManager* networkManager;
 
     std::function<void(const std::string&)> print;
     std::function<void(const std::string&)> onSourceChange;
@@ -44,7 +51,10 @@ class CommandDispatcher {
 public:
     CommandDispatcher(IAudioEngine& audio, PlaylistManager& playlist,
                       DatabaseManager& dbManager, TrackDownloader& downloader,
-                      LyricsFetcher& lyricsFetcher);
+                      LyricsFetcher& lyricsFetcher,
+                      IDialogService* dialogService = nullptr,
+                      IAudioCaptureService* audioCapture = nullptr,
+                      QNetworkAccessManager* networkManager = nullptr);
     ~CommandDispatcher();
 
     void SetCurrentProvider(IAudioProvider* provider);
@@ -71,6 +81,12 @@ private:
     TrackDownloader& m_downloader;
     LyricsFetcher& m_lyricsFetcher;
     IAudioProvider* m_currentProvider = nullptr;
+
+    std::unique_ptr<IDialogService> m_ownedDialogService;
+    std::unique_ptr<IAudioCaptureService> m_ownedAudioCapture;
+    IDialogService& m_dialogService;
+    IAudioCaptureService& m_audioCapture;
+    QNetworkAccessManager* m_networkManager = nullptr;
 
     std::function<void(const std::string&)> m_printCb;
 

@@ -17,6 +17,7 @@ struct SourceSession {
     std::string trackId;
     int trackIndex = 0;
     double positionSeconds = 0.0;
+    std::string shuffleQueue;
 };
 
 class DatabaseManager {
@@ -65,4 +66,5 @@ public:
 private:
     QSqlDatabase m_db;
     void CreateTables();
+    void MigrateSchemaIfNeeded();
 };

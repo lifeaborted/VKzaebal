@@ -7,7 +7,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 
-VkClient::VkClient(QObject* parent) : BaseApiProvider(parent) {
+VkClient::VkClient(QObject* parent, QNetworkAccessManager* manager) : BaseApiProvider(parent, manager) {
     Logger::Log(LogLevel::INFO, "VkClient created.");
 }
 

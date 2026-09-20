@@ -100,8 +100,16 @@ set(PROJECT_SOURCES
         src/services/downloader/TrackDownloader.h
         src/services/downloader/TrackDownloader.cpp
 
+        src/services/config/ConfigurationService.h
+        src/services/config/ConfigurationService.cpp
+        src/services/session/PlaybackSessionService.h
+        src/services/session/PlaybackSessionService.cpp
+
         # --- Shazam ---
         src/core/shazam/ShazamFFI.h
+        src/core/shazam/IAudioCaptureService.h
+        src/core/shazam/AudioCaptureService.h
+        src/core/shazam/AudioCaptureService.cpp
 
         # --- UI ---
         src/ui/console/core/ConsoleController.h
@@ -109,6 +117,14 @@ set(PROJECT_SOURCES
 
         src/ui/console/commands/CommandDispatcher.cpp
         src/ui/console/commands/CommandDispatcher.h
+        src/ui/console/commands/PlaybackCommands.h
+        src/ui/console/commands/PlaybackCommands.cpp
+        src/ui/console/commands/VolumeCommands.h
+        src/ui/console/commands/VolumeCommands.cpp
+        src/ui/console/commands/PlaylistCommands.h
+        src/ui/console/commands/PlaylistCommands.cpp
+        src/ui/console/commands/SystemCommands.h
+        src/ui/console/commands/SystemCommands.cpp
 
         src/ui/console/view/ConsoleRenderer.cpp
         src/ui/console/view/ConsoleRenderer.h
@@ -129,6 +145,10 @@ set(PROJECT_SOURCES
         src/utils/parser/MpegTsDemuxer.cpp
         src/utils/parser/MpegTsDemuxer.h
         src/utils/parser/Id3Utils.h
+
+        src/utils/platform/IDialogService.h
+        src/utils/platform/DialogService.h
+        src/utils/platform/DialogService.cpp
 
         src/utils/path/PathManager.h
         src/utils/path/PathManager.cpp

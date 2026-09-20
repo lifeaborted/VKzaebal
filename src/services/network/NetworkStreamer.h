@@ -7,6 +7,7 @@
 #include <QUrl>
 #include <QStringList>
 #include <string>
+#include <atomic>
 
 extern "C" {
 #include "aes.h"
@@ -28,7 +29,7 @@ struct HlsChunk {
 class NetworkStreamer : public QObject {
     Q_OBJECT
 public:
-    explicit NetworkStreamer(QObject* parent = nullptr);
+    explicit NetworkStreamer(QObject* parent = nullptr, QNetworkAccessManager* manager = nullptr);
     ~NetworkStreamer();
 
     void StartDownload(const std::string& url);
@@ -79,4 +80,5 @@ private:
     QByteArray m_aesIV;
     QByteArray m_currentChunkData; // Буфер для накопления целого чанка
     double m_pendingSeekPos = -1.0;
+    std::atomic<uint64_t> m_streamGeneration{0};
 };

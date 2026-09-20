@@ -7,7 +7,7 @@
 #include <QCryptographicHash>
 #include <QXmlStreamReader>
 
-YandexClient::YandexClient(QObject* parent) : BaseApiProvider(parent) {
+YandexClient::YandexClient(QObject* parent, QNetworkAccessManager* manager) : BaseApiProvider(parent, manager) {
     Logger::Log(LogLevel::INFO, "YandexClient created.");
 }
 YandexClient::~YandexClient() {

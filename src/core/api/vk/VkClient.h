@@ -4,7 +4,7 @@
 class VkClient : public BaseApiProvider {
     Q_OBJECT
 public:
-    explicit VkClient(QObject* parent = nullptr);
+    explicit VkClient(QObject* parent = nullptr, QNetworkAccessManager* manager = nullptr);
     ~VkClient() override;
 
     void ValidateToken(std::function<void(bool isValid)> callback);

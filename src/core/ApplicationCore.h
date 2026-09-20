@@ -1,17 +1,11 @@
 #pragma once
+
 #include <QObject>
 #include <memory>
 #include <QMap>
 #include <QString>
 #include <vector>
 #include <string>
-#include "core/api/vk/VkClient.h"
-#include "core/api/spotify/SpotifyClient.h"
-#include "core/api/soundcloud/SoundCloudClient.h"
-#include "core/api/yandex/YandexClient.h"
-#include "core/api/youtube/YouTubeClient.h"
-
-#include "../../../../../Qt/6.11.1/msvc2022_64/include/QtCore/qtmetamacros.h"
 
 class DatabaseManager;
 class MiniaudioEngine;
@@ -22,6 +16,9 @@ class NetworkStreamer;
 class PlaybackController;
 class SourceRouter;
 class ConsoleController;
+class ConfigurationService;
+class PlaybackSessionService;
+class QNetworkAccessManager;
 class QTimer;
 struct Track;
 
@@ -31,24 +28,21 @@ public:
     explicit ApplicationCore(const QMap<QString, QString>& envVars, QObject* parent = nullptr);
     ~ApplicationCore() override;
 
-    // Инициализация всех подсистем
     bool Initialize();
-    // Запуск приложения
     void Start();
 
 private:
-    void EnsureDefaultConfig();
     void WireConnections();
-    void RestoreSession();
-    void SaveSession();
-
-    // Слоты и методы для обработки бизнес-логики, вынесенные из main.cpp
     void InitPlaylistAndStart(bool isOnline);
     void OnAudioFetched(const std::vector<Track>& tracks);
     void OnFinishedFetching();
     void HandleLogout(const std::string& service);
 
-    // --- DI Контейнер (хранилище зависимостей) ---
+    // --- DI Контейнер (хранилище зависимостей и сервисов) ---
+    std::unique_ptr<ConfigurationService> m_configService;
+    std::unique_ptr<PlaybackSessionService> m_sessionService;
+    std::unique_ptr<QNetworkAccessManager> m_networkManager;
+
     std::unique_ptr<DatabaseManager> m_dbManager;
     std::unique_ptr<MiniaudioEngine> m_audio;
     std::unique_ptr<PlaylistManager> m_playlist;

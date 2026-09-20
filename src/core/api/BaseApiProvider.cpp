@@ -5,8 +5,8 @@
 #include <QPointer>
 #include <QCoreApplication>
 
-BaseApiProvider::BaseApiProvider(QObject* parent)
-    : IAudioProvider(parent), m_manager(new QNetworkAccessManager(this)) {
+BaseApiProvider::BaseApiProvider(QObject* parent, QNetworkAccessManager* manager)
+    : IAudioProvider(parent), m_manager(manager ? manager : new QNetworkAccessManager(this)) {
 }
 
 BaseApiProvider::~BaseApiProvider() {

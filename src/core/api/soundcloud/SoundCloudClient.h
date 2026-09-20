@@ -5,7 +5,7 @@
 class SoundCloudClient : public BaseApiProvider {
     Q_OBJECT
 public:
-    explicit SoundCloudClient(QObject* parent = nullptr);
+    explicit SoundCloudClient(QObject* parent = nullptr, QNetworkAccessManager* manager = nullptr);
     ~SoundCloudClient() override;
 
     void InitializeWithToken();

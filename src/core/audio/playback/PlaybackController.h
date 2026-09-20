@@ -18,7 +18,7 @@ public:
     void SetCurrentProvider(IAudioProvider* provider);
     void SetProviderResolver(std::function<IAudioProvider*(const std::string& source)> resolver);
     void SetCrossfadeEnabled(bool enabled);
-    void SetSavedPosition(double pos);
+    void SetSavedPosition(double pos, const std::string& trackId = "");
     void SetStartPaused(bool paused) { m_startPaused = paused; }
 
     void AttemptPlay(const Track& track, int attempt = 1);
@@ -35,6 +35,7 @@ private:
 
     bool m_crossfadeEnabled = false;
     double m_savedPosition = 0.0;
+    std::string m_savedPositionTrackId = "";
 
     int m_skipCount = 0;
     std::atomic<int> m_playbackGeneration{0};

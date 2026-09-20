@@ -14,7 +14,7 @@ class YouTubeExtractor;
 class YouTubeClient : public BaseApiProvider {
     Q_OBJECT
 public:
-    explicit YouTubeClient(QObject* parent = nullptr);
+    explicit YouTubeClient(QObject* parent = nullptr, QNetworkAccessManager* manager = nullptr);
     ~YouTubeClient() override;
 
     void FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) override;

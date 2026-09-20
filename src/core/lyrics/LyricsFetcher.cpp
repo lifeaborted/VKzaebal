@@ -8,8 +8,8 @@
 #include <QJsonObject>
 #include <QJsonArray>
 
-LyricsFetcher::LyricsFetcher(QObject* parent) 
-    : QObject(parent), m_manager(new QNetworkAccessManager(this)) {
+LyricsFetcher::LyricsFetcher(QObject* parent, QNetworkAccessManager* manager) 
+    : QObject(parent), m_manager(manager ? manager : new QNetworkAccessManager(this)) {
     Logger::Log(LogLevel::INFO, "LyricsFetcher created.");
 }
 

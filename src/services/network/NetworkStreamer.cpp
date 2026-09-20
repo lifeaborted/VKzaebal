@@ -11,8 +11,8 @@
 #include <QPointer>
 #include <QCoreApplication>
 
-NetworkStreamer::NetworkStreamer(QObject* parent)
-    : QObject(parent), m_manager(new QNetworkAccessManager(this)), m_reply(nullptr) {
+NetworkStreamer::NetworkStreamer(QObject* parent, QNetworkAccessManager* manager)
+    : QObject(parent), m_manager(manager ? manager : new QNetworkAccessManager(this)), m_reply(nullptr) {
     Logger::Log(LogLevel::INFO, "NetworkStreamer created.");
 }
 
@@ -23,6 +23,7 @@ NetworkStreamer::~NetworkStreamer() {
 
 void NetworkStreamer::StartDownload(const std::string& urlString) {
     Logger::Log(LogLevel::INFO, "Starting network stream from: " + urlString);
+    m_streamGeneration.fetch_add(1, std::memory_order_relaxed);
     m_pendingSeekPos = -1.0;
     m_totalFileSize = 0;
 
@@ -77,6 +78,7 @@ void NetworkStreamer::StartDownload(const std::string& urlString) {
 }
 
 void NetworkStreamer::StopDownload() {
+    m_streamGeneration.fetch_add(1, std::memory_order_relaxed);
     m_chunkQueue.clear();
     if (m_reply) {
         Logger::Log(LogLevel::INFO, "Aborting network stream.");
@@ -256,13 +258,15 @@ void NetworkStreamer::OnChunkFinished() {
                 QByteArray key = m_aesKey;
                 QByteArray iv = m_aesIV;
                 uint64_t seq = m_mediaSequence++;
+                uint64_t currentGen = m_streamGeneration.load(std::memory_order_relaxed);
                 QPointer<NetworkStreamer> safeThis(this);
 
                 m_currentChunkData.clear();
 
                 // Отправляем чанк на расшифровку
-                QThreadPool::globalInstance()->start([safeThis, chunkData, key, iv, seq]() mutable {
+                QThreadPool::globalInstance()->start([safeThis, chunkData, key, iv, seq, currentGen]() mutable {
                     if (chunkData.isEmpty()) return;
+                    if (!safeThis || safeThis->m_streamGeneration.load(std::memory_order_relaxed) != currentGen) return;
 
                     uint8_t firstByte = static_cast<uint8_t>(chunkData[0]);
                     if (!(firstByte == 0x47 && chunkData.size() % 188 == 0)) {
@@ -305,8 +309,10 @@ void NetworkStreamer::OnChunkFinished() {
                         }
                     }
 
-                    QMetaObject::invokeMethod(QCoreApplication::instance(), [safeThis, chunkData]() {
-                        if (!safeThis) return;
+                    if (!safeThis || safeThis->m_streamGeneration.load(std::memory_order_relaxed) != currentGen) return;
+
+                    QMetaObject::invokeMethod(QCoreApplication::instance(), [safeThis, chunkData, currentGen]() {
+                        if (!safeThis || safeThis->m_streamGeneration.load(std::memory_order_relaxed) != currentGen) return;
 
                         if (!chunkData.isEmpty()) {
                             emit safeThis->DataReceived(chunkData);

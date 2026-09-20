@@ -421,26 +421,27 @@ void UltimateRenderer::Render() {
     frame.reserve(consoleWidth * consoleHeight * 2);
     int drawnLines = 0;
 
-    auto addLine = [&](std::string content) {
+    auto addLine = [&](std::string_view content) {
         if (drawnLines >= consoleHeight - 2) return;
 
-        std::string bg = "";
         if (m_bgEnabled) {
-            if (m_bgColorCode == "gradient") {
-                bg = GetInterpolatedColor((float)drawnLines / std::max(1, consoleHeight - 1), m_bgGradientColors, true);
-            } else {
-                bg = m_bgColorCode;
-            }
+            std::string bg = (m_bgColorCode == "gradient")
+                ? GetInterpolatedColor((float)drawnLines / std::max(1, consoleHeight - 1), m_bgGradientColors, true)
+                : m_bgColorCode;
 
+            std::string contentStr(content);
             std::string resetStr = "\033[0m" + bg;
             size_t pos = 0;
-            while ((pos = content.find("\033[0m", pos)) != std::string::npos) {
-                content.replace(pos, 4, resetStr);
+            while ((pos = contentStr.find("\033[0m", pos)) != std::string::npos) {
+                contentStr.replace(pos, 4, resetStr);
                 pos += resetStr.length();
             }
+            frame += bg + m_paddingLeft + contentStr + "\033[0m" + bg + "\033[K\n";
+        } else {
+            frame.append(m_paddingLeft);
+            frame.append(content);
+            frame.append("\033[0m\033[K\n");
         }
-
-        frame += bg + m_paddingLeft + content + "\033[0m" + bg + "\033[K\n";
         drawnLines++;
     };
 
@@ -534,12 +535,12 @@ void UltimateRenderer::Render() {
 
 
     // --- ВЫВОД В КОНСОЛЬ ---
-    if (m_needsFullRedraw || frame != m_lastPrintedStr) {
+    uint64_t currentFrameHash = std::hash<std::string_view>{}(frame);
+    if (m_needsFullRedraw || currentFrameHash != m_lastFrameHash || frame != m_lastPrintedStr) {
+        m_lastFrameHash = currentFrameHash;
         m_lastPrintedStr = frame;
         bool forceFullRedraw = m_needsFullRedraw;
         m_needsFullRedraw = false;
-
-        std::lock_guard<std::mutex> qLock(Logger::GetMutex());
 
         std::string out = "\033[?2026h\033[?25l";
 
@@ -563,7 +564,10 @@ void UltimateRenderer::Render() {
 
         out += "\033[u" + promptBg + promptFg + "\033[?25h\033[?2026l";
 
-        fwrite(out.data(), 1, out.size(), stdout);
-        fflush(stdout);
+        {
+            std::lock_guard<std::mutex> qLock(Logger::GetMutex());
+            fwrite(out.data(), 1, out.size(), stdout);
+            fflush(stdout);
+        }
     }
 }

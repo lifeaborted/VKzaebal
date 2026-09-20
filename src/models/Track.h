@@ -2,7 +2,8 @@
 #include <string>
 
 struct Track {
-    std::string id;
+    int64_t dbId = 0; // Локальный ID в SQLite (Tracks.id)
+    std::string id;   // Внешний ID в сервисе (Tracks.external_id)
     std::string source;
     std::string ownerId;
     std::string artist;
