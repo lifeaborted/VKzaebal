@@ -62,12 +62,12 @@ signals:
 
 public slots:
     void Logout(const std::string& service);
+    void OnVkTokenExpired();
 
 private slots:
     void OnVkTokenReceived(const std::string& token);
     void OnSpotifyTokenReceived(const std::string& token);
     void OnSpotifyAuthError(const std::string& err);
-    void OnVkTokenExpired();
 
 private:
     void EmitStatus(const std::string& msg);
@@ -79,6 +79,7 @@ private:
     void StartYouTubeService();
 
     void StartAuthFlow(const QString& service, const QString& authUrl);
+    void TrySilentVkAuth(std::function<void(bool success)> onComplete = nullptr);
     void TryValidateVkTokens(const std::vector<std::string>& tokens, size_t index);
     void ValidateVkPoolQuietly(const std::vector<std::string>& tokens, size_t index);
     void CheckNextCandidate(const std::shared_ptr<const std::vector<std::string>>& candidates,

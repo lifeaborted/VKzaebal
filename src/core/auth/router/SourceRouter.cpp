@@ -13,6 +13,7 @@
 #include <QWindow>
 #include <QUrl>
 #include <QPointer>
+#include <QTimer>
 #include <QNetworkAccessManager>
 #include <algorithm>
 
@@ -24,7 +25,7 @@ SourceRouter::SourceRouter(const QMap<QString, QString>& envVars,
                            QNetworkAccessManager* networkManager,
                            QObject* parent)
     : QObject(parent), m_networkManager(networkManager), m_envVars(envVars) {
-    m_authManager = std::make_unique<OAuthManager>(this);
+    m_authManager = std::make_unique<OAuthManager>(this, m_networkManager);
 
     // Прием универсального токена из WebView
     connect(m_authManager.get(), &OAuthManager::TokenReceived, this, [this](const std::string& token) {
@@ -216,6 +217,7 @@ void SourceRouter::StartAuthFlow(const QString& service, const QString& authUrl)
 void SourceRouter::OnVkTokenReceived(const std::string& token) {
     if (m_authEngine) { m_authEngine->deleteLater(); m_authEngine = nullptr; }
     m_authManager->SaveToken(token, "VK");
+
     emit AuthUiStateChanged(false);
     EmitStatus("[УСПЕХ] Авторизация VK пройдена!");
 
@@ -225,6 +227,17 @@ void SourceRouter::OnVkTokenReceived(const std::string& token) {
         vk->FetchAllUserAudio(0, 200);
     }
     emit ProviderReady(true);
+
+    // Save session cookies after WebView2 has shut down and released its file locks
+    QPointer<SourceRouter> safeThis(this);
+    QTimer::singleShot(1500, [safeThis]() {
+        if (!safeThis) return;
+        std::string vkCookies = WebViewCookieReader::GetFullVkCookies();
+        if (!vkCookies.empty()) {
+            safeThis->m_authManager->SaveCookies(vkCookies, "VK");
+            Logger::Log(LogLevel::INFO, "SourceRouter: Refreshed VK session cookies after WebView shutdown.");
+        }
+    });
 }
 
 void SourceRouter::OnSpotifyTokenReceived(const std::string& token) {
@@ -245,27 +258,90 @@ void SourceRouter::OnSpotifyAuthError(const std::string& err) {
     emit AuthUiStateChanged(false);
 }
 
+void SourceRouter::TrySilentVkAuth(std::function<void(bool success)> onComplete) {
+    QPointer<SourceRouter> safeThis(this);
+    m_authManager->GetSavedCookies("VK", [safeThis, onComplete](const std::string& savedCookies) {
+        if (!safeThis) {
+            if (onComplete) onComplete(false);
+            return;
+        }
+
+        std::string cookiesToUse = savedCookies;
+        if (cookiesToUse.empty()) {
+            cookiesToUse = WebViewCookieReader::GetFullVkCookies();
+            if (!cookiesToUse.empty()) {
+                safeThis->m_authManager->SaveCookies(cookiesToUse, "VK");
+            }
+        }
+
+        if (cookiesToUse.empty()) {
+            Logger::Log(LogLevel::INFO, "SourceRouter: No VK session cookies found for silent auth.");
+            if (onComplete) onComplete(false);
+            return;
+        }
+
+        safeThis->EmitStatus("[VK] Фоновое продление токена через сохраненную сессию...");
+        safeThis->m_authManager->RefreshVkTokenSilently(cookiesToUse, kVkAuthUrl, [safeThis, onComplete](const std::string& newToken, bool success) {
+            if (!safeThis) {
+                if (onComplete) onComplete(false);
+                return;
+            }
+
+            if (success && !newToken.empty()) {
+                auto* vk = safeThis->GetVkClient();
+                if (vk) vk->SetAccessToken(newToken);
+                safeThis->m_authManager->SaveToken(newToken, "VK");
+
+                if (safeThis->m_currentProvider == vk) {
+                    safeThis->OnVkTokenReceived(newToken);
+                } else {
+                    Logger::Log(LogLevel::INFO, "SourceRouter: Silent VK token refresh succeeded in background.");
+                }
+                if (onComplete) onComplete(true);
+            } else {
+                Logger::Log(LogLevel::WARNING, "SourceRouter: Silent VK token refresh failed.");
+                if (onComplete) onComplete(false);
+            }
+        });
+    });
+}
+
 void SourceRouter::OnVkTokenExpired() {
     Logger::Log(LogLevel::WARNING, "SourceRouter: Token VK expired or rejected (possibly IP changed). Testing token pool...");
-    m_authManager->GetSavedTokens("VK", [this](const std::vector<std::string>& savedTokens) {
+    QPointer<SourceRouter> safeThis(this);
+    m_authManager->GetSavedTokens("VK", [safeThis](const std::vector<std::string>& savedTokens) {
+        if (!safeThis) return;
         if (savedTokens.empty()) {
-            auto* vk = GetVkClient();
-            if (vk) vk->SetAccessToken("");
-            StartAuthFlow("VK", kVkAuthUrl);
+            safeThis->TrySilentVkAuth([safeThis](bool success) {
+                if (!safeThis) return;
+                if (!success) {
+                    auto* vk = safeThis->GetVkClient();
+                    if (vk) vk->SetAccessToken("");
+                    safeThis->StartAuthFlow("VK", kVkAuthUrl);
+                }
+            });
         } else {
-            TryValidateVkTokens(savedTokens, 0);
+            safeThis->TryValidateVkTokens(savedTokens, 0);
         }
     });
 }
 
 void SourceRouter::StartVkService() {
-    m_authManager->GetSavedTokens("VK", [this](const std::vector<std::string>& savedTokens) {
+    QPointer<SourceRouter> safeThis(this);
+    m_authManager->GetSavedTokens("VK", [safeThis](const std::vector<std::string>& savedTokens) {
+        if (!safeThis) return;
         if (savedTokens.empty()) {
-            EmitStatus("[VK] Токен не найден. Открываем окно авторизации...");
-            StartAuthFlow("VK", kVkAuthUrl);
+            safeThis->EmitStatus("[VK] Токен не найден. Пробуем тихое продление через куки...");
+            safeThis->TrySilentVkAuth([safeThis](bool success) {
+                if (!safeThis) return;
+                if (!success) {
+                    safeThis->EmitStatus("[VK] Сессия не найдена. Открываем окно авторизации...");
+                    safeThis->StartAuthFlow("VK", kVkAuthUrl);
+                }
+            });
         } else {
-            EmitStatus("[VK] Проверка сохраненных токенов (" + std::to_string(savedTokens.size()) + " в пуле)...");
-            TryValidateVkTokens(savedTokens, 0);
+            safeThis->EmitStatus("[VK] Проверка сохраненных токенов (" + std::to_string(savedTokens.size()) + " в пуле)...");
+            safeThis->TryValidateVkTokens(savedTokens, 0);
         }
     });
 }
@@ -273,24 +349,33 @@ void SourceRouter::StartVkService() {
 void SourceRouter::TryValidateVkTokens(const std::vector<std::string>& tokens, size_t index) {
     auto* vk = GetVkClient();
     if (index >= tokens.size()) {
-        EmitStatus("[VK] Ни один токен из пула не подошел под текущий IP. Получение токена...");
-        if (vk) vk->SetAccessToken("");
-        StartAuthFlow("VK", kVkAuthUrl);
+        EmitStatus("[VK] Ни один токен из пула не подошел под текущий IP. Фоновое продление...");
+        QPointer<SourceRouter> safeThis(this);
+        TrySilentVkAuth([safeThis, vk](bool success) {
+            if (!safeThis) return;
+            if (!success) {
+                if (vk) vk->SetAccessToken("");
+                safeThis->EmitStatus("[VK] Сессия устарела. Открываем окно авторизации...");
+                safeThis->StartAuthFlow("VK", kVkAuthUrl);
+            }
+        });
         return;
     }
 
     const std::string& currentToken = tokens[index];
     if (vk) {
         vk->SetAccessToken(currentToken);
-        vk->ValidateToken([this, tokens, index, currentToken, vk](bool isValid) {
+        QPointer<SourceRouter> safeThis(this);
+        vk->ValidateToken([safeThis, tokens, index, currentToken, vk](bool isValid) {
+            if (!safeThis) return;
             if (isValid) {
                 Logger::Log(LogLevel::INFO, "SourceRouter: VK token from pool (index " + std::to_string(index) + ") is valid for current IP.");
-                m_authManager->SaveToken(currentToken, "VK");
-                emit AuthUiStateChanged(false);
-                emit ProviderReady(true);
+                safeThis->m_authManager->SaveToken(currentToken, "VK");
+                emit safeThis->AuthUiStateChanged(false);
+                emit safeThis->ProviderReady(true);
                 vk->FetchAllUserAudio(0, 200);
             } else {
-                TryValidateVkTokens(tokens, index + 1);
+                safeThis->TryValidateVkTokens(tokens, index + 1);
             }
         });
     }
@@ -528,8 +613,14 @@ void SourceRouter::Logout(const std::string& service) {
 
 void SourceRouter::CheckSourceAuthorized(const std::string& source, std::function<void(bool isAuth)> callback) const {
     if (source == "VK") {
-        m_authManager->GetSavedToken("VK", [callback](const std::string& token) {
-            callback(!token.empty());
+        m_authManager->GetSavedToken("VK", [this, callback](const std::string& token) {
+            if (!token.empty()) {
+                callback(true);
+            } else {
+                m_authManager->GetSavedCookies("VK", [callback](const std::string& cookies) {
+                    callback(!cookies.empty());
+                });
+            }
         });
     } else if (source == "Yandex") {
         m_authManager->GetSavedToken("Yandex", [callback](const std::string& token) {
@@ -615,7 +706,11 @@ void SourceRouter::PreinitializeVkClient() {
 
     QPointer<SourceRouter> safeThis(this);
     m_authManager->GetSavedTokens("VK", [safeThis](const std::vector<std::string>& savedTokens) {
-        if (!safeThis || savedTokens.empty()) return;
+        if (!safeThis) return;
+        if (savedTokens.empty()) {
+            safeThis->TrySilentVkAuth([](bool /*success*/) {});
+            return;
+        }
 
         auto* vkClient = safeThis->GetVkClient();
         if (vkClient && vkClient->GetAccessToken().empty()) {
@@ -629,7 +724,11 @@ void SourceRouter::PreinitializeVkClient() {
 
 void SourceRouter::ValidateVkPoolQuietly(const std::vector<std::string>& tokens, size_t index) {
     auto* vk = GetVkClient();
-    if (index >= tokens.size() || !vk) return;
+    if (!vk) return;
+    if (index >= tokens.size()) {
+        TrySilentVkAuth([](bool /*success*/) {});
+        return;
+    }
 
     QPointer<SourceRouter> safeThis(this);
     const std::string& currentToken = tokens[index];

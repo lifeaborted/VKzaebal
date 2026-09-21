@@ -28,7 +28,7 @@
 #pragma comment(lib, "bcrypt.lib")
 #endif
 
-std::string WebViewCookieReader::GetFullYouTubeCookies() {
+std::string WebViewCookieReader::GetCookiesForDomains(const QStringList& domainPatterns) {
 #ifdef _WIN32
     QString localAppData = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
     QStringList possibleDirs = {
@@ -37,10 +37,15 @@ std::string WebViewCookieReader::GetFullYouTubeCookies() {
     };
 
     QString baseDir;
+    QDateTime latestModTime;
     for (const auto& d : possibleDirs) {
-        if (QFile::exists(d + "/Local State") && QFile::exists(d + "/Default/Network/Cookies")) {
-            baseDir = d;
-            break;
+        QString cookiesFile = d + "/Default/Network/Cookies";
+        if (QFile::exists(d + "/Local State") && QFile::exists(cookiesFile)) {
+            QFileInfo fi(cookiesFile);
+            if (baseDir.isEmpty() || fi.lastModified() > latestModTime) {
+                baseDir = d;
+                latestModTime = fi.lastModified();
+            }
         }
     }
 
@@ -125,17 +130,16 @@ std::string WebViewCookieReader::GetFullYouTubeCookies() {
     QString secureTempDir = PathManager::GetTempDir();
     QDir().mkpath(secureTempDir);
 
-    // Удаляем любые оставшиеся временные файлы cookie в secureTempDir
     QDir tempDirObj(secureTempDir);
-    const QStringList oldTempFiles = tempDirObj.entryList(QStringList() << "yt_cookie_*.db" << "yt_cookie_*.db-wal" << "yt_cookie_*.db-shm", QDir::Files);
+    const QStringList oldTempFiles = tempDirObj.entryList(QStringList() << "cookie_*.db" << "cookie_*.db-wal" << "cookie_*.db-shm"
+                                                                       << "yt_cookie_*.db" << "yt_cookie_*.db-wal" << "yt_cookie_*.db-shm", QDir::Files);
     for (const QString& oldFile : oldTempFiles) {
         tempDirObj.remove(oldFile);
     }
 
-    // Генерируем уникальное имя временного файла через QTemporaryFile в изолированной директории
     QString tempCookiesPath;
     {
-        QTemporaryFile tempFile(secureTempDir + "/yt_cookie_XXXXXX.db");
+        QTemporaryFile tempFile(secureTempDir + "/cookie_XXXXXX.db");
         tempFile.setAutoRemove(false);
         if (tempFile.open()) {
             tempCookiesPath = tempFile.fileName();
@@ -149,7 +153,6 @@ std::string WebViewCookieReader::GetFullYouTubeCookies() {
         return "";
     }
 
-    // RAII-страж, гарантирующий удаление временной базы и связанных журналов SQLite при любом выходе
     struct TempDbGuard {
         QString path;
         ~TempDbGuard() {
@@ -161,10 +164,55 @@ std::string WebViewCookieReader::GetFullYouTubeCookies() {
         }
     } tempDbGuard{tempCookiesPath};
 
-    if (!QFile::copy(baseDir + "/Default/Network/Cookies", tempCookiesPath)) {
+    auto robustCopy = [](const QString& src, const QString& dst) -> bool {
+#ifdef _WIN32
+        HANDLE hSrc = CreateFileW((LPCWSTR)QDir::toNativeSeparators(src).utf16(),
+                                  GENERIC_READ,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  nullptr,
+                                  OPEN_EXISTING,
+                                  FILE_ATTRIBUTE_NORMAL,
+                                  nullptr);
+        if (hSrc == INVALID_HANDLE_VALUE) {
+            Logger::Log(LogLevel::WARNING, "WebViewCookieReader: Failed to open source file for copy (" + src.toStdString() + "), Win32 error: " + std::to_string(GetLastError()));
+            return false;
+        }
+        HANDLE hDst = CreateFileW((LPCWSTR)QDir::toNativeSeparators(dst).utf16(),
+                                  GENERIC_WRITE,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  nullptr,
+                                  CREATE_ALWAYS,
+                                  FILE_ATTRIBUTE_NORMAL,
+                                  nullptr);
+        if (hDst == INVALID_HANDLE_VALUE) {
+            Logger::Log(LogLevel::WARNING, "WebViewCookieReader: Failed to open dest file for copy (" + dst.toStdString() + "), Win32 error: " + std::to_string(GetLastError()));
+            CloseHandle(hSrc);
+            return false;
+        }
+        char buffer[65536];
+        DWORD bytesRead = 0, bytesWritten = 0;
+        bool ok = true;
+        while (ReadFile(hSrc, buffer, sizeof(buffer), &bytesRead, nullptr) && bytesRead > 0) {
+            if (!WriteFile(hDst, buffer, bytesRead, &bytesWritten, nullptr) || bytesRead != bytesWritten) {
+                ok = false;
+                break;
+            }
+        }
+        CloseHandle(hDst);
+        CloseHandle(hSrc);
+        return ok;
+#else
+        if (QFile::exists(dst)) QFile::remove(dst);
+        return QFile::copy(src, dst);
+#endif
+    };
+
+    if (!robustCopy(baseDir + "/Default/Network/Cookies", tempCookiesPath)) {
         Logger::Log(LogLevel::ERROR, "WebViewCookieReader: Failed to copy Cookies database to secure temp path.");
         return "";
     }
+    robustCopy(baseDir + "/Default/Network/Cookies-wal", tempCookiesPath + "-wal");
+    robustCopy(baseDir + "/Default/Network/Cookies-shm", tempCookiesPath + "-shm");
 
     // 5. Читаем и расшифровываем куки из SQLite
     QMap<QString, QString> cookieMap;
@@ -175,7 +223,15 @@ std::string WebViewCookieReader::GetFullYouTubeCookies() {
             db.setDatabaseName(tempCookiesPath);
             if (db.open()) {
                 QSqlQuery query(db);
-                query.prepare("SELECT name, encrypted_value FROM cookies WHERE host_key LIKE '%youtube.com'");
+                QStringList whereClauses;
+                for (const QString& pat : domainPatterns) {
+                    whereClauses.append("host_key LIKE '" + pat + "'");
+                }
+                QString sql = "SELECT name, encrypted_value FROM cookies";
+                if (!whereClauses.isEmpty()) {
+                    sql += " WHERE " + whereClauses.join(" OR ");
+                }
+                query.prepare(sql);
                 if (query.exec()) {
                     while (query.next()) {
                         QString name = query.value(0).toString();
@@ -198,7 +254,6 @@ std::string WebViewCookieReader::GetFullYouTubeCookies() {
                                 st = BCryptDecrypt(bcrypt.hKey, (PUCHAR)ciphertext.data(), ciphertext.size(), &info, nullptr, 0, (PUCHAR)outBuf.data(), outBuf.size(), &outLen, 0);
                                 if (st == 0) {
                                     outBuf.resize(outLen);
-                                    // Chromium 120+ добавляет 32-байтный заголовок перед чистым значением
                                     if (outBuf.size() > 32) {
                                         outBuf = outBuf.mid(32);
                                     }
@@ -216,7 +271,7 @@ std::string WebViewCookieReader::GetFullYouTubeCookies() {
             } else {
                 Logger::Log(LogLevel::ERROR, "WebViewCookieReader: Failed to open SQLite DB: " + db.lastError().text().toStdString());
             }
-        } // Здесь db закрывается и уничтожается, освобождая файловый дескриптор в ОС
+        }
         QSqlDatabase::removeDatabase(connName);
     }
 
@@ -225,7 +280,6 @@ std::string WebViewCookieReader::GetFullYouTubeCookies() {
     QFile::remove(tempCookiesPath + "-shm");
 
     if (cookieMap.isEmpty()) {
-        Logger::Log(LogLevel::WARNING, "WebViewCookieReader: No YouTube cookies found in SQLite database.");
         return "";
     }
 
@@ -234,13 +288,26 @@ std::string WebViewCookieReader::GetFullYouTubeCookies() {
         pairs.append(it.key() + "=" + it.value());
     }
 
-    std::string fullCookie = pairs.join("; ").toStdString();
-    Logger::Log(LogLevel::INFO, "WebViewCookieReader: Successfully decrypted " + std::to_string(cookieMap.size()) +
-                                " YouTube cookies from WebView2 (total length: " + std::to_string(fullCookie.size()) + ")");
-    return fullCookie;
+    return pairs.join("; ").toStdString();
 #else
     return "";
 #endif
+}
+
+std::string WebViewCookieReader::GetFullYouTubeCookies() {
+    std::string cookies = GetCookiesForDomains({"%youtube.com"});
+    if (!cookies.empty()) {
+        Logger::Log(LogLevel::INFO, "WebViewCookieReader: Decrypted YouTube cookies (length: " + std::to_string(cookies.size()) + ")");
+    }
+    return cookies;
+}
+
+std::string WebViewCookieReader::GetFullVkCookies() {
+    std::string cookies = GetCookiesForDomains({"%vk.com", "%vk.ru"});
+    if (!cookies.empty()) {
+        Logger::Log(LogLevel::INFO, "WebViewCookieReader: Decrypted VK cookies (length: " + std::to_string(cookies.size()) + ")");
+    }
+    return cookies;
 }
 
 bool WebViewCookieReader::ClearServiceCache(const std::string& service) {

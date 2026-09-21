@@ -8,9 +8,18 @@
 #include <QRegularExpression>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QUrl>
 #include <ranges>
 
-OAuthManager::OAuthManager(QObject* parent) : QObject(parent) {
+OAuthManager::OAuthManager(QObject* parent, QNetworkAccessManager* netManager)
+    : QObject(parent), m_netManager(netManager) {
+    if (!m_netManager) {
+        m_netManager = new QNetworkAccessManager(this);
+        m_ownsNetManager = true;
+    }
     if (QCoreApplication::organizationName().isEmpty()) {
         QCoreApplication::setOrganizationName("VKAudioPlayer");
     }
@@ -21,7 +30,12 @@ OAuthManager::OAuthManager(QObject* parent) : QObject(parent) {
     Logger::Log(LogLevel::INFO, "auth (OAuth Manager) created. Secure storage initialized.");
 }
 
-OAuthManager::~OAuthManager() {}
+OAuthManager::~OAuthManager() {
+    if (m_ownsNetManager && m_netManager) {
+        m_netManager->deleteLater();
+        m_netManager = nullptr;
+    }
+}
 
 void OAuthManager::SaveToken(const std::string& token, const QString& service) const {
     if (token.empty()) return;
@@ -126,8 +140,170 @@ void OAuthManager::ClearSavedToken(const QString& service) const {
 
     job->start();
 
+    ClearSavedCookies(service);
+
     // Удаляем связанные cookies и веб-кэш для данного сервиса
     WebViewCookieReader::ClearServiceCache(service.toStdString());
+}
+
+void OAuthManager::SaveCookies(const std::string& cookies, const QString& service) const {
+    if (cookies.empty()) return;
+
+    auto* job = new QKeychain::WritePasswordJob(service);
+    job->setAutoDelete(true);
+    job->setKey("session_cookies");
+    job->setTextData(QString::fromStdString(cookies));
+
+    connect(job, &QKeychain::Job::finished, [service](QKeychain::Job* baseJob) {
+        if (baseJob->error()) {
+            Logger::Log(LogLevel::ERROR, "auth: Failed to securely save cookies for " + service.toStdString() + ": " + baseJob->errorString().toStdString());
+        } else {
+            Logger::Log(LogLevel::INFO, "auth: Session cookies securely saved for " + service.toStdString());
+        }
+    });
+
+    job->start();
+}
+
+void OAuthManager::GetSavedCookies(const QString& service, std::function<void(const std::string&)> callback) const {
+    auto* job = new QKeychain::ReadPasswordJob(service);
+    job->setAutoDelete(true);
+    job->setKey("session_cookies");
+
+    connect(job, &QKeychain::Job::finished, [service, callback](QKeychain::Job* baseJob) {
+        if (baseJob->error()) {
+            if (baseJob->error() != QKeychain::Error::EntryNotFound) {
+                Logger::Log(LogLevel::ERROR, "auth: Failed to read cookies for " + service.toStdString() + ": " + baseJob->errorString().toStdString());
+            }
+            callback("");
+        } else {
+            auto* readJob = qobject_cast<QKeychain::ReadPasswordJob*>(baseJob);
+            std::string cookies = readJob ? readJob->textData().trimmed().toStdString() : "";
+            callback(cookies);
+        }
+    });
+
+    job->start();
+}
+
+void OAuthManager::ClearSavedCookies(const QString& service) const {
+    auto* job = new QKeychain::DeletePasswordJob(service);
+    job->setAutoDelete(true);
+    job->setKey("session_cookies");
+
+    connect(job, &QKeychain::Job::finished, [service](QKeychain::Job* baseJob) {
+        if (baseJob->error() && baseJob->error() != QKeychain::Error::EntryNotFound) {
+            Logger::Log(LogLevel::ERROR, "auth: Failed to delete cookies for " + service.toStdString() + ": " + baseJob->errorString().toStdString());
+        } else {
+            Logger::Log(LogLevel::INFO, "auth: Session cookies securely removed for " + service.toStdString());
+        }
+    });
+
+    job->start();
+}
+
+void OAuthManager::RefreshVkTokenSilently(const std::string& cookies,
+                                          const QString& authUrl,
+                                          std::function<void(const std::string& newToken, bool success)> callback) {
+    if (cookies.empty()) {
+        Logger::Log(LogLevel::WARNING, "auth: RefreshVkTokenSilently called with empty cookies.");
+        if (callback) callback("", false);
+        return;
+    }
+
+    if (!m_netManager) {
+        m_netManager = new QNetworkAccessManager(this);
+        m_ownsNetManager = true;
+    }
+
+    auto doRequest = [this, callback](auto self, const QString& targetUrl, const QString& currentCookies, int redirectsRemaining) -> void {
+        if (redirectsRemaining < 0) {
+            Logger::Log(LogLevel::WARNING, "auth: Silent VK refresh exceeded maximum redirects.");
+            if (callback) callback("", false);
+            return;
+        }
+
+        QUrl url(targetUrl);
+        QNetworkRequest request(url);
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+        request.setTransferTimeout(10000);
+        request.setRawHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+        request.setRawHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+        request.setRawHeader("Cookie", currentCookies.toUtf8());
+
+        Logger::Log(LogLevel::INFO, "auth: Silent VK refresh sending request to: " + targetUrl.toStdString());
+
+        QNetworkReply* reply = m_netManager->get(request);
+
+        connect(reply, &QNetworkReply::finished, this, [this, reply, self, targetUrl, currentCookies, redirectsRemaining, callback]() {
+            reply->deleteLater();
+
+            int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            Logger::Log(LogLevel::INFO, "auth: Silent VK refresh response HTTP " + std::to_string(statusCode) + " from: " + targetUrl.toStdString());
+
+            QString location = QString::fromUtf8(reply->rawHeader("Location"));
+            QUrl redirectTarget = reply->attribute(QNetworkRequest::RedirectionTargetAttribute).toUrl();
+            QString redirectStr = redirectTarget.isValid() ? redirectTarget.toString() : "";
+            QString replyUrl = reply->url().toString();
+            QString bodyStr = QString::fromUtf8(reply->readAll());
+
+            QString combined = location + " " + redirectStr + " " + replyUrl + " " + bodyStr;
+
+            QRegularExpression re("access_token=([^&#\\s]+)");
+            QRegularExpressionMatch match = re.match(combined);
+
+            if (match.hasMatch()) {
+                std::string newToken = match.captured(1).toStdString();
+                Logger::Log(LogLevel::INFO, "auth: Silent VK refresh SUCCESS! New token: " + newToken.substr(0, 6) + "...");
+                SaveToken(newToken, "VK");
+                SaveCookies(currentCookies.toStdString(), "VK");
+                if (callback) callback(newToken, true);
+                return;
+            }
+
+            QString nextUrl = !location.isEmpty() ? location : redirectStr;
+            if (!nextUrl.isEmpty() && (statusCode >= 300 && statusCode < 400)) {
+                QUrl resolvedUrl = QUrl(targetUrl).resolved(QUrl(nextUrl));
+                Logger::Log(LogLevel::INFO, "auth: Following silent auth redirect to: " + resolvedUrl.toString().toStdString());
+
+                QString updatedCookies = currentCookies;
+                const auto rawHeaders = reply->rawHeaderPairs();
+                for (const auto& pair : rawHeaders) {
+                    if (pair.first.toLower() == "set-cookie") {
+                        QString cookieVal = QString::fromUtf8(pair.second).split(';').first().trimmed();
+                        if (!cookieVal.isEmpty()) {
+                            updatedCookies += "; " + cookieVal;
+                        }
+                    }
+                }
+
+                self(self, resolvedUrl.toString(), updatedCookies, redirectsRemaining - 1);
+                return;
+            }
+
+            Logger::Log(LogLevel::WARNING, "auth: Silent VK refresh failed for: " + targetUrl.toStdString() + ". HTTP: " + std::to_string(statusCode) + ", Location: " + location.toStdString());
+
+            // Try alternate domain (.ru <-> .com) on the primary oauth host only
+            QUrl currentTarget(targetUrl);
+            QString altEndpoint;
+            if (currentTarget.host() == "oauth.vk.com") {
+                currentTarget.setHost("oauth.vk.ru");
+                altEndpoint = currentTarget.toString();
+            } else if (currentTarget.host() == "oauth.vk.ru") {
+                currentTarget.setHost("oauth.vk.com");
+                altEndpoint = currentTarget.toString();
+            }
+
+            if (!altEndpoint.isEmpty() && altEndpoint != targetUrl) {
+                Logger::Log(LogLevel::INFO, "auth: Retrying silent VK refresh with alternate endpoint: " + altEndpoint.toStdString());
+                self(self, altEndpoint, currentCookies, 3);
+            } else {
+                if (callback) callback("", false);
+            }
+        });
+    };
+
+    doRequest(doRequest, authUrl, QString::fromStdString(cookies), 5);
 }
 
 void OAuthManager::onUrlIntercepted(const QString& urlStr) {
@@ -150,6 +326,7 @@ void OAuthManager::onUrlIntercepted(const QString& urlStr) {
         if (match.hasMatch()) {
             std::string token = match.captured(1).toStdString();
             Logger::Log(LogLevel::INFO, "auth: Token intercepted from URL! Starts with: " + token.substr(0, 6) + "...");
+
             emit TokenReceived(token);
         }
     }

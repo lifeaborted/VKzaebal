@@ -11,6 +11,8 @@
 #include "utils/platform/IDialogService.h"
 #include "core/shazam/IAudioCaptureService.h"
 #include "core/shazam/ShazamFFI.h"
+#include "core/api/vk/VkClient.h"
+#include <qtkeychain/keychain.h>
 
 #include <QCoreApplication>
 #include <QMetaObject>
@@ -323,9 +325,37 @@ namespace {
                 if (ctx.onQuit) ctx.onQuit();
             } else if (m_cmdType == "help") {
                 std::string s(50, '*');
-                std::string helpText = "\n" + s + "\n [P] Play/Pause\n [N] Next\n [B] Prev\n [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n [seek <time>] Seek (e.g. seek 1:30 or seek 90)\n [st] Standard Order\n [sh] Shuffle\n [R] Repeat Mode\n [J <num>] Jump to track\n [cv] Current volume\n [rs] Reset Session\n [mode <0/1>] 0 - Standard, 1 - Gapless transition\n [savepos <0/1/2>] 0 - Off, 1 - Track only, 2 - Track + Position\n [search <text>] Search tracks in playlist\n [ly] Show lyrics for current track\n [logout / logout <service>] Logout and clear service cache\n [source] Select audio source\n [tl] Export tracklist to TXT\n [dl] / [dl <num>] Download track\n [rm] / [rm <num>] Delete downloaded track\n [pl <name>] Create playlist\n [pls] List playlists\n [pl play] Play playlist\n [pl rm <name>] Delete playlist\n [add] / [add <num>] Add track to playlist\n [drop <num>] Remove track from queue\n [vis] Toggle visualizer\n [Q] Quit\n" + s + "\n\n> ";
+                std::string helpText = "\n" + s + "\n [P] Play/Pause\n [N] Next\n [B] Prev\n [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n [seek <time>] Seek (e.g. seek 1:30 or seek 90)\n [st] Standard Order\n [sh] Shuffle\n [R] Repeat Mode\n [J <num>] Jump to track\n [cv] Current volume\n [rs] Reset Session\n [mode <0/1>] 0 - Standard, 1 - Gapless transition\n [savepos <0/1/2>] 0 - Off, 1 - Track only, 2 - Track + Position\n [search <text>] Search tracks in playlist\n [ly] Show lyrics for current track\n [logout / logout <service>] Logout and clear service cache\n [source] Select audio source\n [tl] Export tracklist to TXT\n [dl] / [dl <num>] Download track\n [rm] / [rm <num>] Delete downloaded track\n [pl <name>] Create playlist\n [pls] List playlists\n [pl play] Play playlist\n [pl rm <name>] Delete playlist\n [add] / [add <num>] Add track to playlist\n [drop <num>] Remove track from queue\n [vis] Toggle visualizer\n [expire_vk] Test silent VK token renewal\n [Q] Quit\n" + s + "\n\n> ";
                 if (ctx.print) ctx.print(helpText);
             }
+        }
+    };
+
+    class TestExpireVkCommand : public IConsoleCommand {
+    public:
+        void Execute(const std::string&, CommandContext& ctx) override {
+            RunInMainThread([provider = ctx.currentProvider, print = ctx.print]() {
+                auto* vk = dynamic_cast<VkClient*>(provider);
+                if (!vk) {
+                    if (print) print("[Тест] Активный источник не VK. Переключитесь на VK (команда 'source') перед тестом.\n\n> ");
+                    return;
+                }
+                if (print) print("[Тест] Эмуляция истечения токена: записываем фиктивный токен и вызываем OnVkTokenExpired...\n\n> ");
+
+                auto* job = new QKeychain::WritePasswordJob("VK");
+                job->setAutoDelete(true);
+                job->setKey("oauth_token");
+                job->setTextData("[\"vk1.a.EXPIRED_DUMMY_TOKEN_FOR_TEST_000000000000000000000000000000000000000000000000000000000000000000000000000000\"]");
+                QObject::connect(job, &QKeychain::Job::finished, [vk, print](QKeychain::Job* baseJob) {
+                    if (baseJob->error()) {
+                        if (print) print("[Тест] Ошибка записи фиктивного токена в QKeychain: " + baseJob->errorString().toStdString() + "\n\n> ");
+                        return;
+                    }
+                    vk->SetAccessToken("vk1.a.EXPIRED_DUMMY_TOKEN_FOR_TEST_000000000000000000000000000000000000000000000000000000000000000000000000000000");
+                    emit vk->TokenExpired();
+                });
+                job->start();
+            });
         }
     };
 }
@@ -346,4 +376,5 @@ void RegisterSystemCommands(std::map<std::string, std::unique_ptr<IConsoleComman
     commands["i"] = std::make_unique<SystemCommand>("info");
     commands["q"] = std::make_unique<SystemCommand>("quit");
     commands["h"] = std::make_unique<SystemCommand>("help");
+    commands["expire_vk"] = std::make_unique<TestExpireVkCommand>();
 }

@@ -4,10 +4,21 @@ import QtWebView
 import QtQml
 
 Window {
+    id: authWindow
     width: 900
     height: 700
-    visible: true
+    visible: (cppAuthUrl.indexOf("oauth.vk.com") === -1 && cppAuthUrl.indexOf("oauth.vk.ru") === -1 && cppAuthUrl.indexOf("id.vk.com") === -1)
     title: "Авторизация"
+
+    Timer {
+        id: showWindowTimer
+        interval: 12000
+        running: !authWindow.visible
+        repeat: false
+        onTriggered: {
+            authWindow.visible = true
+        }
+    }
 
     WebView {
         id: webView
@@ -51,31 +62,47 @@ Window {
                 });
             }
             // --- ВКОНТАКТЕ ---
-            else if (cppAuthUrl.indexOf("oauth.vk.com") !== -1) {
+            else if (cppAuthUrl.indexOf("oauth.vk.com") !== -1 || cppAuthUrl.indexOf("oauth.vk.ru") !== -1 || cppAuthUrl.indexOf("id.vk.com") !== -1) {
                 var vkCode = `
                     (function() {
-                        // Если на странице есть поля логина или пароля, пользователь должен ввести их сам
-                        var hasLoginInputs = document.querySelector('input[type="password"]') ||
-                                             document.querySelector('input[name="login"]') ||
-                                             document.querySelector('input[type="tel"]');
-                        if (hasLoginInputs) {
-                            return false;
-                        }
-
-                        // Автоматически нажимаем только кнопку подтверждения прав ("Разрешить")
+                        // 1. Автоматически нажимаем кнопку подтверждения прав ("Разрешить" / "Продолжить")
                         var btn = document.querySelector('.oauth_button .flat_button') ||
                                   document.querySelector('button.flat_button[type="submit"]') ||
-                                  document.querySelector('.oauth_button');
+                                  document.querySelector('.oauth_button') ||
+                                  document.querySelector('button[type="submit"]') ||
+                                  document.querySelector('.vkc__Button__primary') ||
+                                  document.querySelector('button.vkuiButton--mode-primary') ||
+                                  document.querySelector('[data-test-id="continue-as-button"]') ||
+                                  document.querySelector('[data-test-id="verification-continue-button"]');
                         if (btn && !btn.disabled) {
                             btn.click();
-                            return true;
+                            return "approved";
                         }
-                        return false;
+
+                        // 2. Проверяем, есть ли РЕАЛЬНО ВИДИМЫЕ поля ввода логина/пароля/кода
+                        function isVisible(el) {
+                            if (!el) return false;
+                            var rect = el.getBoundingClientRect();
+                            if (rect.width === 0 || rect.height === 0) return false;
+                            var style = window.getComputedStyle(el);
+                            return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+                        }
+
+                        var inputs = document.querySelectorAll('input[type="password"], input[name="login"], input[type="tel"], input[autocomplete="one-time-code"]');
+                        for (var i = 0; i < inputs.length; i++) {
+                            if (isVisible(inputs[i])) {
+                                return "show_window";
+                            }
+                        }
+
+                        return "waiting";
                     })();
                 `;
                 webView.runJavaScript(vkCode, function(result) {
-                    if (result === true) {
-                        console.log("[QML] VK: Authorization consent approved.");
+                    if (result === "show_window") {
+                        authWindow.visible = true;
+                    } else if (result === "approved") {
+                        console.log("[QML] VK: Authorization consent approved automatically.");
                     }
                 });
             }

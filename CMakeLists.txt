@@ -16,9 +16,7 @@ set(CMAKE_AUTOUIC ON)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Sql Qml WebView Concurrent)
 
 # Указываем путь к исходникам и заголовкам
-set(PROJECT_SOURCES
-        src/main.cpp
-
+set(COMMON_SOURCES
         # --- Models ---
         src/models/Track.h
 
@@ -154,6 +152,11 @@ set(PROJECT_SOURCES
         src/utils/path/PathManager.cpp
 )
 
+set(PROJECT_SOURCES
+        src/main.cpp
+        ${COMMON_SOURCES}
+)
+
 # --- Подключаем внешние библиотеки ---
 add_subdirectory(libs/fdk-aac)
 
@@ -221,5 +224,43 @@ else()
             $<$<CONFIG:Release>:-O3>
             -mavx2
             -ffast-math
+    )
+endif()
+
+# --- Unit Test: VK Silent Auth & OnVkTokenExpired ---
+add_executable(test_vk_silent_auth
+        tests/test_vk_silent_auth.cpp
+        ${COMMON_SOURCES}
+        libs/tiny-aes/aes.c
+)
+
+target_include_directories(test_vk_silent_auth PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/fdk-aac/libAACdec/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/tiny-aes
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/minimp3
+)
+
+target_link_libraries(test_vk_silent_auth PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Network
+        Qt6::Widgets
+        Qt6::Sql
+        Qt6::Qml
+        Qt6::WebView
+        qt6keychain
+        Qt6::Concurrent
+        fdk-aac
+)
+
+if (WIN32)
+    target_link_libraries(test_vk_silent_auth PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/shazam_ffi/target/release/shazam_ffi.dll.lib"
+    )
+    add_custom_command(TARGET test_vk_silent_auth POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/shazam_ffi/target/release/shazam_ffi.dll"
+            $<TARGET_FILE_DIR:test_vk_silent_auth>
     )
 endif()
