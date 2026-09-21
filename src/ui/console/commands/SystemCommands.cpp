@@ -95,9 +95,10 @@ namespace {
 
                         if (ctx.print) ctx.print("[Загрузка] Получение ссылки для " + targetTrack.title + "...\n\n> ");
 
-                        RunInMainThread([ctx, targetTrack, targetDir]() {
-                            ctx.currentProvider->FetchTrackUrl(targetTrack.id, [ctx, targetTrack, targetDir](const std::string& url, bool err) {
-                                if (!err && !url.empty()) ctx.downloader.Download(targetTrack, url, targetDir);
+                        RunInMainThread([provider = ctx.currentProvider, downloader = &ctx.downloader, targetTrack = std::move(targetTrack), targetDir = std::move(targetDir)]() {
+                            if (!provider) return;
+                            provider->FetchTrackUrl(targetTrack.id, [downloader, targetTrack = std::move(targetTrack), targetDir = std::move(targetDir)](const std::string& url, bool err) {
+                                if (!err && !url.empty()) downloader->Download(targetTrack, url, targetDir);
                                 else Logger::Log(LogLevel::WARNING, "Failed to get URL for download.");
                             });
                         });
@@ -118,15 +119,19 @@ namespace {
     };
 
     class LyricsCommand : public IConsoleCommand {
-        void Execute(const std::string& arg, CommandContext& ctx) override {
-            bool isNewFile = (arg.find("new") != std::string::npos);
+        void Execute(const std::string&, CommandContext& ctx) override {
             Track currentTrack = ctx.playlist.GetCurrentTrack();
+            if (currentTrack.id.empty()) {
+                if (ctx.print) ctx.print("[Ошибка] Сейчас никакой трек не играет.\n\n> ");
+                return;
+            }
 
-            auto showLyricsFile = [ctx, currentTrack, isNewFile](const std::string& text) {
+            auto showLyricsFile = [&ctx, &currentTrack](const std::string& text) {
                 if (text.empty()) {
-                    if (ctx.print) ctx.print("[Ошибка] Не удалось загрузить текст (См. logs/app.log).\n\n> ");
+                    if (ctx.print) ctx.print("[Текст] Текст для данного трека не найден.\n\n> ");
                     return;
                 }
+                bool isNewFile = false;
                 QString filePath = PathManager::GetLyricsFilePath(currentTrack.artist, currentTrack.title, isNewFile);
                 QFile file(filePath);
                 if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
@@ -141,9 +146,9 @@ namespace {
             std::string text = currentTrack.lyrics;
             if (text.empty()) {
                 if (ctx.print) ctx.print("[Текст] Поиск текста...\n\n> ");
-                RunInMainThread([ctx, currentTrack, showLyricsFile]() {
-                    ctx.lyricsFetcher.FetchLyrics(currentTrack.artist, currentTrack.title, [ctx, currentTrack, showLyricsFile](const std::string& fetchedText) {
-                        if (!fetchedText.empty()) ctx.dbManager.UpdateTrackLyrics(currentTrack.id, fetchedText);
+                RunInMainThread([lyricsFetcher = &ctx.lyricsFetcher, db = &ctx.dbManager, currentTrack = std::move(currentTrack), showLyricsFile]() {
+                    lyricsFetcher->FetchLyrics(currentTrack.artist, currentTrack.title, [db, currentTrack, showLyricsFile](const std::string& fetchedText) {
+                        if (!fetchedText.empty()) db->UpdateTrackLyrics(currentTrack.id, fetchedText);
                         showLyricsFile(fetchedText);
                     });
                 });
@@ -176,18 +181,18 @@ namespace {
                 return;
             }
 
-            QThreadPool::globalInstance()->start([ctx, filePath, isMic]() {
+            QThreadPool::globalInstance()->start([audioCapture = &ctx.audioCapture, print = ctx.print, netMgr = ctx.networkManager, filePath, isMic]() {
                 if (isMic) {
-                    if (!ctx.audioCapture.RecordToFile(filePath, 7)) {
-                        RunInMainThread([ctx]() {
-                            if (ctx.print) ctx.print("\n[Shazam] Ошибка захвата звука с микрофона.\n> ");
+                    if (!audioCapture->RecordToFile(filePath, 7)) {
+                        RunInMainThread([print]() {
+                            if (print) print("\n[Shazam] Ошибка захвата звука с микрофона.\n> ");
                         });
                         return;
                     }
                 }
 
-                RunInMainThread([ctx]() {
-                    if (ctx.print) ctx.print("\n[Shazam] Анализ аудио...\n> ");
+                RunInMainThread([print]() {
+                    if (print) print("\n[Shazam] Анализ аудио...\n> ");
                 });
 
                 char* raw_base64 = generate_shazam_signature(filePath.c_str());
@@ -197,8 +202,8 @@ namespace {
                 }
 
                 if (!raw_base64) {
-                    RunInMainThread([ctx]() {
-                        if (ctx.print) ctx.print("\n[Shazam] Ошибка: Не удалось обработать аудио.\n> ");
+                    RunInMainThread([print]() {
+                        if (print) print("\n[Shazam] Ошибка: Не удалось обработать аудио.\n> ");
                     });
                     return;
                 }
@@ -206,12 +211,12 @@ namespace {
                 QString base64Sig = QString::fromUtf8(raw_base64);
                 free_shazam_string(raw_base64);
 
-                RunInMainThread([ctx, base64Sig]() {
+                RunInMainThread([netMgr, print, base64Sig = std::move(base64Sig)]() {
                     QJsonObject sigObj{ {"uri", base64Sig}, {"samplems", 12000} };
                     QJsonObject rootObj{ {"signature", sigObj} };
                     QByteArray jsonPayload = QJsonDocument(rootObj).toJson(QJsonDocument::Compact);
 
-                    QNetworkAccessManager* manager = ctx.networkManager;
+                    QNetworkAccessManager* manager = netMgr;
                     bool shouldDeleteManager = false;
                     if (!manager) {
                         manager = new QNetworkAccessManager();
@@ -227,18 +232,18 @@ namespace {
 
                     QNetworkReply* reply = manager->post(request, jsonPayload);
 
-                    QObject::connect(reply, &QNetworkReply::finished, [ctx, reply, manager, shouldDeleteManager]() {
+                    QObject::connect(reply, &QNetworkReply::finished, [print, reply, manager, shouldDeleteManager]() {
                         if (reply->error() == QNetworkReply::NoError) {
                             QJsonObject trackObj = QJsonDocument::fromJson(reply->readAll()).object()["track"].toObject();
                             if (trackObj.isEmpty()) {
-                                if (ctx.print) ctx.print("\n[Shazam] Трек не распознан :( Возможно, его нет в базе.\n> ");
+                                if (print) print("\n[Shazam] Трек не распознан :( Возможно, его нет в базе.\n> ");
                             } else {
                                 QString title = trackObj["title"].toString();
                                 QString artist = trackObj["subtitle"].toString();
-                                if (ctx.print) ctx.print("\n[Shazam] Найдено: " + artist.toStdString() + " - " + title.toStdString() + "\n> ");
+                                if (print) print("\n[Shazam] Найдено: " + artist.toStdString() + " - " + title.toStdString() + "\n> ");
                             }
                         } else {
-                            if (ctx.print) ctx.print("\n[Shazam] Ошибка сети: " + reply->errorString().toStdString() + "\n> ");
+                            if (print) print("\n[Shazam] Ошибка сети: " + reply->errorString().toStdString() + "\n> ");
                         }
                         reply->deleteLater();
                         if (shouldDeleteManager) {
@@ -256,7 +261,6 @@ namespace {
         explicit ConfigCommand(const std::string& type) : m_cmdType(type) {}
         void Execute(const std::string& arg, CommandContext& ctx) override {
             if (m_cmdType == "source") {
-                if (ctx.print) ctx.print("=== Выбор источника ===\n\n  [1] ВКонтакте\n  [2] Spotify\n  [3] SoundCloud\n  [4] Yandex\n  [5] YouTube\n  [6] Оффлайн режим\n  [7] Общий микс (Все сервисы)\n  [8] Плейлисты\n\n  [0] Отмена\n\nВыберите номер: ");
                 if (ctx.onSourceChange) ctx.onSourceChange("SELECT");
             } else if (m_cmdType == "vis") {
                 if (ctx.onVisualizerToggle) ctx.onVisualizerToggle();
@@ -265,7 +269,9 @@ namespace {
                     int mode = std::stoi(arg);
                     if (mode == 0 || mode == 1) {
                         bool isGapless = (mode == 1);
-                        if (ctx.onGaplessMode) RunInMainThread([ctx, isGapless]() { ctx.onGaplessMode(isGapless); });
+                        if (ctx.onGaplessMode) {
+                            RunInMainThread([cb = ctx.onGaplessMode, isGapless]() { cb(isGapless); });
+                        }
                         if (ctx.print) ctx.print("[Режим] Установлен " + std::string(isGapless ? "плавный (gapless)" : "стандартный") + " переход.\n\n> ");
                     } else {
                         if (ctx.print) ctx.print("[Ошибка] Используй: mode 0 (стандарт) или mode 1 (плавный)\n\n> ");
@@ -274,7 +280,9 @@ namespace {
                     if (ctx.print) ctx.print("[Ошибка] Неверный формат. Используй: mode 0 или mode 1\n\n> ");
                 }
             } else if (m_cmdType == "reload") {
-                if (ctx.onReloadUi) RunInMainThread([ctx]() { ctx.onReloadUi(); });
+                if (ctx.onReloadUi) {
+                    RunInMainThread([cb = ctx.onReloadUi]() { cb(); });
+                }
             }
         }
     };
@@ -286,12 +294,16 @@ namespace {
         void Execute(const std::string& arg, CommandContext& ctx) override {
             if (m_cmdType == "logout") {
                 if (arg == "vk" || arg == "spotify" || arg == "sc" || arg == "soundcloud" || arg == "yandex" || arg == "youtube" || arg == "yt" || arg == "all") {
-                    if (ctx.onLogout) RunInMainThread([ctx, arg]() { ctx.onLogout(arg); });
+                    if (ctx.onLogout) {
+                        RunInMainThread([cb = ctx.onLogout, arg]() { cb(arg); });
+                    }
                 } else if (arg.empty()) {
                     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
                     QString currentSrc = settings.value("General/source", "").toString().toLower();
                     if (currentSrc == "vk" || currentSrc == "spotify" || currentSrc == "sc" || currentSrc == "soundcloud" || currentSrc == "yandex" || currentSrc == "youtube") {
-                        if (ctx.onLogout) RunInMainThread([ctx, currentSrc]() { ctx.onLogout(currentSrc.toStdString()); });
+                        if (ctx.onLogout) {
+                            RunInMainThread([cb = ctx.onLogout, src = currentSrc.toStdString()]() { cb(src); });
+                        }
                     } else {
                         if (ctx.print) ctx.print("[Ошибка] Укажите сервис: logout vk | logout spotify | logout sc | logout yandex | logout youtube | logout all\n\n> ");
                     }
@@ -299,13 +311,13 @@ namespace {
                     if (ctx.print) ctx.print("[Ошибка] Укажите сервис: logout vk | logout spotify | logout sc | logout yandex | logout youtube | logout all\n\n> ");
                 }
             } else if (m_cmdType == "info") {
-                RunInMainThread([ctx]() {
-                    Track current = ctx.playlist.GetCurrentTrack();
+                RunInMainThread([pl = &ctx.playlist, print = ctx.print]() {
+                    Track current = pl->GetCurrentTrack();
                     std::string info = "[Инфо] Артист: " + current.artist + "\n"
                                      + "[Инфо] Название: " + current.title + "\n"
                                      + "[Инфо] ID: " + current.id + "\n"
                                      + "[Инфо] Обложка: " + (current.coverUrl.empty() ? "НЕТ ОБЛОЖКИ" : current.coverUrl) + "\n\n> ";
-                    if (ctx.print) ctx.print(info);
+                    if (print) print(info);
                 });
             } else if (m_cmdType == "quit") {
                 if (ctx.onQuit) ctx.onQuit();

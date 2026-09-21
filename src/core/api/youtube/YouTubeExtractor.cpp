@@ -7,6 +7,7 @@
 #include <QNetworkReply>
 #include <QJsonArray>
 #include <QRegularExpression>
+#include <QStringTokenizer>
 #include <QSet>
 #include <QThreadPool>
 #include <QPointer>
@@ -333,14 +334,13 @@ bool YouTubeExtractor::parsePlayerResponse(const QJsonObject& root, const QStrin
 QString YouTubeExtractor::extractAudioUrlFromMasterManifest(const QString& manifest) {
     QString fallbackUrl;
 
-    const QStringList lines = manifest.split(QLatin1Char('\n'));
     QRegularExpression uriRegex("URI=\"([^\"]+)\"");
     QRegularExpression groupRegex("GROUP-ID=\"([^\"]+)\"");
 
-    for (const QString& rawLine : lines) {
-        QString line = rawLine.trimmed();
-        if (!line.startsWith("#EXT-X-MEDIA:")) continue;
-        if (!line.contains("TYPE=AUDIO")) continue;
+    for (auto rawLine : QStringTokenizer{manifest, u'\n'}) {
+        QStringView line = rawLine.trimmed();
+        if (!line.startsWith(u"#EXT-X-MEDIA:")) continue;
+        if (!line.contains(u"TYPE=AUDIO")) continue;
 
         auto uriMatch = uriRegex.match(line);
         if (!uriMatch.hasMatch()) continue;

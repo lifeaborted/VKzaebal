@@ -23,6 +23,7 @@ public:
     static QString GetLyricsFilePath(const std::string& artist, const std::string& title, bool isNewFile = false);
 
     static QString GetUltimateConfigPath();
+    static void InvalidateConfigCache();
 
 private:
     static QString s_appDataDir;
@@ -31,5 +32,7 @@ private:
     static QString s_lyricsDir;
     static QString s_logsDir;
     static QString s_tempDir;
+    static QString s_cachedCustomDownloadsDir;
+    static bool s_customDownloadsDirCached;
     static bool s_initialized;
 };

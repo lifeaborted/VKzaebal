@@ -19,21 +19,21 @@ namespace {
 
     class PlayPauseCommand : public IConsoleCommand {
         void Execute(const std::string&, CommandContext& ctx) override {
-            RunInMainThread([ctx]() {
-                if (ctx.audio.IsPlaying()) ctx.audio.Pause(); else ctx.audio.Resume();
+            RunInMainThread([audio = &ctx.audio]() {
+                if (audio->IsPlaying()) audio->Pause(); else audio->Resume();
             });
         }
     };
 
     class NextCommand : public IConsoleCommand {
         void Execute(const std::string&, CommandContext& ctx) override {
-            RunInMainThread([ctx]() { ctx.playlist.Next(); });
+            RunInMainThread([pl = &ctx.playlist]() { pl->Next(); });
         }
     };
 
     class PrevCommand : public IConsoleCommand {
         void Execute(const std::string&, CommandContext& ctx) override {
-            RunInMainThread([ctx]() { ctx.playlist.Previous(); });
+            RunInMainThread([pl = &ctx.playlist]() { pl->Previous(); });
         }
     };
 
@@ -112,7 +112,7 @@ namespace {
         void Execute(const std::string& arg, CommandContext& ctx) override {
             double pos = 0.0;
             if (ParseTime(arg, pos)) {
-                RunInMainThread([ctx, pos]() { ctx.audio.SetPositionSeconds(pos); });
+                RunInMainThread([audio = &ctx.audio, pos]() { audio->SetPositionSeconds(pos); });
                 if (ctx.print) {
                     ctx.print("[Перемотка] Переход на " + FormatTime(pos) + " (" + std::to_string(static_cast<int>(pos)) + " сек.)\n\n> ");
                 }
@@ -126,7 +126,7 @@ namespace {
 
     class RepeatCommand : public IConsoleCommand {
         void Execute(const std::string&, CommandContext& ctx) override {
-            RunInMainThread([ctx]() { ctx.playlist.ToggleRepeat(); });
+            RunInMainThread([pl = &ctx.playlist]() { pl->ToggleRepeat(); });
         }
     };
 
@@ -134,7 +134,7 @@ namespace {
         void Execute(const std::string& arg, CommandContext& ctx) override {
             try {
                 int idx = std::stoi(arg);
-                RunInMainThread([ctx, idx]() { ctx.playlist.JumpToQueueIndex(idx - 1); });
+                RunInMainThread([pl = &ctx.playlist, idx]() { pl->JumpToQueueIndex(idx - 1); });
                 if (ctx.print) ctx.print("[Плейлист] Переход к треку " + std::to_string(idx) + "\n\n> ");
             } catch (...) {
                 if (ctx.print) ctx.print("[Ошибка] Неверный номер трека.\n\n> ");
@@ -144,12 +144,12 @@ namespace {
 
     class ShuffleCommand : public IConsoleCommand {
         void Execute(const std::string&, CommandContext& ctx) override {
-            RunInMainThread([ctx]() {
-                ctx.playlist.SetShuffle(true);
-                ctx.playlist.JumpToQueueIndex(0);
+            RunInMainThread([pl = &ctx.playlist, db = &ctx.dbManager]() {
+                pl->SetShuffle(true);
+                pl->JumpToQueueIndex(0);
                 std::string src = QSettings(PathManager::GetConfigPath(), QSettings::IniFormat).value("General/source", "VK").toString().toStdString();
-                ctx.dbManager.SaveQueue(ctx.playlist.GetQueueTracks(), src, ctx.playlist.IsShuffle());
-                ctx.dbManager.ExportQueueToTxt(ctx.playlist.GetQueueTracks(), "playlist.txt", ctx.playlist.IsShuffle());
+                db->SaveQueue(pl->GetQueueTracks(), src, pl->IsShuffle());
+                db->ExportQueueToTxt(pl->GetQueueTracks(), "playlist.txt", pl->IsShuffle());
             });
             if (ctx.print) ctx.print("[Плейлист] Режим: Перемешивание (Shuffle). Стартуем случайный трек!\n\n> ");
         }
@@ -157,11 +157,11 @@ namespace {
 
     class StandardOrderCommand : public IConsoleCommand {
         void Execute(const std::string&, CommandContext& ctx) override {
-            RunInMainThread([ctx]() {
-                ctx.playlist.SetShuffle(false);
+            RunInMainThread([pl = &ctx.playlist, db = &ctx.dbManager]() {
+                pl->SetShuffle(false);
                 std::string src = QSettings(PathManager::GetConfigPath(), QSettings::IniFormat).value("General/source", "VK").toString().toStdString();
-                ctx.dbManager.SaveQueue(ctx.playlist.GetQueueTracks(), src, ctx.playlist.IsShuffle());
-                ctx.dbManager.ExportQueueToTxt(ctx.playlist.GetQueueTracks(), "playlist.txt", ctx.playlist.IsShuffle());
+                db->SaveQueue(pl->GetQueueTracks(), src, pl->IsShuffle());
+                db->ExportQueueToTxt(pl->GetQueueTracks(), "playlist.txt", pl->IsShuffle());
             });
             if (ctx.print) ctx.print("[Плейлист] Режим: Стандартный порядок\n\n> ");
         }
@@ -169,13 +169,13 @@ namespace {
 
     class ResetSessionCommand : public IConsoleCommand {
         void Execute(const std::string&, CommandContext& ctx) override {
-            RunInMainThread([ctx]() {
-                ctx.playlist.SetShuffle(false);
-                ctx.playlist.JumpTo(0);
+            RunInMainThread([pl = &ctx.playlist, db = &ctx.dbManager]() {
+                pl->SetShuffle(false);
+                pl->JumpTo(0);
                 std::string src = QSettings(PathManager::GetConfigPath(), QSettings::IniFormat).value("General/source", "VK").toString().toStdString();
-                ctx.dbManager.SaveQueue(ctx.playlist.GetQueueTracks(), src, ctx.playlist.IsShuffle());
-                ctx.dbManager.ExportQueueToTxt(ctx.playlist.GetQueueTracks(), "playlist.txt", ctx.playlist.IsShuffle());
-                ctx.dbManager.ClearSourceSession(src);
+                db->SaveQueue(pl->GetQueueTracks(), src, pl->IsShuffle());
+                db->ExportQueueToTxt(pl->GetQueueTracks(), "playlist.txt", pl->IsShuffle());
+                db->ClearSourceSession(src);
             });
             if (ctx.print) ctx.print("[Сессия] Плейлист сброшен: стандартный порядок, 1-й трек.\n\n> ");
         }

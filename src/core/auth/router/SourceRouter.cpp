@@ -16,6 +16,10 @@
 #include <QNetworkAccessManager>
 #include <algorithm>
 
+namespace {
+constexpr const char* kVkAuthUrl = "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131";
+}
+
 SourceRouter::SourceRouter(const QMap<QString, QString>& envVars,
                            QNetworkAccessManager* networkManager,
                            QObject* parent)
@@ -247,7 +251,7 @@ void SourceRouter::OnVkTokenExpired() {
         if (savedTokens.empty()) {
             auto* vk = GetVkClient();
             if (vk) vk->SetAccessToken("");
-            StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
+            StartAuthFlow("VK", kVkAuthUrl);
         } else {
             TryValidateVkTokens(savedTokens, 0);
         }
@@ -258,7 +262,7 @@ void SourceRouter::StartVkService() {
     m_authManager->GetSavedTokens("VK", [this](const std::vector<std::string>& savedTokens) {
         if (savedTokens.empty()) {
             EmitStatus("[VK] Токен не найден. Открываем окно авторизации...");
-            StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
+            StartAuthFlow("VK", kVkAuthUrl);
         } else {
             EmitStatus("[VK] Проверка сохраненных токенов (" + std::to_string(savedTokens.size()) + " в пуле)...");
             TryValidateVkTokens(savedTokens, 0);
@@ -271,7 +275,7 @@ void SourceRouter::TryValidateVkTokens(const std::vector<std::string>& tokens, s
     if (index >= tokens.size()) {
         EmitStatus("[VK] Ни один токен из пула не подошел под текущий IP. Получение токена...");
         if (vk) vk->SetAccessToken("");
-        StartAuthFlow("VK", "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131");
+        StartAuthFlow("VK", kVkAuthUrl);
         return;
     }
 

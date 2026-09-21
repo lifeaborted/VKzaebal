@@ -8,6 +8,7 @@
 #include <QRegularExpression>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <ranges>
 
 OAuthManager::OAuthManager(QObject* parent) : QObject(parent) {
     if (QCoreApplication::organizationName().isEmpty()) {
@@ -29,12 +30,10 @@ void OAuthManager::SaveToken(const std::string& token, const QString& service) c
         GetSavedTokens("VK", [token](const std::vector<std::string>& existing) {
             QJsonArray arr;
             arr.append(QString::fromStdString(token));
-            int count = 1;
-            for (const auto& oldTok : existing) {
-                if (oldTok != token && count < 10) {
-                    arr.append(QString::fromStdString(oldTok));
-                    count++;
-                }
+            for (const auto& oldTok : existing
+                     | std::views::filter([&token](const std::string& t) { return t != token; })
+                     | std::views::take(9)) {
+                arr.append(QString::fromStdString(oldTok));
             }
             QJsonDocument doc(arr);
             QString jsonStr = QString::fromUtf8(doc.toJson(QJsonDocument::Compact));

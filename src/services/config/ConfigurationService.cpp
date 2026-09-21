@@ -174,4 +174,5 @@ void ConfigurationService::SetDownloadsPath(const QString& path) {
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
     settings.setValue("Downloads/Path", path);
     settings.sync();
+    PathManager::InvalidateConfigCache();
 }

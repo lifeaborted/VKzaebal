@@ -25,8 +25,8 @@ namespace {
 
     class ExportPlaylistCommand : public IConsoleCommand {
         void Execute(const std::string&, CommandContext& ctx) override {
-            RunInMainThread([ctx]() {
-                ctx.dbManager.ExportQueueToTxt(ctx.playlist.GetQueueTracks(), "playlist.txt", ctx.playlist.IsShuffle());
+            RunInMainThread([pl = &ctx.playlist, db = &ctx.dbManager]() {
+                db->ExportQueueToTxt(pl->GetQueueTracks(), "playlist.txt", pl->IsShuffle());
             });
             if (ctx.print) ctx.print("[Инфо] Текущий плейлист успешно экспортирован в playlist.txt\n\n> ");
         }
@@ -87,23 +87,23 @@ namespace {
     public:
         void Execute(const std::string& rawArg, CommandContext& ctx) override {
             std::string arg = Trim(rawArg);
-            if (arg.empty() || arg == "help") {
-                std::string help = "\n[Плейлисты] Команды управления плейлистами:\n"
-                                   "  pl <название>       - Создать новый плейлист\n"
-                                   "  pl play             - Выбрать плейлист для воспроизведения\n"
-                                   "  pl play <название>  - Запустить плейлист с указанным названием\n"
-                                   "  pl rm <название>    - Удалить плейлист\n"
-                                   "  pls                 - Список всех плейлистов\n"
-                                   "  add                 - Добавить текущий трек в плейлист\n"
-                                   "  add <номер>         - Добавить трек из очереди в плейлист\n"
-                                   "  drop <номер>        - Удалить трек из текущей очереди\n\n> ";
+            if (arg.empty()) {
+                std::string help = "\n=== Управление плейлистами ===\n"
+                                   "pl <название>       - Создать новый плейлист\n"
+                                   "pl play             - Выбрать и включить плейлист (интерактивно)\n"
+                                   "pl play <название>  - Включить плейлист по названию\n"
+                                   "pl rm <название>    - Удалить плейлист\n"
+                                   "pls                 - Показать все плейлисты\n"
+                                   "add                 - Добавить текущий трек в плейлист\n"
+                                   "add <номер>         - Добавить трек из очереди по номеру в плейлист\n"
+                                   "drop <номер>        - Удалить трек из текущей очереди\n\n> ";
                 if (ctx.print) ctx.print(help);
                 return;
             }
 
             if (arg == "play") {
                 if (ctx.onSelectPlaylistToPlay) {
-                    RunInMainThread([ctx]() { ctx.onSelectPlaylistToPlay(); });
+                    RunInMainThread([cb = ctx.onSelectPlaylistToPlay]() { cb(); });
                 }
                 return;
             }
@@ -112,7 +112,7 @@ namespace {
                 std::string plName = Trim(arg.substr(5));
                 if (plName.empty()) {
                     if (ctx.onSelectPlaylistToPlay) {
-                        RunInMainThread([ctx]() { ctx.onSelectPlaylistToPlay(); });
+                        RunInMainThread([cb = ctx.onSelectPlaylistToPlay]() { cb(); });
                     }
                     return;
                 }
@@ -126,7 +126,7 @@ namespace {
                 }
                 if (found) {
                     if (ctx.onSourceChange) {
-                        RunInMainThread([ctx, plName]() { ctx.onSourceChange("Custom:" + plName); });
+                        RunInMainThread([cb = ctx.onSourceChange, plName = std::move(plName)]() { cb("Custom:" + plName); });
                     }
                 } else {
                     if (ctx.print) ctx.print("[Ошибка] Плейлист '" + plName + "' не найден.\n\n> ");
@@ -205,8 +205,8 @@ namespace {
             }
 
             if (!targetTrack.id.empty() && ctx.onSelectPlaylist) {
-                RunInMainThread([ctx, targetTrack]() {
-                    ctx.onSelectPlaylist(targetTrack);
+                RunInMainThread([cb = ctx.onSelectPlaylist, targetTrack = std::move(targetTrack)]() {
+                    cb(targetTrack);
                 });
             }
         }
@@ -231,8 +231,8 @@ namespace {
 
                 Track droppedTrack = queue[idx];
 
-                RunInMainThread([ctx, droppedTrack, num]() {
-                    auto allTracks = ctx.playlist.GetAllTracks();
+                RunInMainThread([pl = &ctx.playlist, db = &ctx.dbManager, print = ctx.print, droppedTrack = std::move(droppedTrack), num]() {
+                    auto allTracks = pl->GetAllTracks();
                     int absIndex = -1;
                     for (size_t i = 0; i < allTracks.size(); ++i) {
                         if (allTracks[i].id == droppedTrack.id) {
@@ -246,18 +246,18 @@ namespace {
                     if (activeSource.rfind("Custom:", 0) == 0 && absIndex >= 0) {
                         std::string plName = activeSource.substr(7);
                         int plId = -1;
-                        ctx.dbManager.LoadPlaylistTracksByName(plName, plId);
+                        db->LoadPlaylistTracksByName(plName, plId);
                         if (plId > 0) {
-                            ctx.dbManager.RemoveTrackFromPlaylist(plId, absIndex);
+                            db->RemoveTrackFromPlaylist(plId, absIndex);
                         }
                     }
 
                     if (absIndex >= 0) {
-                        ctx.playlist.RemoveTrack(absIndex);
+                        pl->RemoveTrack(absIndex);
                     }
 
-                    if (ctx.print) {
-                        ctx.print("[Очередь] Трек #" + std::to_string(num) + " (" + droppedTrack.artist + " - " + droppedTrack.title + ") удален.\n\n> ");
+                    if (print) {
+                        print("[Очередь] Трек #" + std::to_string(num) + " (" + droppedTrack.artist + " - " + droppedTrack.title + ") удален.\n\n> ");
                     }
                 });
             } catch (...) {

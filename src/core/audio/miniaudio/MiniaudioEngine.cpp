@@ -10,8 +10,8 @@
 #include <QSettings>
 #include <complex>
 #include <cmath>
+#include <numbers>
 
-const double PI = 3.14159265358979323846;
 typedef std::complex<double> Complex;
 
 
@@ -160,9 +160,8 @@ std::vector<float> MiniaudioEngine::GetSpectrumData() {
         if (!specLock.owns_lock()) return result; // Если занято, отдаем нули
 
         // 2. Копирование с Окном Хеннинга
-        const double PI = 3.14159265358979323846;
         for (size_t i = 0; i < FFT_SIZE; ++i) {
-            double multiplier = 0.5 * (1.0 - std::cos(2.0 * PI * i / (FFT_SIZE - 1)));
+            double multiplier = 0.5 * (1.0 - std::cos(2.0 * std::numbers::pi * i / (FFT_SIZE - 1)));
             complexData[i] = Complex(m_recentSamples[i] * multiplier, 0.0);
         }
     }

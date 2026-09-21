@@ -17,7 +17,7 @@ namespace {
     public:
         explicit VolumeAdjustCommand(float delta) : m_delta(delta) {}
         void Execute(const std::string&, CommandContext& ctx) override {
-            RunInMainThread([ctx, delta = m_delta]() { ctx.audio.SetVolume(ctx.audio.GetVolume() + delta); });
+            RunInMainThread([audio = &ctx.audio, delta = m_delta]() { audio->SetVolume(audio->GetVolume() + delta); });
         }
     };
 
@@ -27,7 +27,7 @@ namespace {
                 int vol = std::stoi(arg);
                 if (vol < 0) vol = 0;
                 if (vol > 100) vol = 100;
-                RunInMainThread([ctx, vol]() { ctx.audio.SetVolume(vol / 100.0f); });
+                RunInMainThread([audio = &ctx.audio, vol]() { audio->SetVolume(vol / 100.0f); });
                 if (ctx.print) ctx.print("[Громкость] Установлена громкость: " + std::to_string(vol) + "%\n\n> ");
             } catch (...) {
                 if (ctx.print) ctx.print("[Ошибка] Неверный формат. Используй: v <число от 0 до 100>\n\n> ");

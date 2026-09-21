@@ -5,6 +5,7 @@
 #include <QNetworkRequest>
 #include <QUrl>
 #include <QStringList>
+#include <QStringTokenizer>
 #include <QRegularExpression>
 #include <QUrlQuery>
 #include <QThreadPool>
@@ -92,8 +93,6 @@ void NetworkStreamer::StopDownload() {
 }
 
 void NetworkStreamer::ParseM3u8(const QString& manifestData, const QUrl& baseUrl) {
-    QStringList lines = manifestData.split('\n');
-
     QRegularExpression keyRegex("#EXT-X-KEY:METHOD=AES-128,URI=\"([^\"]+)\"(?:,IV=(?:0x)?([0-9a-fA-F]+))?");
     QRegularExpression seqRegex("#EXT-X-MEDIA-SEQUENCE:(\\d+)");
 
@@ -107,8 +106,8 @@ void NetworkStreamer::ParseM3u8(const QString& manifestData, const QUrl& baseUrl
     m_hlsChunks.clear();
     double currentDuration = 0.0;
 
-    for (const QString& line : lines) {
-        QString trimmed = line.trimmed();
+    for (auto rawLine : QStringTokenizer{manifestData, u'\n'}) {
+        QStringView trimmed = rawLine.trimmed();
 
         QRegularExpressionMatch match = keyRegex.match(trimmed);
         if (match.hasMatch()) {
@@ -123,17 +122,17 @@ void NetworkStreamer::ParseM3u8(const QString& manifestData, const QUrl& baseUrl
         }
 
         // ДОБАВЛЕНО: Парсим длительность чанка
-        if (trimmed.startsWith("#EXTINF:")) {
-            QString valStr = trimmed.mid(8);
-            int commaPos = valStr.indexOf(',');
-            if (commaPos != -1) valStr = valStr.left(commaPos);
+        if (trimmed.startsWith(u"#EXTINF:")) {
+            QStringView valStr = trimmed.sliced(8);
+            auto commaPos = valStr.indexOf(u',');
+            if (commaPos != -1) valStr = valStr.first(commaPos);
             currentDuration = valStr.toDouble();
             continue;
         }
 
-        if (trimmed.isEmpty() || trimmed.startsWith("#")) continue;
+        if (trimmed.isEmpty() || trimmed.startsWith(u'#')) continue;
 
-        QUrl chunkUrl = baseUrl.resolved(QUrl(trimmed));
+        QUrl chunkUrl = baseUrl.resolved(QUrl(trimmed.toString()));
 
         // слияние параметров запроса для чанка
         QUrlQuery chunkQuery(chunkUrl);
@@ -367,67 +366,6 @@ void NetworkStreamer::OnChunkFinished() {
     if (shouldDownloadNextImmediately) {
         DownloadNextChunk();
     }
-}
-
-void NetworkStreamer::DecryptAndPushChunk() {
-    if (m_currentChunkData.isEmpty()) return;
-
-    //Если файл уже является чистым MPEG-TS
-    uint8_t firstByte = static_cast<uint8_t>(m_currentChunkData[0]);
-    if (firstByte == 0x47 && m_currentChunkData.size() % 188 == 0) {
-        Logger::Log(LogLevel::INFO, "VK sent raw MPEG-TS despite manifest! Bypassing AES.");
-        emit DataReceived(m_currentChunkData);
-        return;
-    }
-
-    int id3Size = 0;
-    size_t parsedId3 = Id3Utils::ParseHeaderTotalSize(
-        reinterpret_cast<const uint8_t*>(m_currentChunkData.constData()),
-        static_cast<size_t>(m_currentChunkData.size()));
-    if (parsedId3 > 0 && parsedId3 <= static_cast<size_t>(m_currentChunkData.size())) {
-        id3Size = static_cast<int>(parsedId3);
-        Logger::Log(LogLevel::INFO, "Found unencrypted ID3 tag. Size: " + std::to_string(id3Size) + " bytes.");
-    }
-
-    int cipherSize = m_currentChunkData.size() - id3Size;
-    if (cipherSize <= 0) {
-        emit DataReceived(m_currentChunkData);
-        return;
-    }
-
-    if (cipherSize % 16 != 0) {
-        Logger::Log(LogLevel::WARNING, "Cipher size (" + std::to_string(cipherSize) + ") is not a multiple of 16. Padding...");
-        int padding = 16 - (cipherSize % 16);
-        m_currentChunkData.append(QByteArray(padding, 0));
-        cipherSize += padding;
-    }
-
-    if (m_aesKey.size() != 16) {
-        std::string err = "Invalid AES key size.";
-        Logger::Log(LogLevel::ERROR, err);
-        emit DownloadError(err);
-        return;
-    }
-
-    QByteArray currentIV = m_aesIV;
-    if (currentIV.isEmpty()) {
-        currentIV = QByteArray(16, 0);
-        uint64_t seq = m_mediaSequence;
-        for (int i = 15; i >= 8; --i) {
-            currentIV[i] = seq & 0xFF;
-            seq >>= 8;
-        }
-    }
-    m_mediaSequence++;
-
-    struct AES_ctx ctx;
-    AES_init_ctx_iv(&ctx, reinterpret_cast<const uint8_t*>(m_aesKey.constData()),
-                          reinterpret_cast<const uint8_t*>(currentIV.constData()));
-
-    uint8_t* cipherDataPtr = reinterpret_cast<uint8_t*>(m_currentChunkData.data()) + id3Size;
-    AES_CBC_decrypt_buffer(&ctx, cipherDataPtr, cipherSize);
-
-    emit DataReceived(m_currentChunkData);
 }
 
 void NetworkStreamer::PauseDownload() {

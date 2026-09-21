@@ -3,8 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <bit>
-
-const double PI = 3.14159265358979323846;
+#include <numbers>
 
 FastFourierTransform::FastFourierTransform(size_t n) {
     if (n < 2) {
@@ -38,7 +37,7 @@ void FastFourierTransform::initTwiddleFactors() {
     if (m_size == 0) return;
     m_twiddleFactors.resize(m_size / 2);
     for (size_t i = 0; i < m_size / 2; ++i) {
-        double angle = -2.0 * PI * static_cast<double>(i) / static_cast<double>(m_size);
+        double angle = -2.0 * std::numbers::pi * static_cast<double>(i) / static_cast<double>(m_size);
         m_twiddleFactors[i] = Complex(std::cos(angle), std::sin(angle));
     }
 }

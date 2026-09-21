@@ -2,6 +2,7 @@
 #include <string>
 #include <mutex>
 #include <functional>
+#include <atomic>
 
 #ifdef _WIN32
 #undef ERROR
@@ -23,7 +24,7 @@ public:
     static void SetLogCallback(LogCallback callback);
 private:
     static std::mutex s_mutex;
-    static LogLevel s_minLogLevel;
-    static bool s_consoleOutputEnabled;
+    static std::atomic<LogLevel> s_minLogLevel;
+    static std::atomic<bool> s_consoleOutputEnabled;
     static LogCallback s_callback;
 };

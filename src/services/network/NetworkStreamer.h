@@ -57,7 +57,6 @@ private:
     void ParseM3u8(const QString& manifestData, const QUrl& baseUrl);
     void DownloadNextChunk();
     void DownloadKey();          // Скачивание AES-ключа
-    void DecryptAndPushChunk();  // Расшифровка и передача данных
 
     bool m_isPaused = false;
     QNetworkAccessManager* m_manager;

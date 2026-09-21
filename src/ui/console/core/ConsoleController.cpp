@@ -59,7 +59,25 @@ ConsoleController::ConsoleController(
     };
 
     m_dispatcher->OnReloadUiRequested = [this]() { m_renderer->ReloadConfig(); };
-    m_dispatcher->OnSourceChangeRequested = [this](const std::string&) { m_currentState = ConsoleState::SELECT_SOURCE; };
+    m_dispatcher->OnSourceChangeRequested = [this](const std::string& target) {
+        if (target == "SELECT" || target.empty()) {
+            std::string menu = "=== Выбор источника ===\n\n"
+                               "  [1] ВКонтакте\n"
+                               "  [2] Spotify\n"
+                               "  [3] SoundCloud\n"
+                               "  [4] Yandex\n"
+                               "  [5] YouTube\n"
+                               "  [6] Оффлайн режим\n"
+                               "  [7] Общий микс (Все сервисы)\n"
+                               "  [8] Плейлисты\n\n"
+                               "  [0] Отмена\n\n"
+                               "Выберите номер: ";
+            m_renderer->SetOverlay(menu);
+            m_currentState = ConsoleState::SELECT_SOURCE;
+        } else {
+            emit SourceChanged(target);
+        }
+    };
 
     m_dispatcher->OnLogoutRequested = [this](const std::string& service) {
         emit LogoutRequested(service);

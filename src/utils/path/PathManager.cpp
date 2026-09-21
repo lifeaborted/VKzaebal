@@ -11,6 +11,8 @@ QString PathManager::s_sessionDownloadsDir;
 QString PathManager::s_lyricsDir;
 QString PathManager::s_logsDir;
 QString PathManager::s_tempDir;
+QString PathManager::s_cachedCustomDownloadsDir;
+bool PathManager::s_customDownloadsDirCached = false;
 bool PathManager::s_initialized = false;
 
 void PathManager::Init() {
@@ -50,12 +52,23 @@ QString PathManager::GetAppDataDir() {
 }
 
 QString PathManager::GetCustomDownloadsDir() {
+    if (s_customDownloadsDirCached) {
+        return s_cachedCustomDownloadsDir;
+    }
     QSettings settings(GetConfigPath(), QSettings::IniFormat);
     QString path = settings.value("Downloads/Path", "").toString().trimmed();
     if (!path.isEmpty()) {
-        return QDir::cleanPath(path);
+        s_cachedCustomDownloadsDir = QDir::cleanPath(path);
+    } else {
+        s_cachedCustomDownloadsDir.clear();
     }
-    return "";
+    s_customDownloadsDirCached = true;
+    return s_cachedCustomDownloadsDir;
+}
+
+void PathManager::InvalidateConfigCache() {
+    s_customDownloadsDirCached = false;
+    s_cachedCustomDownloadsDir.clear();
 }
 
 void PathManager::SetSessionDownloadsDir(const QString& dir) {

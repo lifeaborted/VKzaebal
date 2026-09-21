@@ -1,5 +1,7 @@
 #include "DialogService.h"
 
+#include <QString>
+
 #ifdef _WIN32
 #include <windows.h>
 #include <commdlg.h>
@@ -26,12 +28,7 @@ std::string DialogService::OpenAudioFileDialog() {
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
 
     if (GetOpenFileNameW(&ofn) == TRUE) {
-        int size_needed = WideCharToMultiByte(CP_UTF8, 0, ofn.lpstrFile, -1, NULL, 0, NULL, NULL);
-        if (size_needed > 0) {
-            std::vector<char> buffer(size_needed);
-            WideCharToMultiByte(CP_UTF8, 0, ofn.lpstrFile, -1, &buffer[0], size_needed, NULL, NULL);
-            return std::string(buffer.data());
-        }
+        return QString::fromWCharArray(ofn.lpstrFile).toStdString();
     }
     return "";
 #else
@@ -43,26 +40,21 @@ std::string DialogService::OpenAudioFileDialog() {
 std::string DialogService::ChooseFolderDialog(const std::string& title) {
 #ifdef _WIN32
     std::string result;
-    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     IFileOpenDialog *pFileDialog = nullptr;
     if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileDialog)))) {
         DWORD dwOptions;
         if (SUCCEEDED(pFileDialog->GetOptions(&dwOptions))) {
             pFileDialog->SetOptions(dwOptions | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
         }
-        std::wstring wTitle = title.empty() ? L"Выберите папку для сохранения аудио" : std::wstring(title.begin(), title.end());
+        std::wstring wTitle = title.empty() ? L"Выберите папку для сохранения аудио" : QString::fromStdString(title).toStdWString();
         pFileDialog->SetTitle(wTitle.c_str());
         if (SUCCEEDED(pFileDialog->Show(NULL))) {
             IShellItem *pItem = nullptr;
             if (SUCCEEDED(pFileDialog->GetResult(&pItem))) {
                 PWSTR pszFilePath = nullptr;
                 if (SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath))) {
-                    int size = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
-                    if (size > 0) {
-                        std::vector<char> buffer(size);
-                        WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, buffer.data(), size, NULL, NULL);
-                        result = std::string(buffer.data());
-                    }
+                    result = QString::fromWCharArray(pszFilePath).toStdString();
                     CoTaskMemFree(pszFilePath);
                 }
                 pItem->Release();
@@ -70,7 +62,7 @@ std::string DialogService::ChooseFolderDialog(const std::string& title) {
         }
         pFileDialog->Release();
     }
-    if (SUCCEEDED(hr)) {
+    if (hr == S_OK) {
         CoUninitialize();
     }
     return result;

@@ -101,7 +101,9 @@ std::string SpotifyClient::StartAuthPkce(const QString& clientId) {
     m_clientId = clientId;
     const QString possibleChars("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~");
     m_codeVerifier.clear();
-    for (int i = 0; i < 64; ++i) m_codeVerifier.append(possibleChars.at(QRandomGenerator::global()->generate() % possibleChars.length()));
+    for (int i = 0; i < 64; ++i) {
+        m_codeVerifier.append(possibleChars.at(QRandomGenerator::global()->bounded(static_cast<quint32>(possibleChars.length()))));
+    }
     QString codeChallenge = QCryptographicHash::hash(m_codeVerifier.toUtf8(), QCryptographicHash::Sha256).toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
 
     QUrl url("https://accounts.spotify.com/authorize");

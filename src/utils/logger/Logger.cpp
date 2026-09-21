@@ -14,8 +14,8 @@ static std::ofstream logFile;
 std::mutex Logger::s_mutex;
 
 // Инициализация минимального уровня логов
-LogLevel Logger::s_minLogLevel = LogLevel::INFO;
-bool Logger::s_consoleOutputEnabled = true;
+std::atomic<LogLevel> Logger::s_minLogLevel = LogLevel::INFO;
+std::atomic<bool> Logger::s_consoleOutputEnabled = true;
 Logger::LogCallback Logger::s_callback = nullptr;
 
 void Logger::SetLogCallback(LogCallback callback) {
@@ -36,7 +36,7 @@ void Logger::Init() {
 }
 
 void Logger::SetMinLogLevel(LogLevel level) {
-    s_minLogLevel = level;
+    s_minLogLevel.store(level, std::memory_order_relaxed);
 }
 
 void Logger::Log(LogLevel level, const std::string& message) {
@@ -49,7 +49,7 @@ void Logger::Log(LogLevel level, const std::string& message) {
     // --- 2. Ограничение вывода через переменную (Runtime) ---
     // Так как enum: DEBUG=0, INFO=1, WARNING=2, ERROR=3
     // Если текущий уровень меньше установленного порога, просто выходим
-    if (level < s_minLogLevel) {
+    if (level < s_minLogLevel.load(std::memory_order_relaxed)) {
         return;
     }
 
@@ -57,10 +57,17 @@ void Logger::Log(LogLevel level, const std::string& message) {
     auto now = std::chrono::system_clock::now();
     auto in_time_t = std::chrono::system_clock::to_time_t(now);
 
-    // Форматируем время в строку [HH:MM:SS]
-    std::stringstream ssTime;
-    ssTime << std::put_time(std::localtime(&in_time_t), "%H:%M:%S");
-    std::string timeStr = "[" + ssTime.str() + "] ";
+    // Потокобезопасное форматирование времени в строку [HH:MM:SS]
+    std::tm timeInfo{};
+#if defined(_WIN32)
+    localtime_s(&timeInfo, &in_time_t);
+#else
+    localtime_r(&in_time_t, &timeInfo);
+#endif
+
+    char timeBuf[32];
+    std::strftime(timeBuf, sizeof(timeBuf), "[%H:%M:%S] ", &timeInfo);
+    std::string timeStr = timeBuf;
 
     std::string levelStr;
     switch (level) {
@@ -77,7 +84,7 @@ void Logger::Log(LogLevel level, const std::string& message) {
     {
         std::lock_guard<std::mutex> lock(s_mutex);
 
-        if (s_consoleOutputEnabled) {
+        if (s_consoleOutputEnabled.load(std::memory_order_relaxed)) {
             if (level == LogLevel::ERROR) {
                 std::cerr << clearUi << fullMessage << "\n\n> ";
                 std::cerr.flush();
@@ -103,7 +110,7 @@ void Logger::Log(LogLevel level, const std::string& message) {
 }
 
 void Logger::SetConsoleOutputEnabled(bool enabled) {
-    s_consoleOutputEnabled = enabled;
+    s_consoleOutputEnabled.store(enabled, std::memory_order_relaxed);
 }
 
 void Logger::Close() {
