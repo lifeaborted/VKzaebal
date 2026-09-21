@@ -93,6 +93,7 @@ private:
     bool m_finishedTriggered = false;
     std::atomic<bool> m_nearEndSignaled{false};
     std::atomic<bool> m_finishedSignaled{false};
+    std::atomic<bool> m_seekedNearEnd{false};
 
     bool m_isCrossfading = false;
     ma_uint32 m_crossfadeFramesTotal = 0;

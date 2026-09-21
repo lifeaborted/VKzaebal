@@ -81,33 +81,12 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
     }
     bool isDownloaded = QFile::exists(localPath);
 
-    if (attempt == 1 && !m_cachedNextUrl.empty() && m_preloadedTrack.id == track.id && !isDownloaded) {
-        if (m_audio.PlayStream(m_cachedNextUrl, track.duration, m_crossfadeEnabled, track.GetSafeFilename())) {
-            m_cachedNextUrl = "";
-            m_skipCount = 0;
-
-            if (m_savedPosition > 0.0 && m_savedPositionTrackId == track.id) {
-                m_audio.SetPositionSeconds(m_savedPosition);
-                m_savedPosition = 0.0;
-                m_savedPositionTrackId = "";
-            }
-
-            if (m_startPaused) { m_audio.Pause(); m_startPaused = false; }
-            return;
-        }
-    } else if (attempt == 1) {
-        Logger::Log(LogLevel::INFO, "[Загрузка] " + track.artist + " - " + track.title + "...");
-        // При переключении трека НЕМЕДЛЕННО останавливаем предыдущий стрим и аудиопоток,
-        // чтобы старый трек не продолжал играть в фоне во время сетевой загрузки
-        m_streamer.StopDownload();
-        m_audio.Pause();
-        m_audio.ClearBuffers(false, track.duration);
-    }
-
+    // 1. Локальный трек (скачан на диск)
     if (isDownloaded) {
         m_skipCount = 0;
-        if (m_audio.PlayStream("", track.duration, m_crossfadeEnabled, track.GetSafeFilename())) {
-
+        m_streamer.StopDownload();
+        bool shouldCrossfade = m_crossfadeEnabled && m_audio.IsPlaying();
+        if (m_audio.PlayStream("", track.duration, shouldCrossfade, track.GetSafeFilename())) {
             if (m_savedPosition > 0.0 && m_savedPositionTrackId == track.id) {
                 m_audio.SetPositionSeconds(m_savedPosition);
                 m_savedPosition = 0.0;
@@ -119,6 +98,40 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
             m_playlist.Next();
         }
         return;
+    }
+
+    // 2. Предзагруженный сетевой URL (плавный переход в конце трека)
+    if (attempt == 1 && !m_cachedNextUrl.empty() && m_preloadedTrack.id == track.id) {
+        std::string urlToPlay = m_cachedNextUrl;
+        m_cachedNextUrl = "";
+        m_preloadedTrack = Track();
+        m_skipCount = 0;
+
+        m_streamer.StopDownload();
+        bool shouldCrossfade = m_crossfadeEnabled && m_audio.IsPlaying();
+        m_audio.ClearBuffers(shouldCrossfade, track.duration);
+        m_streamer.SetTrackDuration(track.duration);
+        m_streamer.StartDownload(urlToPlay);
+        m_audio.Resume();
+
+        if (m_savedPosition > 0.0 && m_savedPositionTrackId == track.id) {
+            m_audio.SetPositionSeconds(m_savedPosition);
+            m_savedPosition = 0.0;
+            m_savedPositionTrackId = "";
+        }
+
+        if (m_startPaused) { m_audio.Pause(); m_startPaused = false; }
+        return;
+    }
+
+    // 3. Сетевой трек (ссылка еще не получена)
+    if (attempt == 1) {
+        Logger::Log(LogLevel::INFO, "[Загрузка] " + track.artist + " - " + track.title + "...");
+        if (!m_crossfadeEnabled || !m_audio.IsPlaying()) {
+            m_streamer.StopDownload();
+            m_audio.Pause();
+            m_audio.ClearBuffers(false, track.duration);
+        }
     }
 
     QPointer<PlaybackController> safeThis(this);
@@ -143,7 +156,8 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
 
         if (!freshUrl.empty()) {
             safeThis->m_streamer.StopDownload();
-            safeThis->m_audio.ClearBuffers(safeThis->m_crossfadeEnabled, track.duration);
+            bool shouldCrossfade = safeThis->m_crossfadeEnabled && safeThis->m_audio.IsPlaying();
+            safeThis->m_audio.ClearBuffers(shouldCrossfade, track.duration);
             safeThis->m_streamer.SetTrackDuration(track.duration);
             safeThis->m_streamer.StartDownload(freshUrl);
             safeThis->m_audio.Resume();

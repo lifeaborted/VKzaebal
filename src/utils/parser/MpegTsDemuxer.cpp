@@ -15,15 +15,19 @@ void MpegTsDemuxer::Reset() {
 }
 
 AudioFormat MpegTsDemuxer::DetectAudioFormat(const uint8_t* data, size_t size) {
-    if (size < 2 || data[0] != 0xFF) return AudioFormat::Unknown;
-    uint8_t b1 = data[1];
-    // ADTS (AAC)
-    if ((b1 & 0xF0) == 0xF0) {
-        if (((b1 >> 1) & 0x03) == 0x00) return AudioFormat::AAC_ADTS;
-    }
-    // MP3
-    if ((b1 & 0xE0) == 0xE0) {
-        if (((b1 >> 3) & 0x03) != 0x01 && ((b1 >> 1) & 0x03) != 0x00) return AudioFormat::MP3;
+    if (!data || size < 2) return AudioFormat::Unknown;
+    for (size_t i = 0; i + 1 < size; ++i) {
+        if (data[i] == 0xFF) {
+            uint8_t b1 = data[i + 1];
+            // ADTS (AAC)
+            if ((b1 & 0xF0) == 0xF0) {
+                if (((b1 >> 1) & 0x03) == 0x00) return AudioFormat::AAC_ADTS;
+            }
+            // MP3
+            if ((b1 & 0xE0) == 0xE0) {
+                if (((b1 >> 3) & 0x03) != 0x01 && ((b1 >> 1) & 0x03) != 0x00) return AudioFormat::MP3;
+            }
+        }
     }
     return AudioFormat::Unknown;
 }
@@ -119,7 +123,9 @@ void MpegTsDemuxer::ProcessBytes(const uint8_t* data, size_t size) {
         bytesConsumed += 188;
     }
 
-    if (bytesConsumed > 0) {
+    if (bytesConsumed >= m_buffer.size()) {
+        m_buffer.clear();
+    } else if (bytesConsumed > 0) {
         m_buffer.erase(m_buffer.begin(), m_buffer.begin() + bytesConsumed);
     }
 }
