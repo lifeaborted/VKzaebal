@@ -78,10 +78,8 @@ private:
     void StartYandexService();
     void StartYouTubeService();
 
-    void StartAuthFlow(const QString& service, const QString& authUrl);
+    void StartAuthFlow(const QString& service, const QString& authUrl, bool forceVisible = false);
     void TrySilentVkAuth(std::function<void(bool success)> onComplete = nullptr);
-    void TryValidateVkTokens(const std::vector<std::string>& tokens, size_t index);
-    void ValidateVkPoolQuietly(const std::vector<std::string>& tokens, size_t index);
     void CheckNextCandidate(const std::shared_ptr<const std::vector<std::string>>& candidates,
                             size_t index,
                             std::function<void(const std::string& nextSource)> callback) const;
@@ -95,4 +93,8 @@ private:
     QString m_currentAuthService;
     QMap<QString, QString> m_envVars;
     IAudioProvider* m_currentProvider = nullptr;
+
+    bool m_isAuthFlowActive = false;
+    bool m_isSilentAuthActive = false;
+    qint64 m_lastSilentAuthAttemptMs = 0;
 };

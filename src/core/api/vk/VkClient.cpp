@@ -24,12 +24,22 @@ bool VkClient::HandleApiError(const QJsonDocument& json, int /*httpStatusCode*/)
 
         Logger::Log(LogLevel::ERROR, "VK API Error [" + std::to_string(errCode) + "]: " + errMsg);
 
+        if (errMsg.find("user is blocked") != std::string::npos || errMsg.find("User is deactivated") != std::string::npos) {
+            Logger::Log(LogLevel::ERROR, "VK: Account is frozen/blocked by VK anti-fraud: " + errMsg);
+            emit UserBlocked("VK", errMsg);
+            return true;
+        }
+
         if ((errCode == 5 || errCode == 15 || errCode == 27) && !m_isValidatingToken) {
             emit TokenExpired();
         }
         return true;
     }
     return false;
+}
+
+namespace {
+constexpr const char* kVkApiUserAgent = "KateMobileAndroid/56 lite-arm64-v8a (Android 11; SDK 30; arm64-v8a; Xiaomi Redmi Note 8 Pro; ru)";
 }
 
 void VkClient::ValidateToken(std::function<void(bool)> callback) {
@@ -41,13 +51,25 @@ void VkClient::ValidateToken(std::function<void(bool)> callback) {
     QUrlQuery query;
     query.addQueryItem("v", QString::fromStdString(m_apiVersion));
     query.addQueryItem("access_token", QString::fromStdString(m_accessToken));
+    query.addQueryItem("fields", "deactivated");
     url.setQuery(query);
 
     QNetworkRequest request(url);
-    request.setRawHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+    request.setRawHeader("User-Agent", kVkApiUserAgent);
 
-    SendJsonRequest(request, [this, callback](const QJsonDocument&) {
+    SendJsonRequest(request, [this, callback](const QJsonDocument& json) {
         m_isValidatingToken = false;
+        QJsonArray users = json.object()["response"].toArray();
+        if (!users.isEmpty()) {
+            QJsonObject u = users[0].toObject();
+            if (u.contains("deactivated")) {
+                std::string status = u["deactivated"].toString().toStdString();
+                Logger::Log(LogLevel::ERROR, "VK: Account is deactivated/frozen: " + status);
+                emit UserBlocked("VK", "User account is " + status);
+                callback(false);
+                return;
+            }
+        }
         Logger::Log(LogLevel::INFO, "api: Token is valid.");
         callback(true);
     }, [this, callback](const std::string&) {
@@ -65,7 +87,7 @@ void VkClient::FetchTrackUrl(const std::string& trackId, std::function<void(cons
     url.setQuery(query);
 
     QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::UserAgentHeader, "VKAndroidApp/5.56.1-12345 (Android 11; SDK 30; x86_64; en; 2274003)");
+    request.setRawHeader("User-Agent", kVkApiUserAgent);
     request.setTransferTimeout(5000);
 
     SendJsonRequest(request, [callback](const QJsonDocument& json) {
@@ -90,7 +112,7 @@ void VkClient::FetchAllUserAudio(int offset, int count) {
     url.setQuery(query);
 
     QNetworkRequest request(url);
-    request.setRawHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+    request.setRawHeader("User-Agent", kVkApiUserAgent);
 
     SendJsonRequest(request, [this, offset, count](const QJsonDocument& json) {
         std::vector<Track> chunkTracks;

@@ -25,6 +25,7 @@ public:
     void HandleTrackFinished();
     void HandleTrackNearEnd();
     void ClearState();
+    void CancelPlaybackAndRetries();
 
 private:
     IAudioEngine& m_audio;

@@ -14,11 +14,12 @@
 #include <QUrl>
 #include <QPointer>
 #include <QTimer>
+#include <QDateTime>
 #include <QNetworkAccessManager>
 #include <algorithm>
 
 namespace {
-constexpr const char* kVkAuthUrl = "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=408861919&response_type=token&v=5.131";
+constexpr const char* kVkAuthUrl = "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=audio,offline&response_type=token&v=5.131";
 }
 
 SourceRouter::SourceRouter(const QMap<QString, QString>& envVars,
@@ -127,6 +128,12 @@ IAudioProvider* SourceRouter::GetOrCreateProvider(const std::string& sourceName)
     if (key == "VK") {
         auto vk = std::make_unique<VkClient>(this, m_networkManager);
         connect(vk.get(), &VkClient::TokenExpired, this, &SourceRouter::OnVkTokenExpired);
+        connect(vk.get(), &VkClient::UserBlocked, this, [this](const std::string& service, const std::string& reason) {
+            Logger::Log(LogLevel::ERROR, "SourceRouter: User blocked on " + service + ": " + reason);
+            EmitStatus("[ВНИМАНИЕ] Аккаунт " + service + " временно заморожен! Открываем окно для разморозки...");
+            emit AuthUiStateChanged(true);
+            StartAuthFlow(QString::fromStdString(service), kVkAuthUrl, /*forceVisible=*/true);
+        });
         provider = std::move(vk);
     } else if (key == "Spotify") {
         auto sp = std::make_unique<SpotifyClient>(this, m_networkManager);
@@ -183,38 +190,54 @@ YouTubeClient* SourceRouter::GetYouTubeClient() const {
     return static_cast<YouTubeClient*>(const_cast<SourceRouter*>(this)->GetOrCreateProvider("YouTube"));
 }
 
-void SourceRouter::StartAuthFlow(const QString& service, const QString& authUrl) {
+void SourceRouter::StartAuthFlow(const QString& service, const QString& authUrl, bool forceVisible) {
+    if (m_isAuthFlowActive && m_authEngine) {
+        Logger::Log(LogLevel::WARNING, "SourceRouter: Auth flow already active for " + m_currentAuthService.toStdString());
+        return;
+    }
+    m_isAuthFlowActive = true;
     m_currentAuthService = service;
     Logger::Log(LogLevel::INFO, "SourceRouter: Starting auth flow via QML for " + service.toStdString() + "...");
     emit AuthUiStateChanged(true);
 
     EmitStatus("=== Авторизация " + service.toStdString() + " === Откроется окно браузера.");
 
-    if (!m_authEngine) {
-        m_authEngine = new QQmlApplicationEngine();
-        m_authEngine->rootContext()->setContextProperty("cppAuthManager", m_authManager.get());
-        m_authEngine->rootContext()->setContextProperty("cppAuthUrl", authUrl);
-        m_authEngine->load(QUrl(QStringLiteral("qrc:/core/auth/auth.qml")));
+    if (m_authEngine) {
+        m_authEngine->deleteLater();
+        m_authEngine = nullptr;
+    }
 
-        if (m_authEngine->rootObjects().isEmpty()) {
-            Logger::Log(LogLevel::ERROR, "SourceRouter: Failed to load auth.qml!");
-        } else {
-            QWindow* rootWindow = qobject_cast<QWindow*>(m_authEngine->rootObjects().first());
-            if (rootWindow) {
-                connect(rootWindow, &QWindow::visibleChanged, this, [this](bool visible) {
-                    if (!visible && m_authEngine) {
-                        m_authEngine->deleteLater();
-                        m_authEngine = nullptr;
-                        emit AuthUiStateChanged(false);
-                        EmitStatus("[Инфо] Окно авторизации закрыто.");
-                    }
-                });
-            }
+    m_authEngine = new QQmlApplicationEngine();
+    m_authEngine->rootContext()->setContextProperty("cppAuthManager", m_authManager.get());
+    m_authEngine->rootContext()->setContextProperty("cppAuthUrl", authUrl);
+    m_authEngine->rootContext()->setContextProperty("cppForceVisible", forceVisible);
+    m_authEngine->load(QUrl(QStringLiteral("qrc:/core/auth/auth.qml")));
+
+    if (m_authEngine->rootObjects().isEmpty()) {
+        Logger::Log(LogLevel::ERROR, "SourceRouter: Failed to load auth.qml!");
+        m_authEngine->deleteLater();
+        m_authEngine = nullptr;
+        m_isAuthFlowActive = false;
+        emit AuthUiStateChanged(false);
+    } else {
+        QWindow* rootWindow = qobject_cast<QWindow*>(m_authEngine->rootObjects().first());
+        if (rootWindow) {
+            connect(rootWindow, &QWindow::visibleChanged, this, [this](bool visible) {
+                if (!visible && m_authEngine) {
+                    m_authEngine->deleteLater();
+                    m_authEngine = nullptr;
+                    m_isAuthFlowActive = false;
+                    emit AuthUiStateChanged(false);
+                    EmitStatus("[Инфо] Окно авторизации закрыто.");
+                }
+            });
         }
     }
 }
 
 void SourceRouter::OnVkTokenReceived(const std::string& token) {
+    m_isAuthFlowActive = false;
+    m_isSilentAuthActive = false;
     if (m_authEngine) { m_authEngine->deleteLater(); m_authEngine = nullptr; }
     m_authManager->SaveToken(token, "VK");
 
@@ -241,6 +264,7 @@ void SourceRouter::OnVkTokenReceived(const std::string& token) {
 }
 
 void SourceRouter::OnSpotifyTokenReceived(const std::string& token) {
+    m_isAuthFlowActive = false;
     m_authManager->SaveToken(token, "Spotify");
     emit AuthUiStateChanged(false);
     EmitStatus("[УСПЕХ] Авторизация Spotify пройдена!");
@@ -254,6 +278,7 @@ void SourceRouter::OnSpotifyTokenReceived(const std::string& token) {
 }
 
 void SourceRouter::OnSpotifyAuthError(const std::string& err) {
+    m_isAuthFlowActive = false;
     EmitStatus("[ОШИБКА] Не удалось получить токен Spotify: " + err);
     emit AuthUiStateChanged(false);
 }
@@ -307,30 +332,36 @@ void SourceRouter::TrySilentVkAuth(std::function<void(bool success)> onComplete)
 }
 
 void SourceRouter::OnVkTokenExpired() {
-    Logger::Log(LogLevel::WARNING, "SourceRouter: Token VK expired or rejected (possibly IP changed). Testing token pool...");
+    qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (m_isAuthFlowActive || m_isSilentAuthActive) {
+        Logger::Log(LogLevel::INFO, "SourceRouter: Auth already in progress, skipping duplicate OnVkTokenExpired.");
+        return;
+    }
+    if (now - m_lastSilentAuthAttemptMs < 15000) {
+        Logger::Log(LogLevel::WARNING, "SourceRouter: Rate limiting VK token renewal (cooldown 15s).");
+        return;
+    }
+    m_lastSilentAuthAttemptMs = now;
+    m_isSilentAuthActive = true;
+
+    Logger::Log(LogLevel::WARNING, "SourceRouter: VK token expired or rejected. Attempting silent renewal...");
     QPointer<SourceRouter> safeThis(this);
-    m_authManager->GetSavedTokens("VK", [safeThis](const std::vector<std::string>& savedTokens) {
+    TrySilentVkAuth([safeThis](bool success) {
         if (!safeThis) return;
-        if (savedTokens.empty()) {
-            safeThis->TrySilentVkAuth([safeThis](bool success) {
-                if (!safeThis) return;
-                if (!success) {
-                    auto* vk = safeThis->GetVkClient();
-                    if (vk) vk->SetAccessToken("");
-                    safeThis->StartAuthFlow("VK", kVkAuthUrl);
-                }
-            });
-        } else {
-            safeThis->TryValidateVkTokens(savedTokens, 0);
+        safeThis->m_isSilentAuthActive = false;
+        if (!success) {
+            auto* vk = safeThis->GetVkClient();
+            if (vk) vk->SetAccessToken("");
+            safeThis->StartAuthFlow("VK", kVkAuthUrl);
         }
     });
 }
 
 void SourceRouter::StartVkService() {
     QPointer<SourceRouter> safeThis(this);
-    m_authManager->GetSavedTokens("VK", [safeThis](const std::vector<std::string>& savedTokens) {
+    m_authManager->GetSavedToken("VK", [safeThis](const std::string& savedToken) {
         if (!safeThis) return;
-        if (savedTokens.empty()) {
+        if (savedToken.empty()) {
             safeThis->EmitStatus("[VK] Токен не найден. Пробуем тихое продление через куки...");
             safeThis->TrySilentVkAuth([safeThis](bool success) {
                 if (!safeThis) return;
@@ -340,45 +371,32 @@ void SourceRouter::StartVkService() {
                 }
             });
         } else {
-            safeThis->EmitStatus("[VK] Проверка сохраненных токенов (" + std::to_string(savedTokens.size()) + " в пуле)...");
-            safeThis->TryValidateVkTokens(savedTokens, 0);
+            safeThis->EmitStatus("[VK] Проверка сохраненного токена...");
+            auto* vk = safeThis->GetVkClient();
+            if (vk) {
+                vk->SetAccessToken(savedToken);
+                vk->ValidateToken([safeThis, vk, savedToken](bool isValid) {
+                    if (!safeThis) return;
+                    if (isValid) {
+                        Logger::Log(LogLevel::INFO, "SourceRouter: Saved VK token is valid.");
+                        emit safeThis->AuthUiStateChanged(false);
+                        emit safeThis->ProviderReady(true);
+                        vk->FetchAllUserAudio(0, 200);
+                    } else {
+                        safeThis->EmitStatus("[VK] Сохраненный токен недействителен. Тихое продление через куки...");
+                        safeThis->TrySilentVkAuth([safeThis, vk](bool success) {
+                            if (!safeThis) return;
+                            if (!success) {
+                                if (vk) vk->SetAccessToken("");
+                                safeThis->EmitStatus("[VK] Сессия устарела. Открываем окно авторизации...");
+                                safeThis->StartAuthFlow("VK", kVkAuthUrl);
+                            }
+                        });
+                    }
+                });
+            }
         }
     });
-}
-
-void SourceRouter::TryValidateVkTokens(const std::vector<std::string>& tokens, size_t index) {
-    auto* vk = GetVkClient();
-    if (index >= tokens.size()) {
-        EmitStatus("[VK] Ни один токен из пула не подошел под текущий IP. Фоновое продление...");
-        QPointer<SourceRouter> safeThis(this);
-        TrySilentVkAuth([safeThis, vk](bool success) {
-            if (!safeThis) return;
-            if (!success) {
-                if (vk) vk->SetAccessToken("");
-                safeThis->EmitStatus("[VK] Сессия устарела. Открываем окно авторизации...");
-                safeThis->StartAuthFlow("VK", kVkAuthUrl);
-            }
-        });
-        return;
-    }
-
-    const std::string& currentToken = tokens[index];
-    if (vk) {
-        vk->SetAccessToken(currentToken);
-        QPointer<SourceRouter> safeThis(this);
-        vk->ValidateToken([safeThis, tokens, index, currentToken, vk](bool isValid) {
-            if (!safeThis) return;
-            if (isValid) {
-                Logger::Log(LogLevel::INFO, "SourceRouter: VK token from pool (index " + std::to_string(index) + ") is valid for current IP.");
-                safeThis->m_authManager->SaveToken(currentToken, "VK");
-                emit safeThis->AuthUiStateChanged(false);
-                emit safeThis->ProviderReady(true);
-                vk->FetchAllUserAudio(0, 200);
-            } else {
-                safeThis->TryValidateVkTokens(tokens, index + 1);
-            }
-        });
-    }
 }
 
 void SourceRouter::StartSoundCloudService() {
@@ -705,45 +723,29 @@ void SourceRouter::PreinitializeVkClient() {
     if (!vk || !vk->GetAccessToken().empty()) return;
 
     QPointer<SourceRouter> safeThis(this);
-    m_authManager->GetSavedTokens("VK", [safeThis](const std::vector<std::string>& savedTokens) {
+    m_authManager->GetSavedToken("VK", [safeThis](const std::string& savedToken) {
         if (!safeThis) return;
-        if (savedTokens.empty()) {
+        if (savedToken.empty()) {
             safeThis->TrySilentVkAuth([](bool /*success*/) {});
             return;
         }
 
         auto* vkClient = safeThis->GetVkClient();
         if (vkClient && vkClient->GetAccessToken().empty()) {
-            vkClient->SetAccessToken(savedTokens.front());
-            Logger::Log(LogLevel::INFO, "SourceRouter: Pre-initialized VK token from pool (front of pool).");
+            vkClient->SetAccessToken(savedToken);
+            Logger::Log(LogLevel::INFO, "SourceRouter: Pre-initialized VK client with saved token.");
         }
 
-        safeThis->ValidateVkPoolQuietly(savedTokens, 0);
-    });
-}
-
-void SourceRouter::ValidateVkPoolQuietly(const std::vector<std::string>& tokens, size_t index) {
-    auto* vk = GetVkClient();
-    if (!vk) return;
-    if (index >= tokens.size()) {
-        TrySilentVkAuth([](bool /*success*/) {});
-        return;
-    }
-
-    QPointer<SourceRouter> safeThis(this);
-    const std::string& currentToken = tokens[index];
-
-    vk->SetAccessToken(currentToken);
-    vk->ValidateToken([safeThis, tokens, index, currentToken](bool isValid) {
-        if (!safeThis) return;
-        auto* vkClient = safeThis->GetVkClient();
-        if (!vkClient) return;
-
-        if (isValid) {
-            Logger::Log(LogLevel::INFO, "SourceRouter: Background VK token validated (index " + std::to_string(index) + ").");
-            safeThis->m_authManager->SaveToken(currentToken, "VK");
-        } else {
-            safeThis->ValidateVkPoolQuietly(tokens, index + 1);
+        if (vkClient) {
+            vkClient->ValidateToken([safeThis, savedToken](bool isValid) {
+                if (!safeThis) return;
+                if (isValid) {
+                    Logger::Log(LogLevel::INFO, "SourceRouter: Pre-initialized VK token is valid.");
+                } else {
+                    Logger::Log(LogLevel::INFO, "SourceRouter: Pre-initialized VK token invalid, attempting silent refresh...");
+                    safeThis->TrySilentVkAuth([](bool /*success*/) {});
+                }
+            });
         }
     });
 }

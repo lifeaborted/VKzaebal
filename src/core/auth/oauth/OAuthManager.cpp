@@ -40,36 +40,6 @@ OAuthManager::~OAuthManager() {
 void OAuthManager::SaveToken(const std::string& token, const QString& service) const {
     if (token.empty()) return;
 
-    if (service == "VK") {
-        GetSavedTokens("VK", [token](const std::vector<std::string>& existing) {
-            QJsonArray arr;
-            arr.append(QString::fromStdString(token));
-            for (const auto& oldTok : existing
-                     | std::views::filter([&token](const std::string& t) { return t != token; })
-                     | std::views::take(9)) {
-                arr.append(QString::fromStdString(oldTok));
-            }
-            QJsonDocument doc(arr);
-            QString jsonStr = QString::fromUtf8(doc.toJson(QJsonDocument::Compact));
-
-            auto* job = new QKeychain::WritePasswordJob("VK");
-            job->setAutoDelete(true);
-            job->setKey("oauth_token");
-            job->setTextData(jsonStr);
-
-            connect(job, &QKeychain::Job::finished, [](QKeychain::Job* baseJob) {
-                if (baseJob->error()) {
-                    Logger::Log(LogLevel::ERROR, "auth: Failed to securely save VK tokens: " + baseJob->errorString().toStdString());
-                } else {
-                    Logger::Log(LogLevel::INFO, "auth: VK token pool securely updated");
-                }
-            });
-
-            job->start();
-        });
-        return;
-    }
-
     auto* job = new QKeychain::WritePasswordJob(service);
     job->setAutoDelete(true);
     job->setKey("oauth_token");

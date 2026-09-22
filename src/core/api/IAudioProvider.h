@@ -21,5 +21,6 @@ public:
         void AudioFetched(const std::vector<Track>& tracks);
         void ApiError(const std::string& errorMessage);
         void TokenExpired();
+        void UserBlocked(const std::string& service, const std::string& reason);
         void FinishedFetching();
 };

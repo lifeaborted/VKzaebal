@@ -169,6 +169,9 @@ void ApplicationCore::WireConnections() {
     });
 
     connect(m_router.get(), &SourceRouter::AuthUiStateChanged, this, [this](bool isWaiting) {
+        if (isWaiting) {
+            m_playbackCtrl->CancelPlaybackAndRetries();
+        }
         m_console->SetState(isWaiting ? ConsoleState::WAITING_TOKEN_URL : ConsoleState::COMMAND_MODE);
     });
 

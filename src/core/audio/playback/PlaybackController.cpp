@@ -201,3 +201,10 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
         }, Qt::QueuedConnection);
     }
 }
+
+void PlaybackController::CancelPlaybackAndRetries() {
+    m_playbackGeneration.fetch_add(1);
+    m_audio.Pause();
+    m_audio.ClearBuffers(false, 0);
+    Logger::Log(LogLevel::INFO, "PlaybackController: Playback and retries cancelled.");
+}

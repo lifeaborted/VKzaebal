@@ -7,27 +7,39 @@ Window {
     id: authWindow
     width: 900
     height: 700
-    visible: (cppAuthUrl.indexOf("oauth.vk.com") === -1 && cppAuthUrl.indexOf("oauth.vk.ru") === -1 && cppAuthUrl.indexOf("id.vk.com") === -1)
+    color: "#181818"
+    visible: true
     title: "Авторизация"
 
-    Timer {
-        id: showWindowTimer
-        interval: 12000
-        running: !authWindow.visible
-        repeat: false
-        onTriggered: {
-            authWindow.visible = true
-        }
-    }
+    property bool vkSilentTokenRedirected: false
 
     WebView {
         id: webView
         anchors.fill: parent
         url: cppAuthUrl
 
+        onLoadingChanged: function(loadRequest) {
+            console.warn("[QML] Loading status=" + loadRequest.status + " error=" + loadRequest.errorString + " url=" + loadRequest.url)
+        }
+
         onUrlChanged: {
-            console.log("[QML] Текущий URL: " + url.toString())
-            cppAuthManager.onUrlIntercepted(url.toString())
+            var currentStr = url.toString()
+            console.warn("[QML] Текущий URL: " + currentStr)
+
+            // Автоматический переход после авторизации через VK ID (по QR-коду):
+            // Когда VK ID возвращает silent_token или payload без access_token, сессия пользователя уже
+            // успешно установлена в браузере. Немедленно перенаправляем на OAuth приложения!
+            if (!authWindow.vkSilentTokenRedirected &&
+                (currentStr.indexOf("silent_token") !== -1 ||
+                 currentStr.indexOf("auth_redirect") !== -1 ||
+                 (currentStr.indexOf("blank.html#payload") !== -1 && currentStr.indexOf("access_token=") === -1))) {
+                authWindow.vkSilentTokenRedirected = true
+                console.warn("[QML] VK ID: обнаружен silent_token / payload. Немедленно перенаправляем на OAuth...")
+                webView.url = cppAuthUrl
+                return
+            }
+
+            cppAuthManager.onUrlIntercepted(currentStr)
         }
     }
 
@@ -65,44 +77,18 @@ Window {
             else if (cppAuthUrl.indexOf("oauth.vk.com") !== -1 || cppAuthUrl.indexOf("oauth.vk.ru") !== -1 || cppAuthUrl.indexOf("id.vk.com") !== -1) {
                 var vkCode = `
                     (function() {
-                        // 1. Автоматически нажимаем кнопку подтверждения прав ("Разрешить" / "Продолжить")
-                        var btn = document.querySelector('.oauth_button .flat_button') ||
-                                  document.querySelector('button.flat_button[type="submit"]') ||
-                                  document.querySelector('.oauth_button') ||
-                                  document.querySelector('button[type="submit"]') ||
-                                  document.querySelector('.vkc__Button__primary') ||
-                                  document.querySelector('button.vkuiButton--mode-primary') ||
-                                  document.querySelector('[data-test-id="continue-as-button"]') ||
-                                  document.querySelector('[data-test-id="verification-continue-button"]');
-                        if (btn && !btn.disabled) {
-                            btn.click();
-                            return "approved";
+                        var h = window.location.href;
+                        if (h.indexOf('silent_token') !== -1 || h.indexOf('auth_redirect') !== -1 || (h.indexOf('blank.html#payload') !== -1 && h.indexOf('access_token=') === -1)) {
+                            return "needs_redirect";
                         }
-
-                        // 2. Проверяем, есть ли РЕАЛЬНО ВИДИМЫЕ поля ввода логина/пароля/кода
-                        function isVisible(el) {
-                            if (!el) return false;
-                            var rect = el.getBoundingClientRect();
-                            if (rect.width === 0 || rect.height === 0) return false;
-                            var style = window.getComputedStyle(el);
-                            return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
-                        }
-
-                        var inputs = document.querySelectorAll('input[type="password"], input[name="login"], input[type="tel"], input[autocomplete="one-time-code"]');
-                        for (var i = 0; i < inputs.length; i++) {
-                            if (isVisible(inputs[i])) {
-                                return "show_window";
-                            }
-                        }
-
                         return "waiting";
                     })();
                 `;
                 webView.runJavaScript(vkCode, function(result) {
-                    if (result === "show_window") {
-                        authWindow.visible = true;
-                    } else if (result === "approved") {
-                        console.log("[QML] VK: Authorization consent approved automatically.");
+                    if (result === "needs_redirect" && !authWindow.vkSilentTokenRedirected) {
+                        authWindow.vkSilentTokenRedirected = true;
+                        console.warn("[QML] VK ID sniper detected silent_token, redirecting to cppAuthUrl...");
+                        webView.url = cppAuthUrl;
                     }
                 });
             }
