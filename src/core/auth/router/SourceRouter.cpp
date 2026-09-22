@@ -481,26 +481,29 @@ void SourceRouter::StartYouTubeService() {
     m_authManager->GetSavedToken("YouTube", [this, envCookie](const std::string& savedToken) {
         std::string effectiveToken = !envCookie.isEmpty() ? envCookie.toStdString() : savedToken;
 
-        if (effectiveToken.find("LOGIN_INFO=") == std::string::npos) {
+        if (effectiveToken.empty()) {
             std::string fullCookies = WebViewCookieReader::GetFullYouTubeCookies();
-            if (!fullCookies.empty() && fullCookies.find("LOGIN_INFO=") != std::string::npos) {
+            if (!fullCookies.empty() &&
+                (fullCookies.find("SAPISID=") != std::string::npos || fullCookies.find("__Secure-1PAPISID=") != std::string::npos)) {
                 Logger::Log(LogLevel::INFO, "SourceRouter: Retrieved active YouTube session from WebView2 storage.");
                 effectiveToken = fullCookies;
                 m_authManager->SaveToken(effectiveToken, "YouTube");
             }
         }
 
-        bool hasValidCookies = (effectiveToken.find("LOGIN_INFO=") != std::string::npos || !envCookie.isEmpty()) &&
-                               (effectiveToken.find("SAPISID=") != std::string::npos || effectiveToken.find("__Secure-1PAPISID=") != std::string::npos);
+        bool hasValidCookies = !effectiveToken.empty() &&
+                               (effectiveToken.find("SAPISID=") != std::string::npos ||
+                                effectiveToken.find("__Secure-1PAPISID=") != std::string::npos ||
+                                effectiveToken.find("__Secure-3PAPISID=") != std::string::npos);
 
         auto* yt = GetYouTubeClient();
 
-        if (effectiveToken.empty() || !hasValidCookies) {
+        if (!hasValidCookies) {
             if (!effectiveToken.empty()) {
                 m_authManager->ClearSavedToken("YouTube");
             }
             EmitStatus("[YouTube] Требуется авторизация для загрузки медиатеки...");
-            StartAuthFlow("YouTube", "https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fmusic.youtube.com%2F");
+            StartAuthFlow("YouTube", "https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fmusic.youtube.com%2F", /*forceVisible=*/true);
         } else {
             EmitStatus("[YouTube] Сессия найдена. Загрузка избранных треков...");
             if (yt) {
@@ -652,13 +655,17 @@ void SourceRouter::CheckSourceAuthorized(const std::string& source, std::functio
         }
         m_authManager->GetSavedToken("YouTube", [callback](const std::string& savedToken) {
             std::string token = savedToken;
-            if (token.find("LOGIN_INFO=") == std::string::npos) {
+            if (token.empty()) {
                 std::string fullCookies = WebViewCookieReader::GetFullYouTubeCookies();
-                if (!fullCookies.empty() && fullCookies.find("LOGIN_INFO=") != std::string::npos) {
+                if (!fullCookies.empty() &&
+                    (fullCookies.find("SAPISID=") != std::string::npos || fullCookies.find("__Secure-1PAPISID=") != std::string::npos)) {
                     token = fullCookies;
                 }
             }
-            bool hasValidCookies = (token.find("LOGIN_INFO=") != std::string::npos);
+            bool hasValidCookies = (!token.empty() &&
+                                   (token.find("SAPISID=") != std::string::npos ||
+                                    token.find("__Secure-1PAPISID=") != std::string::npos ||
+                                    token.find("__Secure-3PAPISID=") != std::string::npos));
             callback(hasValidCookies);
         });
     } else {
@@ -789,10 +796,12 @@ void SourceRouter::PreinitializeYouTubeClient() {
             if (!ytClient) return;
 
             std::string token = !envCookie.isEmpty() ? envCookie.toStdString() : savedToken;
-            if (token.find("LOGIN_INFO=") == std::string::npos) {
+            if (token.empty()) {
                 std::string fullCookies = WebViewCookieReader::GetFullYouTubeCookies();
-                if (!fullCookies.empty() && fullCookies.find("LOGIN_INFO=") != std::string::npos) {
+                if (!fullCookies.empty() &&
+                    (fullCookies.find("SAPISID=") != std::string::npos || fullCookies.find("__Secure-1PAPISID=") != std::string::npos)) {
                     token = fullCookies;
+                    safeThis->m_authManager->SaveToken(token, "YouTube");
                 }
             }
             if (!token.empty() && ytClient->GetAccessToken().empty()) {
