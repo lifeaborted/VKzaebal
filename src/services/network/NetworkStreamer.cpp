@@ -250,6 +250,7 @@ void NetworkStreamer::DownloadNextChunk() {
 
 void NetworkStreamer::StartChunkDownload() {
     m_currentChunkData.clear();
+    m_currentChunkData.reserve(128 * 1024);
 
     Logger::Log(LogLevel::INFO, "StartChunkDownload: seq=" + std::to_string(m_currentChunk.mediaSequence) +
                 " url=" + m_currentChunk.url.fileName().toStdString());
@@ -316,8 +317,6 @@ void NetworkStreamer::OnChunkFinished() {
     }
 
     QByteArray newData = reply->readAll();
-    m_currentChunkData.append(newData);
-
     if (m_streamType == StreamType::DirectHttp) {
         if (!newData.isEmpty()) {
             emit DataReceived(newData);
@@ -325,6 +324,8 @@ void NetworkStreamer::OnChunkFinished() {
         emit DownloadFinished();
         return;
     }
+
+    m_currentChunkData.append(newData);
 
     // HLS Stream
     HlsChunk completedChunk = m_currentChunk;
@@ -377,7 +378,7 @@ void NetworkStreamer::OnChunkFinished() {
                 if (cipherSize > 0) {
                     if (cipherSize % 16 != 0) {
                         int padding = 16 - (cipherSize % 16);
-                        chunkData.append(QByteArray(padding, 0));
+                        chunkData.append(padding, '\0');
                         cipherSize += padding;
                     }
 
