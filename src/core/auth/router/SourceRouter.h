@@ -21,6 +21,7 @@ class QNetworkAccessManager;
 class OAuthManager;
 class IAudioProvider;
 class QQmlApplicationEngine;
+class QTimer;
 
 class SourceRouter : public QObject {
     Q_OBJECT
@@ -79,7 +80,6 @@ private:
     void StartYouTubeService();
 
     void StartAuthFlow(const QString& service, const QString& authUrl, bool forceVisible = false);
-    void TrySilentVkAuth(std::function<void(bool success)> onComplete = nullptr);
     void CheckNextCandidate(const std::shared_ptr<const std::vector<std::string>>& candidates,
                             size_t index,
                             std::function<void(const std::string& nextSource)> callback) const;
@@ -90,11 +90,11 @@ private:
     std::unique_ptr<OAuthManager> m_authManager;
 
     QQmlApplicationEngine* m_authEngine = nullptr;
+    QTimer* m_silentAuthTimer = nullptr;
     QString m_currentAuthService;
     QMap<QString, QString> m_envVars;
     IAudioProvider* m_currentProvider = nullptr;
 
     bool m_isAuthFlowActive = false;
-    bool m_isSilentAuthActive = false;
-    qint64 m_lastSilentAuthAttemptMs = 0;
+    qint64 m_lastAuthAttemptMs = 0;
 };

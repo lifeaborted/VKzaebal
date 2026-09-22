@@ -5,10 +5,13 @@ import QtQml
 
 Window {
     id: authWindow
-    width: 900
-    height: 700
+    width: cppForceVisible ? 900 : 1
+    height: cppForceVisible ? 700 : 1
+    x: cppForceVisible ? (Screen.width - width) / 2 : -10000
+    y: cppForceVisible ? (Screen.height - height) / 2 : -10000
     color: "#181818"
     visible: true
+    flags: cppForceVisible ? Qt.Window : (Qt.Tool | Qt.FramelessWindowHint | Qt.WindowTransparentForInput)
     title: "Авторизация"
 
     property bool vkSilentTokenRedirected: false
@@ -27,14 +30,17 @@ Window {
             console.warn("[QML] Текущий URL: " + currentStr)
 
             // Автоматический переход после авторизации через VK ID (по QR-коду):
-            // Когда VK ID возвращает silent_token или payload без access_token, сессия пользователя уже
-            // успешно установлена в браузере. Немедленно перенаправляем на OAuth приложения!
+            // Когда VK ID возвращает silent_token или payload без access_token, либо переходит на страницу аккаунта,
+            // сессия пользователя уже успешно установлена в браузере. Немедленно перенаправляем на OAuth приложения!
             if (!authWindow.vkSilentTokenRedirected &&
                 (currentStr.indexOf("silent_token") !== -1 ||
                  currentStr.indexOf("auth_redirect") !== -1 ||
+                 currentStr.indexOf("id.vk.com/account") !== -1 ||
+                 currentStr.indexOf("id.vk.com/personal") !== -1 ||
+                 currentStr.indexOf("vk.com/feed") !== -1 ||
                  (currentStr.indexOf("blank.html#payload") !== -1 && currentStr.indexOf("access_token=") === -1))) {
                 authWindow.vkSilentTokenRedirected = true
-                console.warn("[QML] VK ID: обнаружен silent_token / payload. Немедленно перенаправляем на OAuth...")
+                console.warn("[QML] VK ID: обнаружен переход после авторизации. Немедленно перенаправляем на OAuth...")
                 webView.url = cppAuthUrl
                 return
             }
@@ -78,16 +84,48 @@ Window {
                 var vkCode = `
                     (function() {
                         var h = window.location.href;
-                        if (h.indexOf('silent_token') !== -1 || h.indexOf('auth_redirect') !== -1 || (h.indexOf('blank.html#payload') !== -1 && h.indexOf('access_token=') === -1)) {
+                        // 1. Токен уже в URL - сработает onUrlChanged
+                        if (h.indexOf('access_token=') !== -1) {
+                            return "token_present";
+                        }
+
+                        // 2. Если попали на промежуточную страницу или страницу аккаунта
+                        if (h.indexOf('silent_token') !== -1 ||
+                            h.indexOf('auth_redirect') !== -1 ||
+                            (h.indexOf('blank.html#payload') !== -1 && h.indexOf('access_token=') === -1) ||
+                            h.indexOf('id.vk.com/account') !== -1 ||
+                            h.indexOf('id.vk.com/personal') !== -1 ||
+                            h.indexOf('vk.com/feed') !== -1) {
                             return "needs_redirect";
                         }
+
+                        // 3. Авто-нажатие кнопок подтверждения входа ("Продолжить как...", "Войти как...", "Разрешить")
+                        var buttons = document.querySelectorAll('button, a.vkuiButton, div[role="button"], input[type="submit"]');
+                        for (var i = 0; i < buttons.length; i++) {
+                            var text = (buttons[i].innerText || buttons[i].textContent || '').trim().toLowerCase();
+                            if (text.indexOf('продолжить как') !== -1 ||
+                                text.indexOf('войти как') !== -1 ||
+                                text === 'продолжить' ||
+                                text === 'разрешить') {
+                                buttons[i].click();
+                                return "clicked_button";
+                            }
+                        }
+
+                        // 4. Проверка: отсканирован ли QR-код (QR исчез, а блок профиля появился)
+                        var qrElement = document.querySelector('.vkc__Qr__wrapper, .vkid__qr-code, canvas');
+                        var userCell = document.querySelector('.vkc__EnterBox__profile, .vkuiSimpleCell, [data-test-id="user-card"]');
+                        if (!qrElement && userCell) {
+                            return "needs_redirect";
+                        }
+
                         return "waiting";
                     })();
                 `;
                 webView.runJavaScript(vkCode, function(result) {
                     if (result === "needs_redirect" && !authWindow.vkSilentTokenRedirected) {
                         authWindow.vkSilentTokenRedirected = true;
-                        console.warn("[QML] VK ID sniper detected silent_token, redirecting to cppAuthUrl...");
+                        console.warn("[QML] VK ID sniper detected successful login / intermediate redirect, navigating to cppAuthUrl...");
                         webView.url = cppAuthUrl;
                     }
                 });

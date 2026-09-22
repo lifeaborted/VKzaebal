@@ -27,10 +27,6 @@ public:
     void GetSavedUserId(const QString& service, std::function<void(const std::string&)> callback) const;
     void ClearSavedUserId(const QString& service = "Yandex") const;
 
-    void RefreshVkTokenSilently(const std::string& cookies,
-                                const QString& authUrl,
-                                std::function<void(const std::string& newToken, bool success)> callback);
-
     Q_INVOKABLE void onUrlIntercepted(const QString& urlStr);
     Q_INVOKABLE void onScTokenIntercepted(const QString& tokenStr);
     Q_INVOKABLE void onYtAuthIntercepted(const QString& cookies);
