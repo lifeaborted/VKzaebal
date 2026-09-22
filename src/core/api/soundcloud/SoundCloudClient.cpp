@@ -166,6 +166,21 @@ void SoundCloudClient::FetchAllUserAudio(int offset, int count) {
                 artwork.replace("-large.jpg", "-t500x500.jpg");
                 track.coverUrl = artwork.toStdString();
             }
+
+            // ОПТИМИЗАЦИЯ OPT-AUTH-02: Кэшируем транскодинг сразу при парсинге коллекции
+            QString trackAuth = trackObj["track_authorization"].toString();
+            QJsonArray transcodings = trackObj["media"].toObject()["transcodings"].toArray();
+            QString transUrl;
+            for (const QJsonValue& tval : transcodings) {
+                QJsonObject trans = tval.toObject();
+                QString protocol = trans["format"].toObject()["protocol"].toString();
+                if (protocol == "progressive") { transUrl = trans["url"].toString(); break; }
+                if (protocol == "hls" && transUrl.isEmpty()) transUrl = trans["url"].toString();
+            }
+            if (!transUrl.isEmpty()) {
+                m_trackTranscodings[track.id] = {transUrl, trackAuth};
+            }
+
             chunkTracks.push_back(std::move(track));
         }
 
@@ -175,6 +190,21 @@ void SoundCloudClient::FetchAllUserAudio(int offset, int count) {
             FetchAllUserAudio(offset + chunkTracks.size(), count);
         } else emit FinishedFetching();
     }, [this](const std::string&) { emit FinishedFetching(); });
+}
+
+void SoundCloudClient::RequestCdnUrl(const QString& transUrl, const QString& trackAuth, std::function<void(const std::string&, bool)> callback) {
+    QUrl url(transUrl);
+    QUrlQuery transQuery(url.query());
+    transQuery.addQueryItem("client_id", QString::fromStdString(m_clientId));
+    if (!trackAuth.isEmpty()) {
+        transQuery.addQueryItem("track_authorization", trackAuth);
+    }
+    url.setQuery(transQuery);
+
+    QNetworkRequest cdnReq(url);
+    SendJsonRequest(cdnReq, [callback](const QJsonDocument& cdnJson) {
+        callback(cdnJson.object()["url"].toString().toStdString(), false);
+    }, [callback](const std::string&) { callback("", true); });
 }
 
 void SoundCloudClient::FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) {
@@ -187,10 +217,19 @@ void SoundCloudClient::FetchTrackUrl(const std::string& trackId, std::function<v
         return;
     }
 
+    // Fast-path: если транскодинг уже известен из списка треков, сразу запрашиваем CDN URL (1 сетевой запрос вместо 2)
+    auto it = m_trackTranscodings.find(trackId);
+    if (it != m_trackTranscodings.end()) {
+        Logger::Log(LogLevel::INFO, "SoundCloud: Fast-path for track " + trackId + " (skipping track metadata fetch)");
+        RequestCdnUrl(it->second.transUrl, it->second.trackAuth, callback);
+        return;
+    }
+
+    // Медленный путь: если трек запущен не из коллекции (например, прямой запуск по id)
     QString trackUrl = QString("https://api-v2.soundcloud.com/tracks/%1?client_id=%2").arg(QString::fromStdString(trackId), QString::fromStdString(m_clientId));
     QNetworkRequest request((QUrl(trackUrl)));
 
-    SendJsonRequest(request, [this, callback](const QJsonDocument& json) {
+    SendJsonRequest(request, [this, trackId, callback](const QJsonDocument& json) {
         QJsonObject trackObj = json.object();
         QString trackAuth = trackObj["track_authorization"].toString();
         QJsonArray transcodings = trackObj["media"].toObject()["transcodings"].toArray();
@@ -205,16 +244,7 @@ void SoundCloudClient::FetchTrackUrl(const std::string& trackId, std::function<v
 
         if (transUrl.isEmpty()) { callback("", false); return; }
 
-        QUrl url(transUrl);
-        QUrlQuery transQuery(url.query());
-        transQuery.addQueryItem("client_id", QString::fromStdString(m_clientId));
-        if (!trackAuth.isEmpty()) transQuery.addQueryItem("track_authorization", trackAuth);
-        url.setQuery(transQuery);
-
-        QNetworkRequest cdnReq(url);
-        SendJsonRequest(cdnReq, [callback](const QJsonDocument& cdnJson) {
-            callback(cdnJson.object()["url"].toString().toStdString(), false);
-        }, [callback](const std::string&) { callback("", true); });
-
+        m_trackTranscodings[trackId] = {transUrl, trackAuth};
+        RequestCdnUrl(transUrl, trackAuth, callback);
     }, [callback](const std::string&) { callback("", true); });
 }

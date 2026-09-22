@@ -5,6 +5,8 @@
 #include <utility>
 #include <functional>
 
+#include <unordered_map>
+
 class SoundCloudClient : public BaseApiProvider {
     Q_OBJECT
 public:
@@ -19,14 +21,21 @@ protected:
     bool HandleApiError(const QJsonDocument& json, int httpStatusCode) override;
 
 private:
+    struct TranscodingInfo {
+        QString transUrl;
+        QString trackAuth;
+    };
+
     void FetchClientId();
     void ExtractClientIdFromJs(const QString& jsUrl);
     void FetchMe();
     void FailPendingRequests();
+    void RequestCdnUrl(const QString& transUrl, const QString& trackAuth, std::function<void(const std::string&, bool)> callback);
 
     std::string m_clientId;
     std::string m_userId;
     QString m_nextHref;
     bool m_isFetchingClientId = false;
     std::vector<std::pair<std::string, std::function<void(const std::string&, bool)>>> m_pendingTrackRequests;
+    std::unordered_map<std::string, TranscodingInfo> m_trackTranscodings;
 };
