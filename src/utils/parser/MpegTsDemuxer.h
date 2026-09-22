@@ -14,6 +14,9 @@ public:
     void ProcessBytes(const uint8_t* data, size_t size);
     void Reset();
 
+    bool IsTsStream() const { return m_isTsStream; }
+    bool IsTsStreamDetermined() const { return m_isTsStreamDetermined; }
+
 private:
     AudioFormat DetectAudioFormat(const uint8_t* data, size_t size);
 

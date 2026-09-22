@@ -19,7 +19,9 @@ MiniaudioEngine::MiniaudioEngine() : m_demuxer([this](const uint8_t* payload, si
     if (format == AudioFormat::AAC_ADTS) {
         DecodeAacPayload(payload, size);
     } else {
-        DecodeMp3Payload(payload, size);
+        if (payload && size > 0) {
+            m_mp3Buffer.insert(m_mp3Buffer.end(), payload, payload + size);
+        }
     }
 }) {
     m_isDeviceInitialized = false;
@@ -136,6 +138,7 @@ void MiniaudioEngine::SetPositionSeconds(double pos) {
             }
             mp3dec_init(&m_mp3Decoder);
         }
+        m_decodeCv.notify_all();
         if (OnNetworkSeekRequested) {
             OnNetworkSeekRequested(pos);
         }
@@ -329,6 +332,14 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
 
         // --- ДЕТЕКТОР EOF ---
         if (framesRead == 0 && frameCount > 0) {
+            static int s_underflowLogCount = 0;
+            if (++s_underflowLogCount <= 5) {
+                Logger::Log(LogLevel::WARNING, "audioCallback: underflow! currentSec=" + std::to_string(currentSec) +
+                            " totalSec=" + std::to_string(totalSec) +
+                            " isNetFin=" + std::to_string(engine->m_isNetworkFinished) +
+                            " pcmAvailRead=" + std::to_string(engine->m_pcmBuffer.GetAvailableRead()) +
+                            " aacBufSize=" + std::to_string(engine->m_aacBuffer.size()));
+            }
             bool isEof = false;
             if (engine->m_decoder) {
                 isEof = true;
@@ -452,17 +463,26 @@ void MiniaudioEngine::PushNetworkData(const uint8_t* data, size_t size) {
     m_decodeCv.notify_one();
 }
 
+size_t MiniaudioEngine::GetNetworkBufferSize() const {
+    std::lock_guard<std::mutex> lock(m_networkMutex);
+    size_t mp3Remaining = (m_mp3Buffer.size() > m_mp3ReadOffset) ? (m_mp3Buffer.size() - m_mp3ReadOffset) : 0;
+    return m_aacBuffer.size() + mp3Remaining;
+}
+
 void MiniaudioEngine::DecodeLoop() {
     while (m_isDecoding) {
         {
             std::unique_lock<std::mutex> lock(m_networkMutex);
             m_decodeCv.wait(lock, [this]() {
-                return !m_isDecoding || (m_aacBuffer.size() >= 188) || (m_isNetworkFinished && !m_aacBuffer.empty());
+                bool hasAac = (m_aacBuffer.size() >= 188) || (m_isNetworkFinished && !m_aacBuffer.empty());
+                bool hasMp3 = (m_mp3Buffer.size() - m_mp3ReadOffset >= 8192) ||
+                              (m_isNetworkFinished && m_mp3Buffer.size() > m_mp3ReadOffset);
+                return !m_isDecoding || hasAac || hasMp3;
             });
 
             if (!m_isDecoding) break;
 
-            if (m_aacBuffer.empty()) {
+            if (m_aacBuffer.empty() && (m_mp3Buffer.size() <= m_mp3ReadOffset)) {
                 if (m_isNetworkFinished) {
                     lock.unlock();
                     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -472,7 +492,7 @@ void MiniaudioEngine::DecodeLoop() {
         }
 
         if (m_pcmBuffer.GetAvailableWrite() < 176400) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
             continue;
         }
 
@@ -483,6 +503,26 @@ void MiniaudioEngine::DecodeLoop() {
 void MiniaudioEngine::DecodeAACFrames() {
     std::lock_guard<std::mutex> lock(m_networkMutex);
 
+    static int s_aacLogCount = 0;
+    if (++s_aacLogCount % 20 == 1) {
+        Logger::Log(LogLevel::INFO, "DecodeAACFrames: aacBuf=" + std::to_string(m_aacBuffer.size()) +
+                    " mp3Buf=" + std::to_string(m_mp3Buffer.size()) +
+                    " mp3Offset=" + std::to_string(m_mp3ReadOffset) +
+                    " pcmWrite=" + std::to_string(m_pcmBuffer.GetAvailableWrite()) +
+                    " pcmRead=" + std::to_string(m_pcmBuffer.GetAvailableRead()));
+    }
+
+    if (m_demuxer.IsTsStreamDetermined() && !m_demuxer.IsTsStream()) {
+        if (!m_aacBuffer.empty()) {
+            m_demuxer.ProcessBytes(m_aacBuffer.data(), m_aacBuffer.size());
+            m_aacBuffer.clear();
+        }
+        DecodeMp3Payload(nullptr, 0);
+        return;
+    }
+
+    DecodeMp3Payload(nullptr, 0);
+
     size_t bytesConsumed = 0;
     while (m_aacBuffer.size() - bytesConsumed >= 188) {
         if (m_pcmBuffer.GetAvailableWrite() < 176400) {
@@ -491,9 +531,16 @@ void MiniaudioEngine::DecodeAACFrames() {
 
         m_demuxer.ProcessBytes(m_aacBuffer.data() + bytesConsumed, 188);
         bytesConsumed += 188;
+
+        if (m_demuxer.IsTsStreamDetermined() && !m_demuxer.IsTsStream()) {
+            break;
+        }
     }
 
-    if (m_isNetworkFinished && bytesConsumed < m_aacBuffer.size() && m_pcmBuffer.GetAvailableWrite() >= 176400) {
+    if (!m_demuxer.IsTsStream() && bytesConsumed < m_aacBuffer.size()) {
+        m_demuxer.ProcessBytes(m_aacBuffer.data() + bytesConsumed, m_aacBuffer.size() - bytesConsumed);
+        bytesConsumed = m_aacBuffer.size();
+    } else if (m_isNetworkFinished && bytesConsumed < m_aacBuffer.size() && m_pcmBuffer.GetAvailableWrite() >= 176400) {
         m_demuxer.ProcessBytes(m_aacBuffer.data() + bytesConsumed, m_aacBuffer.size() - bytesConsumed);
         bytesConsumed = m_aacBuffer.size();
     }
@@ -502,6 +549,10 @@ void MiniaudioEngine::DecodeAACFrames() {
         m_aacBuffer.clear();
     } else if (bytesConsumed > 0) {
         m_aacBuffer.erase(m_aacBuffer.begin(), m_aacBuffer.begin() + bytesConsumed);
+    }
+
+    if (m_pcmBuffer.GetAvailableWrite() >= 176400 || m_isNetworkFinished) {
+        DecodeMp3Payload(nullptr, 0);
     }
 }
 
@@ -519,7 +570,13 @@ void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSiz
         AAC_DECODER_ERROR err = aacDecoder_DecodeFrame(m_aacDecoder, pcmBuf, 4096, 0);
 
         if (err == AAC_DEC_NOT_ENOUGH_BITS) break;
-        if (err != AAC_DEC_OK) break;
+        if (err != AAC_DEC_OK) {
+            static int s_errCount = 0;
+            if (++s_errCount <= 10) {
+                Logger::Log(LogLevel::ERROR, "aacDecoder_DecodeFrame error: 0x" + QString::number(err, 16).toStdString());
+            }
+            break;
+        }
 
         CStreamInfo* info = aacDecoder_GetStreamInfo(m_aacDecoder);
         if (info && info->numChannels > 0) {
@@ -546,6 +603,10 @@ void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSiz
             }
 
             if (framesToOutput > 0) {
+                static int s_aacDecCount = 0;
+                if (++s_aacDecCount <= 5) {
+                    Logger::Log(LogLevel::INFO, "DecodeAacPayload: decoded " + std::to_string(framesToOutput) + " frames.");
+                }
                 size_t bytesToOutput = framesToOutput * 2 * sizeof(int16_t);
                 m_pcmBuffer.Write(reinterpret_cast<uint8_t*>(pcmDataPtr), bytesToOutput);
             }
@@ -554,27 +615,51 @@ void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSiz
 }
 
 void MiniaudioEngine::DecodeMp3Payload(const uint8_t* payload, size_t payloadSize) {
-    m_mp3Buffer.insert(m_mp3Buffer.end(), payload, payload + payloadSize);
+    if (payload && payloadSize > 0) {
+        m_mp3Buffer.insert(m_mp3Buffer.end(), payload, payload + payloadSize);
+    }
 
     static constexpr size_t kMinBufferForDecode = 8192;
     static constexpr size_t kMaxFrameSize = 2048;
 
-    if (!m_isNetworkFinished && (m_mp3Buffer.size() - m_mp3ReadOffset < kMinBufferForDecode)) return;
+    bool isEof = m_isNetworkFinished && m_aacBuffer.empty();
+
+    if (!isEof && (m_mp3Buffer.size() - m_mp3ReadOffset < kMinBufferForDecode)) {
+        return;
+    }
 
     int16_t pcmBuf[MINIMP3_MAX_SAMPLES_PER_FRAME];
     int16_t stereoBuf[MINIMP3_MAX_SAMPLES_PER_FRAME * 2];
     mp3dec_frame_info_t info;
 
-    size_t minRemaining = m_isNetworkFinished ? 0 : kMaxFrameSize;
-    while (m_mp3Buffer.size() - m_mp3ReadOffset > minRemaining) {
+    while (m_mp3Buffer.size() - m_mp3ReadOffset > 0) {
+        if (m_pcmBuffer.GetAvailableWrite() < 176400) {
+            break;
+        }
+
+        if (!isEof && (m_mp3Buffer.size() - m_mp3ReadOffset < kMaxFrameSize)) {
+            break;
+        }
+
         int samples = mp3dec_decode_frame(&m_mp3Decoder,
                                           m_mp3Buffer.data() + m_mp3ReadOffset,
                                           static_cast<int>(m_mp3Buffer.size() - m_mp3ReadOffset),
                                           pcmBuf, &info);
 
-        if (info.frame_bytes == 0) break;
+        if (samples == 0) {
+            if (!isEof) {
+                break;
+            } else {
+                if (info.frame_bytes > 0 && info.frame_bytes <= (m_mp3Buffer.size() - m_mp3ReadOffset)) {
+                    m_mp3ReadOffset += info.frame_bytes;
+                } else {
+                    m_mp3ReadOffset++;
+                }
+                continue;
+            }
+        }
 
-        if (samples > 0 && info.channels > 0) {
+        if (info.channels > 0) {
             ma_uint32 framesToOutput = samples;
             int16_t* pcmDataPtr = nullptr;
 
@@ -602,13 +687,14 @@ void MiniaudioEngine::DecodeMp3Payload(const uint8_t* payload, size_t payloadSiz
                 m_pcmBuffer.Write(reinterpret_cast<uint8_t*>(pcmDataPtr), bytesToOutput);
             }
         }
+
         m_mp3ReadOffset += info.frame_bytes;
     }
 
     if (m_mp3ReadOffset >= m_mp3Buffer.size()) {
         m_mp3Buffer.clear();
         m_mp3ReadOffset = 0;
-    } else if (m_mp3ReadOffset >= 65536) {
+    } else if (m_mp3ReadOffset >= 32768) {
         m_mp3Buffer.erase(m_mp3Buffer.begin(), m_mp3Buffer.begin() + m_mp3ReadOffset);
         m_mp3ReadOffset = 0;
     }
@@ -645,8 +731,13 @@ void MiniaudioEngine::ClearBuffers(bool crossfade, int nextDurationSec) {
         m_mp3Buffer.clear();
         m_mp3ReadOffset = 0;
         m_demuxer.Reset();
+        if (m_aacDecoder) {
+            aacDecoder_Close(m_aacDecoder);
+            m_aacDecoder = aacDecoder_Open(TT_MP4_ADTS, 1);
+        }
         mp3dec_init(&m_mp3Decoder);
     }
+    m_decodeCv.notify_all();
 }
 
 void MiniaudioEngine::InitiateCrossfade() {

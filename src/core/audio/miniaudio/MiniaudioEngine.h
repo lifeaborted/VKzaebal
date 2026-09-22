@@ -38,6 +38,7 @@ public:
     void PushNetworkData(const uint8_t* data, size_t size);
     void ClearBuffers(bool crossfade = false, int nextDurationSec = 0);
     void PollEvents() override;
+    size_t GetNetworkBufferSize() const override;
 
     void SetNetworkSkipSeconds(double seconds) override {
         m_networkDiscardFrames = static_cast<ma_uint64>(seconds * SAMPLE_RATE);
@@ -82,7 +83,7 @@ private:
     HANDLE_AACDECODER m_aacDecoder = nullptr;                       // Указатель на FDK-AAC декодер
     RingBuffer m_pcmBuffer;                                         // Потокобезопасный буфер для PCM
     std::vector<uint8_t> m_aacBuffer;                               // Временный буфер для сырых скачанных данных
-    std::mutex m_networkMutex;                                      // Защита буфера скачивания
+    mutable std::mutex m_networkMutex;                              // Защита буфера скачивания
     std::atomic<ma_uint64> m_playbackFrameCount{0};
 
     // --- ПЕРЕМЕННЫЕ КРОССФЕЙДА И ТАЙМИНГОВ ---

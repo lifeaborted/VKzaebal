@@ -1,6 +1,9 @@
 #pragma once
 #include "core/api/BaseApiProvider.h"
 #include <QString>
+#include <vector>
+#include <utility>
+#include <functional>
 
 class SoundCloudClient : public BaseApiProvider {
     Q_OBJECT
@@ -19,8 +22,11 @@ private:
     void FetchClientId();
     void ExtractClientIdFromJs(const QString& jsUrl);
     void FetchMe();
+    void FailPendingRequests();
 
     std::string m_clientId;
     std::string m_userId;
     QString m_nextHref;
+    bool m_isFetchingClientId = false;
+    std::vector<std::pair<std::string, std::function<void(const std::string&, bool)>>> m_pendingTrackRequests;
 };

@@ -2,6 +2,7 @@
 #include "Id3Utils.h"
 #include "utils/logger/Logger.h"
 #include <algorithm>
+#include <QString>
 
 MpegTsDemuxer::MpegTsDemuxer(PayloadCallback callback) : m_callback(callback) {}
 
@@ -36,7 +37,10 @@ void MpegTsDemuxer::ProcessBytes(const uint8_t* data, size_t size) {
     if (!data || size == 0) return;
 
     if (!m_isTsStreamDetermined) {
-        m_isTsStream = (data[0] == 0x47);
+        size_t id3Size = Id3Utils::ParseHeaderTotalSize(data, size);
+        const uint8_t* checkPtr = data + id3Size;
+        size_t checkSize = (size > id3Size) ? (size - id3Size) : 0;
+        m_isTsStream = (checkSize > 0 && checkPtr[0] == 0x47);
         m_isTsStreamDetermined = true;
     }
 
@@ -67,8 +71,27 @@ void MpegTsDemuxer::ProcessBytes(const uint8_t* data, size_t size) {
 
         if (tsPacket[0] != 0x47) {
             auto startIt = m_buffer.begin() + bytesConsumed;
-            auto it = std::find(startIt, m_buffer.end(), 0x47);
-            bytesConsumed = std::distance(m_buffer.begin(), it);
+            while (startIt != m_buffer.end()) {
+                auto it = std::find(startIt, m_buffer.end(), 0x47);
+                if (it == m_buffer.end()) {
+                    bytesConsumed = m_buffer.size();
+                    break;
+                }
+                size_t candOffset = std::distance(m_buffer.begin(), it);
+                // Проверяем следующий маркер пакета на расстоянии 188 байт, если данных в буфере достаточно
+                if (m_buffer.size() - candOffset >= 188 * 2) {
+                    if (m_buffer[candOffset + 188] == 0x47) {
+                        bytesConsumed = candOffset;
+                        break;
+                    } else {
+                        startIt = it + 1;
+                        continue;
+                    }
+                } else {
+                    bytesConsumed = candOffset;
+                    break;
+                }
+            }
             continue;
         }
 
@@ -85,6 +108,10 @@ void MpegTsDemuxer::ProcessBytes(const uint8_t* data, size_t size) {
 
             if (pusi == 1 && payloadSize >= 9 && payload[0] == 0x00 && payload[1] == 0x00 && payload[2] == 0x01) {
                 uint8_t streamId = payload[3];
+                static int s_pusiCount = 0;
+                if (++s_pusiCount <= 10) {
+                    Logger::Log(LogLevel::INFO, "Demuxer PUSI: pid=" + std::to_string(pid) + " streamId=0x" + QString::number(streamId, 16).toStdString());
+                }
 
                 if (m_audioPid == 0x1FFF && streamId >= 0xC0 && streamId <= 0xDF) {
                     m_audioPid = pid;

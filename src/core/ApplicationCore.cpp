@@ -74,6 +74,13 @@ bool ApplicationCore::Initialize() {
     connect(m_audioPollTimer, &QTimer::timeout, this, [this]() {
         if (m_audio) {
             m_audio->PollEvents();
+
+            size_t netBuf = m_audio->GetNetworkBufferSize();
+            if (netBuf <= 512 * 1024) {
+                m_streamer->ResumeDownload();
+            } else if (netBuf >= 2 * 1024 * 1024) {
+                m_streamer->PauseDownload();
+            }
         }
     });
     m_audioPollTimer->start(20);
@@ -90,6 +97,9 @@ void ApplicationCore::WireConnections() {
     // Сеть -> Аудио
     connect(m_streamer.get(), &NetworkStreamer::DataReceived, this, [this](const QByteArray& data) {
         m_audio->PushNetworkData(reinterpret_cast<const uint8_t*>(data.constData()), data.size());
+        if (m_audio->GetNetworkBufferSize() >= 2 * 1024 * 1024) {
+            m_streamer->PauseDownload();
+        }
     });
     connect(m_streamer.get(), &NetworkStreamer::ExactSeekOffset, this, [this](double skipSeconds) {
         m_audio->SetNetworkSkipSeconds(skipSeconds);

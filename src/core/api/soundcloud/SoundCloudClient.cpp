@@ -1,18 +1,33 @@
 #include "SoundCloudClient.h"
 #include "utils/logger/Logger.h"
+#include "utils/path/PathManager.h"
 #include <QJsonArray>
 #include <QUrlQuery>
 #include <QRegularExpression>
 #include <QJsonObject>
+#include <QSettings>
 
 SoundCloudClient::SoundCloudClient(QObject* parent, QNetworkAccessManager* manager) : BaseApiProvider(parent, manager) {
-    Logger::Log(LogLevel::INFO, "SoundCloudClient created.");
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    m_clientId = settings.value("SoundCloud/ClientId", "").toString().toStdString();
+    Logger::Log(LogLevel::INFO, std::string("SoundCloudClient created.") + (m_clientId.empty() ? "" : " (using cached client_id)"));
 }
 SoundCloudClient::~SoundCloudClient() {
+    FailPendingRequests();
     Logger::Log(LogLevel::INFO, "SoundCloudClient destroyed.");
 }
 
 bool SoundCloudClient::HandleApiError(const QJsonDocument& json, int httpStatusCode) {
+    if (httpStatusCode == 401) {
+        Logger::Log(LogLevel::WARNING, "SoundCloud: 401 Unauthorized. Client ID may be invalid, clearing cache...");
+        m_clientId.clear();
+        QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+        settings.remove("SoundCloud/ClientId");
+        if (!m_isFetchingClientId) {
+            FetchClientId();
+        }
+        return true;
+    }
     if (httpStatusCode >= 400) {
         Logger::Log(LogLevel::ERROR, "SoundCloud API Error HTTP " + std::to_string(httpStatusCode));
         return true;
@@ -21,10 +36,25 @@ bool SoundCloudClient::HandleApiError(const QJsonDocument& json, int httpStatusC
 }
 
 void SoundCloudClient::InitializeWithToken() {
-    FetchClientId();
+    if (!m_clientId.empty()) {
+        FetchMe();
+    } else {
+        FetchClientId();
+    }
+}
+
+void SoundCloudClient::FailPendingRequests() {
+    auto pending = std::move(m_pendingTrackRequests);
+    m_pendingTrackRequests.clear();
+    for (const auto& req : pending) {
+        req.second("", true);
+    }
 }
 
 void SoundCloudClient::FetchClientId() {
+    if (m_isFetchingClientId) return;
+    m_isFetchingClientId = true;
+
     QNetworkRequest request((QUrl("https://soundcloud.com")));
     QNetworkReply* reply = m_manager->get(request);
 
@@ -36,9 +66,18 @@ void SoundCloudClient::FetchClientId() {
             QString lastJsUrl;
             while (i.hasNext()) lastJsUrl = i.next().captured(1);
 
-            if (!lastJsUrl.isEmpty()) ExtractClientIdFromJs(lastJsUrl);
-            else emit ApiError("Could not find JS files on SC homepage.");
-        } else emit ApiError("Failed to load SC homepage.");
+            if (!lastJsUrl.isEmpty()) {
+                ExtractClientIdFromJs(lastJsUrl);
+            } else {
+                m_isFetchingClientId = false;
+                emit ApiError("Could not find JS files on SC homepage.");
+                FailPendingRequests();
+            }
+        } else {
+            m_isFetchingClientId = false;
+            emit ApiError("Failed to load SC homepage.");
+            FailPendingRequests();
+        }
         reply->deleteLater();
     });
 }
@@ -48,15 +87,31 @@ void SoundCloudClient::ExtractClientIdFromJs(const QString& jsUrl) {
     QNetworkReply* reply = m_manager->get(request);
 
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        m_isFetchingClientId = false;
         if (reply->error() == QNetworkReply::NoError) {
             QString js = reply->readAll();
             QRegularExpression re("client_id:\"([a-zA-Z0-9]{32})\"");
             QRegularExpressionMatch match = re.match(js);
             if (match.hasMatch()) {
                 m_clientId = match.captured(1).toStdString();
+                QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+                settings.setValue("SoundCloud/ClientId", QString::fromStdString(m_clientId));
+                Logger::Log(LogLevel::INFO, "SoundCloud: Client ID acquired and cached.");
                 FetchMe();
-            } else emit ApiError("Could not extract client_id.");
-        } else emit ApiError("Failed to load JS file.");
+
+                auto pending = std::move(m_pendingTrackRequests);
+                m_pendingTrackRequests.clear();
+                for (const auto& req : pending) {
+                    FetchTrackUrl(req.first, req.second);
+                }
+            } else {
+                emit ApiError("Could not extract client_id.");
+                FailPendingRequests();
+            }
+        } else {
+            emit ApiError("Failed to load JS file.");
+            FailPendingRequests();
+        }
         reply->deleteLater();
     });
 }
@@ -123,6 +178,15 @@ void SoundCloudClient::FetchAllUserAudio(int offset, int count) {
 }
 
 void SoundCloudClient::FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) {
+    if (m_clientId.empty()) {
+        Logger::Log(LogLevel::INFO, "SoundCloud: Client ID not ready yet, queueing track URL request for " + trackId);
+        m_pendingTrackRequests.push_back({trackId, callback});
+        if (!m_isFetchingClientId) {
+            FetchClientId();
+        }
+        return;
+    }
+
     QString trackUrl = QString("https://api-v2.soundcloud.com/tracks/%1?client_id=%2").arg(QString::fromStdString(trackId), QString::fromStdString(m_clientId));
     QNetworkRequest request((QUrl(trackUrl)));
 

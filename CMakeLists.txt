@@ -264,3 +264,41 @@ if (WIN32)
             $<TARGET_FILE_DIR:test_vk_silent_auth>
     )
 endif()
+
+# --- Automated Test: Track 2 Playback Past 00:05 ---
+add_executable(test_track2_playback
+        tests/test_track2_playback.cpp
+        ${COMMON_SOURCES}
+        libs/tiny-aes/aes.c
+)
+
+target_include_directories(test_track2_playback PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/fdk-aac/libAACdec/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/tiny-aes
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/minimp3
+)
+
+target_link_libraries(test_track2_playback PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Network
+        Qt6::Widgets
+        Qt6::Sql
+        Qt6::Qml
+        Qt6::WebView
+        qt6keychain
+        Qt6::Concurrent
+        fdk-aac
+)
+
+if (WIN32)
+    target_link_libraries(test_track2_playback PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/shazam_ffi/target/release/shazam_ffi.dll.lib"
+    )
+    add_custom_command(TARGET test_track2_playback POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/shazam_ffi/target/release/shazam_ffi.dll"
+            $<TARGET_FILE_DIR:test_track2_playback>
+    )
+endif()

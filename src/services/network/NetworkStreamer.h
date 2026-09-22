@@ -8,6 +8,7 @@
 #include <QStringList>
 #include <string>
 #include <atomic>
+#include <map>
 
 extern "C" {
 #include "aes.h"
@@ -23,7 +24,11 @@ enum class StreamType {
 
 struct HlsChunk {
     QUrl url;
-    double durationSec;
+    double durationSec = 0.0;
+    bool isEncrypted = false;
+    QUrl keyUrl;
+    QByteArray iv;
+    uint64_t mediaSequence = 0;
 };
 
 class NetworkStreamer : public QObject {
@@ -37,6 +42,7 @@ public:
     void SeekTo(double targetSeconds);
     
     void SetTrackDuration(int durationSec) { m_trackDurationSec = durationSec; }
+    bool IsPaused() const { return m_isPaused; }
 
 signals:
     void DataReceived(const QByteArray& data);
@@ -56,7 +62,9 @@ private slots:
 private:
     void ParseM3u8(const QString& manifestData, const QUrl& baseUrl);
     void DownloadNextChunk();
-    void DownloadKey();          // Скачивание AES-ключа
+    void DownloadKey(const QUrl& keyUrl);
+    void StartChunkDownload();
+    void DeliverChunk(uint64_t seq, QByteArray data, uint64_t currentGen, bool wasEncrypted);
 
     bool m_isPaused = false;
     QNetworkAccessManager* m_manager;
@@ -68,16 +76,19 @@ private:
     qint64 m_totalFileSize = 0;
     int m_trackDurationSec = 0;
 
-    // --- ПЕРЕМЕННЫЕ ДЛЯ HLS AES-128 ---
-    QQueue<QUrl> m_chunkQueue;
+    // --- ПЕРЕМЕННЫЕ ДЛЯ HLS ---
+    QQueue<HlsChunk> m_chunkQueue;
     QVector<HlsChunk> m_hlsChunks;
+    HlsChunk m_currentChunk;
     uint64_t m_baseMediaSequence = 0;
-    bool m_isEncrypted = false;
-    uint64_t m_mediaSequence = 0;
-    QUrl m_keyUrl;
+    QUrl m_loadedKeyUrl;
     QByteArray m_aesKey;
-    QByteArray m_aesIV;
     QByteArray m_currentChunkData; // Буфер для накопления целого чанка
     double m_pendingSeekPos = -1.0;
     std::atomic<uint64_t> m_streamGeneration{0};
+
+    // --- PIPELINING & REORDER BUFFER ---
+    uint64_t m_nextEmitSequence = 0;
+    std::map<uint64_t, QByteArray> m_readyChunks;
+    int m_chunksInFlight = 0;
 };

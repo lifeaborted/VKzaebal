@@ -25,6 +25,7 @@ public:
     virtual void SetNetworkSkipSeconds(double seconds) {}
 
     virtual void SetNetworkStreamFinished() {}
+    virtual size_t GetNetworkBufferSize() const { return 0; }
     virtual void PollEvents() {}
 
     std::function<void()> OnTrackNearEnd;
