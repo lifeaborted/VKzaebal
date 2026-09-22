@@ -11,6 +11,7 @@ QString PathManager::s_sessionDownloadsDir;
 QString PathManager::s_lyricsDir;
 QString PathManager::s_logsDir;
 QString PathManager::s_tempDir;
+QString PathManager::s_cacheDir;
 QString PathManager::s_cachedCustomDownloadsDir;
 bool PathManager::s_customDownloadsDirCached = false;
 bool PathManager::s_initialized = false;
@@ -37,11 +38,13 @@ void PathManager::Init() {
     s_lyricsDir = s_appDataDir + "/lyrics";
     s_logsDir = s_appDataDir + "/logs";
     s_tempDir = s_appDataDir + "/temp";
+    s_cacheDir = s_appDataDir + "/cache";
 
     QDir().mkpath(s_downloadsDir);
     QDir().mkpath(s_lyricsDir);
     QDir().mkpath(s_logsDir);
     QDir().mkpath(s_tempDir);
+    QDir().mkpath(s_cacheDir);
 
     s_initialized = true;
 }
@@ -106,6 +109,11 @@ QString PathManager::GetLogsDir() {
 QString PathManager::GetTempDir() {
     if (!s_initialized) Init();
     return s_tempDir;
+}
+
+QString PathManager::GetCacheDir() {
+    if (!s_initialized) Init();
+    return s_cacheDir;
 }
 
 QString PathManager::GetDbPath() {

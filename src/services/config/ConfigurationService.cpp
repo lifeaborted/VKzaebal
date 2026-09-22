@@ -20,8 +20,12 @@ void ConfigurationService::EnsureDefaultConfig() {
         settings.setValue("General/source", "VK");
         settings.setValue("Ui/ShowVisualizer", true);
         settings.setValue("Downloads/Path", "");
+        settings.setValue("Network/DiskCacheSizeMb", 100);
         settings.sync();
     } else {
+        if (!settings.contains("Network/DiskCacheSizeMb")) {
+            settings.setValue("Network/DiskCacheSizeMb", 100);
+        }
         if (!settings.contains("Downloads/Path")) {
             settings.setValue("Downloads/Path", "");
         }
@@ -176,3 +180,16 @@ void ConfigurationService::SetDownloadsPath(const QString& path) {
     settings.sync();
     PathManager::InvalidateConfigCache();
 }
+
+int ConfigurationService::GetDiskCacheSizeMb() const {
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    int mb = settings.value("Network/DiskCacheSizeMb", 100).toInt();
+    return std::clamp(mb, 10, 10000);
+}
+
+void ConfigurationService::SetDiskCacheSizeMb(int mb) {
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    settings.setValue("Network/DiskCacheSizeMb", std::clamp(mb, 10, 10000));
+    settings.sync();
+}
+

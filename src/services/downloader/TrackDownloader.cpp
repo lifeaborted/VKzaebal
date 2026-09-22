@@ -194,6 +194,7 @@ void TrackDownloader::Download(const Track& track, const std::string& urlStr, co
         }
 
         QNetworkRequest request((QUrl(QString::fromStdString(track.coverUrl))));
+        request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
         QNetworkReply* reply = safeThis->m_manager->get(request);
 
         connect(reply, &QNetworkReply::finished, safeThis, [safeThis, reply, finalPath, track, syncPrint]() {

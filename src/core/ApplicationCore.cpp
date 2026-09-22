@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QTimer>
 #include <QNetworkAccessManager>
+#include <QNetworkDiskCache>
 #include <iostream>
 #include <unordered_set>
 
@@ -44,6 +45,16 @@ bool ApplicationCore::Initialize() {
 
     // 1. Единый сетевой пул соединений QNetworkAccessManager
     m_networkManager = std::make_unique<QNetworkAccessManager>(this);
+
+    // Подключение дискового HTTP-кэша (OPT-NET-04)
+    auto diskCache = new QNetworkDiskCache(this);
+    QString cachePath = PathManager::GetCacheDir() + "/http_cache";
+    diskCache->setCacheDirectory(cachePath);
+    int cacheSizeMb = m_configService->GetDiskCacheSizeMb();
+    diskCache->setMaximumCacheSize(static_cast<qint64>(cacheSizeMb) * 1024 * 1024);
+    m_networkManager->setCache(diskCache);
+    Logger::Log(LogLevel::INFO, "HTTP Disk Cache initialized: dir=" + cachePath.toStdString() +
+                " limit=" + std::to_string(cacheSizeMb) + " MB");
 
     // 2. Создание базовых сервисов
     m_dbManager = std::make_unique<DatabaseManager>();

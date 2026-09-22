@@ -13,6 +13,7 @@ public:
     static QString GetLyricsDir();
     static QString GetLogsDir();
     static QString GetTempDir();
+    static QString GetCacheDir();
 
     static QString GetDbPath();
     static QString GetConfigPath();
@@ -32,6 +33,7 @@ private:
     static QString s_lyricsDir;
     static QString s_logsDir;
     static QString s_tempDir;
+    static QString s_cacheDir;
     static QString s_cachedCustomDownloadsDir;
     static bool s_customDownloadsDirCached;
     static bool s_initialized;

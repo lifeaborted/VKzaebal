@@ -39,4 +39,7 @@ public:
 
     QString GetDownloadsPath() const;
     void SetDownloadsPath(const QString& path);
+
+    int GetDiskCacheSizeMb() const;
+    void SetDiskCacheSizeMb(int mb);
 };

@@ -101,6 +101,7 @@ void YouTubeExtractor::fetchBaseJs(const QString& videoId, std::function<void(co
         QNetworkRequest jsReq((QUrl(m_baseJsUrl)));
         jsReq.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
         jsReq.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+        jsReq.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
 
         QNetworkReply* jsReply = m_manager->get(jsReq);
         connect(jsReply, &QNetworkReply::finished, this, [this, jsReply, callback]() {
