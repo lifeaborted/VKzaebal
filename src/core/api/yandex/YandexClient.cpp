@@ -25,10 +25,23 @@ bool YandexClient::HandleApiError(const QJsonDocument& json, int httpStatusCode)
     return false;
 }
 
+void YandexClient::SetUserId(const std::string& uid) {
+    m_userId = uid;
+}
+
+std::string YandexClient::GetUserId() const {
+    return m_userId;
+}
+
 void YandexClient::FetchAllUserAudio(int offset, int count) {
     if (m_accessToken.empty()) { emit FinishedFetching(); return; }
-    if (m_userId.empty()) FetchUserId();
-    else FetchLikesIds(offset, count);
+    if (m_userId.empty()) {
+        Logger::Log(LogLevel::INFO, "Yandex: No cached User ID found. Fetching via account status...");
+        FetchUserId();
+    } else {
+        Logger::Log(LogLevel::INFO, "Yandex: Using cached User ID (" + m_userId + "). Skipping account status request.");
+        FetchLikesIds(offset, count);
+    }
 }
 
 void YandexClient::FetchUserId() {
@@ -37,8 +50,16 @@ void YandexClient::FetchUserId() {
     request.setRawHeader("Authorization", QByteArray("OAuth ") + QByteArray::fromStdString(m_accessToken));
 
     SendJsonRequest(request, [this](const QJsonDocument& json) {
-        m_userId = std::to_string(json.object()["result"].toObject()["account"].toObject()["uid"].toInt());
+        QJsonValue uidVal = json.object()["result"].toObject()["account"].toObject()["uid"];
+        if (uidVal.isDouble()) {
+            m_userId = QString::number(static_cast<qint64>(uidVal.toDouble())).toStdString();
+        } else if (uidVal.isString()) {
+            m_userId = uidVal.toString().toStdString();
+        } else {
+            m_userId = std::to_string(uidVal.toInt());
+        }
         Logger::Log(LogLevel::INFO, "Yandex: Successfully got User ID: " + m_userId);
+        emit UserIdFetched(m_userId);
         FetchLikesIds(0, 200);
     }, [this](const std::string&) { emit ApiError("Failed to fetch Yandex status"); });
 }
@@ -60,7 +81,11 @@ void YandexClient::FetchLikesIds(int offset, int count) {
             FetchTracksMetadata(chunkIds);
             if (offset + count < tracksArray.size()) FetchLikesIds(offset + count, count);
         } else emit FinishedFetching();
-    }, [this](const std::string&) { emit FinishedFetching(); });
+    }, [this](const std::string& err) {
+        Logger::Log(LogLevel::WARNING, "Yandex: FetchLikesIds failed: " + err + ". Clearing cached UID.");
+        m_userId.clear();
+        emit FinishedFetching();
+    });
 }
 
 void YandexClient::FetchTracksMetadata(const QStringList& trackIds) {

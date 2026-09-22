@@ -50,12 +50,14 @@ SourceRouter::SourceRouter(const QMap<QString, QString>& envVars,
         } else if (m_currentAuthService == "Yandex") {
             if (m_authEngine) { m_authEngine->deleteLater(); m_authEngine = nullptr; }
             m_authManager->SaveToken(token, "Yandex");
+            m_authManager->ClearSavedUserId("Yandex");
             emit AuthUiStateChanged(false);
             EmitStatus("[УСПЕХ] Авторизация Yandex пройдена!");
 
             auto* ya = GetYandexClient();
             if (ya) {
                 ya->SetAccessToken(token);
+                ya->SetUserId("");
                 ya->FetchAllUserAudio(0, 200);
             }
             emit ProviderReady(true);
@@ -143,7 +145,11 @@ IAudioProvider* SourceRouter::GetOrCreateProvider(const std::string& sourceName)
     } else if (key == "SoundCloud") {
         provider = std::make_unique<SoundCloudClient>(this, m_networkManager);
     } else if (key == "Yandex") {
-        provider = std::make_unique<YandexClient>(this, m_networkManager);
+        auto ya = std::make_unique<YandexClient>(this, m_networkManager);
+        connect(ya.get(), &YandexClient::UserIdFetched, this, [this](const std::string& uid) {
+            m_authManager->SaveUserId(uid, "Yandex");
+        });
+        provider = std::move(ya);
     } else if (key == "YouTube") {
         auto yt = std::make_unique<YouTubeClient>(this, m_networkManager);
         connect(yt.get(), &YouTubeClient::TokenExpired, this, [this]() {
@@ -486,9 +492,16 @@ void SourceRouter::StartYandexService() {
             auto* ya = GetYandexClient();
             if (ya) {
                 ya->SetAccessToken(savedToken);
-                ya->FetchAllUserAudio(0, 200);
+                QPointer<SourceRouter> safeThis(this);
+                m_authManager->GetSavedUserId("Yandex", [safeThis, ya](const std::string& savedUid) {
+                    if (safeThis && ya && !savedUid.empty()) {
+                        ya->SetUserId(savedUid);
+                        Logger::Log(LogLevel::INFO, "SourceRouter: Loaded cached Yandex UID: " + savedUid);
+                    }
+                    if (ya) ya->FetchAllUserAudio(0, 200);
+                    if (safeThis) emit safeThis->ProviderReady(true);
+                });
             }
-            emit ProviderReady(true);
         }
     });
 }
@@ -610,8 +623,14 @@ void SourceRouter::Logout(const std::string& service) {
 
     auto processLogout = [this](const QString& svcName, IAudioProvider* client) {
         m_authManager->ClearSavedToken(svcName);
+        m_authManager->ClearSavedCookies(svcName);
+        m_authManager->ClearSavedUserId(svcName);
         WebViewCookieReader::ClearServiceCache(svcName.toStdString());
         if (client) client->SetAccessToken("");
+        if (svcName == "Yandex") {
+            auto* ya = GetYandexClient();
+            if (ya) ya->SetUserId("");
+        }
     };
 
     std::string lowerSvc = service;
@@ -759,6 +778,12 @@ void SourceRouter::PreinitializeYandexClient() {
             auto* yaClient = safeThis->GetYandexClient();
             if (yaClient && yaClient->GetAccessToken().empty()) {
                 yaClient->SetAccessToken(token);
+                safeThis->m_authManager->GetSavedUserId("Yandex", [safeThis, yaClient](const std::string& uid) {
+                    if (safeThis && yaClient && !uid.empty()) {
+                        yaClient->SetUserId(uid);
+                        Logger::Log(LogLevel::INFO, "SourceRouter: Pre-initialized Yandex client with cached UID: " + uid);
+                    }
+                });
                 Logger::Log(LogLevel::INFO, "SourceRouter: Pre-initialized Yandex client with saved token.");
             }
         });

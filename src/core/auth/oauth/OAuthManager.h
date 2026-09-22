@@ -23,6 +23,10 @@ public:
     void GetSavedCookies(const QString& service, std::function<void(const std::string&)> callback) const;
     void ClearSavedCookies(const QString& service = "VK") const;
 
+    void SaveUserId(const std::string& uid, const QString& service = "Yandex") const;
+    void GetSavedUserId(const QString& service, std::function<void(const std::string&)> callback) const;
+    void ClearSavedUserId(const QString& service = "Yandex") const;
+
     void RefreshVkTokenSilently(const std::string& cookies,
                                 const QString& authUrl,
                                 std::function<void(const std::string& newToken, bool success)> callback);

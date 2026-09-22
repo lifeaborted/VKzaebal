@@ -172,6 +172,62 @@ void OAuthManager::ClearSavedCookies(const QString& service) const {
     job->start();
 }
 
+void OAuthManager::SaveUserId(const std::string& uid, const QString& service) const {
+    if (uid.empty()) return;
+
+    auto* job = new QKeychain::WritePasswordJob(service);
+    job->setAutoDelete(true);
+    job->setKey("user_id");
+    job->setTextData(QString::fromStdString(uid));
+
+    connect(job, &QKeychain::Job::finished, [service](QKeychain::Job* baseJob) {
+        if (baseJob->error()) {
+            Logger::Log(LogLevel::ERROR, "auth: Failed to securely save user ID for " + service.toStdString() + ": " + baseJob->errorString().toStdString());
+        } else {
+            Logger::Log(LogLevel::INFO, "auth: User ID securely cached for " + service.toStdString());
+        }
+    });
+
+    job->start();
+}
+
+void OAuthManager::GetSavedUserId(const QString& service, std::function<void(const std::string&)> callback) const {
+    auto* job = new QKeychain::ReadPasswordJob(service);
+    job->setAutoDelete(true);
+    job->setKey("user_id");
+
+    connect(job, &QKeychain::Job::finished, [service, callback](QKeychain::Job* baseJob) {
+        if (baseJob->error()) {
+            if (baseJob->error() != QKeychain::Error::EntryNotFound) {
+                Logger::Log(LogLevel::ERROR, "auth: Failed to read cached user ID for " + service.toStdString() + ": " + baseJob->errorString().toStdString());
+            }
+            callback("");
+        } else {
+            auto* readJob = qobject_cast<QKeychain::ReadPasswordJob*>(baseJob);
+            std::string uid = readJob ? readJob->textData().trimmed().toStdString() : "";
+            callback(uid);
+        }
+    });
+
+    job->start();
+}
+
+void OAuthManager::ClearSavedUserId(const QString& service) const {
+    auto* job = new QKeychain::DeletePasswordJob(service);
+    job->setAutoDelete(true);
+    job->setKey("user_id");
+
+    connect(job, &QKeychain::Job::finished, [service](QKeychain::Job* baseJob) {
+        if (baseJob->error() && baseJob->error() != QKeychain::Error::EntryNotFound) {
+            Logger::Log(LogLevel::ERROR, "auth: Failed to delete cached user ID for " + service.toStdString() + ": " + baseJob->errorString().toStdString());
+        } else {
+            Logger::Log(LogLevel::INFO, "auth: Cached user ID removed for " + service.toStdString());
+        }
+    });
+
+    job->start();
+}
+
 void OAuthManager::RefreshVkTokenSilently(const std::string& cookies,
                                           const QString& authUrl,
                                           std::function<void(const std::string& newToken, bool success)> callback) {
