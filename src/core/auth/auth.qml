@@ -5,13 +5,13 @@ import QtQml
 
 Window {
     id: authWindow
-    width: cppForceVisible ? 900 : 1
-    height: cppForceVisible ? 700 : 1
-    x: cppForceVisible ? (Screen.width - width) / 2 : -10000
-    y: cppForceVisible ? (Screen.height - height) / 2 : -10000
+    width: 900
+    height: 700
+    x: (Screen.width - width) / 2
+    y: (Screen.height - height) / 2
     color: "#181818"
     visible: true
-    flags: cppForceVisible ? Qt.Window : (Qt.Tool | Qt.FramelessWindowHint | Qt.WindowTransparentForInput)
+    flags: Qt.Window
     title: "Авторизация"
 
     property bool vkSilentTokenRedirected: false
@@ -99,20 +99,7 @@ Window {
                             return "needs_redirect";
                         }
 
-                        // 3. Авто-нажатие кнопок подтверждения входа ("Продолжить как...", "Войти как...", "Разрешить")
-                        var buttons = document.querySelectorAll('button, a.vkuiButton, div[role="button"], input[type="submit"]');
-                        for (var i = 0; i < buttons.length; i++) {
-                            var text = (buttons[i].innerText || buttons[i].textContent || '').trim().toLowerCase();
-                            if (text.indexOf('продолжить как') !== -1 ||
-                                text.indexOf('войти как') !== -1 ||
-                                text === 'продолжить' ||
-                                text === 'разрешить') {
-                                buttons[i].click();
-                                return "clicked_button";
-                            }
-                        }
-
-                        // 4. Проверка: отсканирован ли QR-код (QR исчез, а блок профиля появился)
+                        // 3. Проверка: отсканирован ли QR-код (QR исчез, а блок профиля появился)
                         var qrElement = document.querySelector('.vkc__Qr__wrapper, .vkid__qr-code, canvas');
                         var userCell = document.querySelector('.vkc__EnterBox__profile, .vkuiSimpleCell, [data-test-id="user-card"]');
                         if (!qrElement && userCell) {

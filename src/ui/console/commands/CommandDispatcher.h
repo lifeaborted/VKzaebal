@@ -14,6 +14,7 @@ class IAudioProvider;
 class IDialogService;
 class IAudioCaptureService;
 class QNetworkAccessManager;
+class SourceRouter;
 
 // --- 1. Контекст команд ---
 struct CommandContext {
@@ -37,6 +38,8 @@ struct CommandContext {
     std::function<void()> onReloadUi;
     std::function<void(const Track&)> onSelectPlaylist;
     std::function<void()> onSelectPlaylistToPlay;
+
+    SourceRouter* router = nullptr;
 };
 
 // --- 2. Абстракция паттерна Command ---
@@ -58,6 +61,7 @@ public:
     ~CommandDispatcher();
 
     void SetCurrentProvider(IAudioProvider* provider);
+    void SetSourceRouter(SourceRouter* router);
     void SetPrintCallback(std::function<void(const std::string&)> printCb);
 
     std::function<void(const std::string&)> OnSourceChangeRequested;
@@ -81,6 +85,7 @@ private:
     TrackDownloader& m_downloader;
     LyricsFetcher& m_lyricsFetcher;
     IAudioProvider* m_currentProvider = nullptr;
+    SourceRouter* m_router = nullptr;
 
     std::unique_ptr<IDialogService> m_ownedDialogService;
     std::unique_ptr<IAudioCaptureService> m_ownedAudioCapture;

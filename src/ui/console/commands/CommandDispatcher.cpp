@@ -31,6 +31,10 @@ void CommandDispatcher::SetCurrentProvider(IAudioProvider* provider) {
     m_currentProvider = provider;
 }
 
+void CommandDispatcher::SetSourceRouter(SourceRouter* router) {
+    m_router = router;
+}
+
 void CommandDispatcher::SetPrintCallback(std::function<void(const std::string&)> printCb) {
     m_printCb = printCb;
 }
@@ -81,7 +85,8 @@ void CommandDispatcher::Dispatch(const std::string& input) {
             OnLogoutRequested,
             OnReloadUiRequested,
             OnSelectPlaylistRequested,
-            OnSelectPlaylistToPlayRequested
+            OnSelectPlaylistToPlayRequested,
+            m_router
         };
         it->second->Execute(arg, ctx);
     } else {

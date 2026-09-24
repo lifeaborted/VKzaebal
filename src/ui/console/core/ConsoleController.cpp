@@ -88,6 +88,7 @@ ConsoleController::ConsoleController(
     };
 
     m_dispatcher->OnQuitRequested = [this]() {
+        Logger::Log(LogLevel::INFO, ">>> ConsoleController: m_dispatcher->OnQuitRequested triggered! <<<");
         m_audio.Pause();
         emit QuitRequested();
     };
@@ -177,6 +178,7 @@ void ConsoleController::Start() {
 }
 
 void ConsoleController::Stop() {
+    Logger::Log(LogLevel::INFO, "ConsoleController: Stop() called.");
     if (!m_isRunning) return;
     m_isRunning = false;
 
@@ -223,6 +225,10 @@ void ConsoleController::Stop() {
 void ConsoleController::SetCurrentProvider(IAudioProvider* provider) {
     m_currentProvider = provider;
     if (m_dispatcher) m_dispatcher->SetCurrentProvider(provider);
+}
+
+void ConsoleController::SetSourceRouter(SourceRouter* router) {
+    if (m_dispatcher) m_dispatcher->SetSourceRouter(router);
 }
 
 void ConsoleController::SetStatusMessage(const std::string& msg) {

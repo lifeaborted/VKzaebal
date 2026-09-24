@@ -310,7 +310,7 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
             if (specLock.owns_lock()) {
                 size_t samplesToCopy = std::min(static_cast<size_t>(frameCount), static_cast<size_t>(256));
 
-                if (samplesToCopy < 256) {
+                if (samplesToCopy > 0 && samplesToCopy < 256) {
                     std::memmove(engine->m_recentSamples.data(),
                                  engine->m_recentSamples.data() + samplesToCopy,
                                  (256 - samplesToCopy) * sizeof(float));
@@ -751,9 +751,11 @@ void MiniaudioEngine::InitiateCrossfade() {
         m_fadeOutPcm.clear();
         m_fadeOutPcmReadPos = 0;
         size_t avail = m_pcmBuffer.GetAvailableRead();
-        if (avail > 0) {
-            m_fadeOutPcm.resize(avail / sizeof(int16_t));
-            m_pcmBuffer.Read(reinterpret_cast<uint8_t*>(m_fadeOutPcm.data()), avail);
+        size_t frameBytes = 2 * sizeof(int16_t);
+        size_t safeBytesToRead = (avail / frameBytes) * frameBytes;
+        if (safeBytesToRead > 0) {
+            m_fadeOutPcm.resize(safeBytesToRead / sizeof(int16_t));
+            m_pcmBuffer.Read(reinterpret_cast<uint8_t*>(m_fadeOutPcm.data()), safeBytesToRead);
         }
     }
     m_pcmBuffer.Clear();

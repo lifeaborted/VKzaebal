@@ -53,6 +53,11 @@ public:
     void PreinitializeYandexClient();
     void PreinitializeYouTubeClient();
 
+    void Search(const std::string& source, const std::string& query, int count, int offset,
+                std::function<void(const std::vector<Track>& tracks, const std::string& error)> callback);
+    void AddTrackToFavorites(const Track& track, std::function<void(bool success, const std::string& error)> callback);
+    void RemoveTrackFromFavorites(const Track& track, std::function<void(bool success, const std::string& error)> callback);
+
 signals:
     void SourceChanged(const std::string& newSource);
     void ProviderReady(bool isOnline);

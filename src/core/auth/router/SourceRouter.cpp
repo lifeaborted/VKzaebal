@@ -27,7 +27,6 @@ SourceRouter::SourceRouter(const QMap<QString, QString>& envVars,
                            QObject* parent)
     : QObject(parent), m_networkManager(networkManager), m_envVars(envVars) {
     m_authManager = std::make_unique<OAuthManager>(this, m_networkManager);
-    m_authManager->ClearSavedCookies("VK");
 
     // Прием универсального токена из WebView
     connect(m_authManager.get(), &OAuthManager::TokenReceived, this, [this](const std::string& token) {
@@ -336,11 +335,11 @@ void SourceRouter::OnVkTokenExpired() {
     }
     m_lastAuthAttemptMs = now;
 
-    Logger::Log(LogLevel::WARNING, "SourceRouter: VK token expired. Attempting silent renewal in background...");
+    Logger::Log(LogLevel::WARNING, "SourceRouter: VK token expired. Opening auth window...");
     auto* vk = GetVkClient();
     if (vk) vk->SetAccessToken("");
     m_authManager->ClearSavedToken("VK");
-    StartAuthFlow("VK", kVkAuthUrl, /*forceVisible=*/false);
+    StartAuthFlow("VK", kVkAuthUrl, /*forceVisible=*/true);
 }
 
 void SourceRouter::StartVkService() {
@@ -363,10 +362,10 @@ void SourceRouter::StartVkService() {
                         emit safeThis->ProviderReady(true);
                         vk->FetchAllUserAudio(0, 200);
                     } else {
-                        safeThis->EmitStatus("[VK] Сохраненный токен устарел. Обновление сессии в фоновом режиме...");
+                        safeThis->EmitStatus("[VK] Сохраненный токен устарел. Открываем окно авторизации...");
                         if (vk) vk->SetAccessToken("");
                         safeThis->m_authManager->ClearSavedToken("VK");
-                        safeThis->StartAuthFlow("VK", kVkAuthUrl, /*forceVisible=*/false);
+                        safeThis->StartAuthFlow("VK", kVkAuthUrl, /*forceVisible=*/true);
                     }
                 });
             }
@@ -818,4 +817,63 @@ void SourceRouter::EnsureAllProvidersInitialized() {
     PreinitializeSoundCloudClient();
     PreinitializeSpotifyClient();
     PreinitializeYouTubeClient();
+}
+
+void SourceRouter::Search(const std::string& source, const std::string& query, int count, int offset,
+                          std::function<void(const std::vector<Track>& tracks, const std::string& error)> callback) {
+    if (query.empty()) {
+        if (callback) callback({}, "");
+        return;
+    }
+
+    std::string s = source;
+    if (s == "all" || s == "ALL" || s == "ВСЕ" || s == "все" || s.empty()) {
+        std::vector<std::string> activeSources = {"VK", "Yandex", "YouTube", "SoundCloud"};
+        auto mergedTracks = std::make_shared<std::vector<Track>>();
+        auto remaining = std::make_shared<int>(static_cast<int>(activeSources.size()));
+
+        for (const auto& src : activeSources) {
+            IAudioProvider* prov = GetOrCreateProvider(src);
+            if (!prov) {
+                (*remaining)--;
+                if (*remaining == 0 && callback) callback(*mergedTracks, "");
+                continue;
+            }
+
+            prov->SearchAudio(query, count, offset, [mergedTracks, remaining, callback](const std::vector<Track>& res, const std::string&) {
+                if (!res.empty()) {
+                    mergedTracks->insert(mergedTracks->end(), res.begin(), res.end());
+                }
+                (*remaining)--;
+                if (*remaining == 0) {
+                    if (callback) callback(*mergedTracks, "");
+                }
+            });
+        }
+    } else {
+        IAudioProvider* prov = GetOrCreateProvider(s);
+        if (!prov) {
+            if (callback) callback({}, "Unknown provider: " + s);
+            return;
+        }
+        prov->SearchAudio(query, count, offset, callback);
+    }
+}
+
+void SourceRouter::AddTrackToFavorites(const Track& track, std::function<void(bool success, const std::string& error)> callback) {
+    IAudioProvider* prov = GetOrCreateProvider(track.source);
+    if (!prov) {
+        if (callback) callback(false, "Unknown provider for track: " + track.source);
+        return;
+    }
+    prov->AddTrackToFavorites(track.id, track.ownerId, callback);
+}
+
+void SourceRouter::RemoveTrackFromFavorites(const Track& track, std::function<void(bool success, const std::string& error)> callback) {
+    IAudioProvider* prov = GetOrCreateProvider(track.source);
+    if (!prov) {
+        if (callback) callback(false, "Unknown provider for track: " + track.source);
+        return;
+    }
+    prov->RemoveTrackFromFavorites(track.id, track.ownerId, callback);
 }

@@ -384,12 +384,16 @@ void NetworkStreamer::OnChunkFinished() {
 
                     if (key.size() == 16) {
                         QByteArray currentIV = iv;
-                        if (currentIV.isEmpty()) {
-                            currentIV = QByteArray(16, 0);
-                            uint64_t tempSeq = seq;
-                            for (int i = 15; i >= 8; --i) {
-                                currentIV[i] = tempSeq & 0xFF;
-                                tempSeq >>= 8;
+                        if (currentIV.size() != 16) {
+                            if (currentIV.isEmpty()) {
+                                currentIV = QByteArray(16, 0);
+                                uint64_t tempSeq = seq;
+                                for (int i = 15; i >= 8; --i) {
+                                    currentIV[i] = tempSeq & 0xFF;
+                                    tempSeq >>= 8;
+                                }
+                            } else {
+                                currentIV.resize(16, '\0');
                             }
                         }
 

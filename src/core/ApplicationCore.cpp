@@ -4,6 +4,7 @@
 #include <QTimer>
 #include <QNetworkAccessManager>
 #include <QNetworkDiskCache>
+#include <QThreadPool>
 #include <iostream>
 #include <unordered_set>
 
@@ -34,6 +35,7 @@ ApplicationCore::~ApplicationCore() {
     if (m_sessionService && m_audio && m_playlist && m_dbManager && m_configService) {
         m_sessionService->SaveSessionState(m_activeSource, *m_audio, *m_playlist, *m_dbManager, *m_configService);
     }
+    QThreadPool::globalInstance()->waitForDone(2000);
 }
 
 bool ApplicationCore::Initialize() {
@@ -77,6 +79,7 @@ bool ApplicationCore::Initialize() {
         *m_dbManager, *m_downloader, *m_lyricsFetcher,
         m_networkManager.get(), this
     );
+    m_console->SetSourceRouter(m_router.get());
 
     m_sessionService->RestoreSessionState(*m_audio, *m_playlist, *m_playbackCtrl, *m_configService);
     WireConnections();
@@ -100,6 +103,7 @@ bool ApplicationCore::Initialize() {
 }
 
 void ApplicationCore::Start() {
+    m_router->EnsureAllProvidersInitialized();
     m_router->SwitchSource(m_activeSource);
     m_console->Start();
 }
@@ -141,6 +145,9 @@ void ApplicationCore::WireConnections() {
     m_playlist->OnTrackRequested = [this](Track track) { m_playbackCtrl->AttemptPlay(track); };
 
     // UI команды
+    connect(m_console.get(), &ConsoleController::QuitRequested, this, []() {
+        Logger::Log(LogLevel::INFO, ">>> ApplicationCore: QuitRequested received from ConsoleController! <<<");
+    });
     connect(m_console.get(), &ConsoleController::QuitRequested, QCoreApplication::instance(), &QCoreApplication::quit);
     connect(m_console.get(), &ConsoleController::OfflineModeRequested, this, [this]() { InitPlaylistAndStart(false); }, Qt::QueuedConnection);
     connect(m_console.get(), &ConsoleController::SourceChanged, m_router.get(), [this](const std::string& source) {

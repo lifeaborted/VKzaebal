@@ -16,6 +16,21 @@ public:
     virtual void FetchTrackUrl(const std::string& trackId, std::function<void(const std::string& url, bool isNetworkError)> callback) = 0;
     virtual void FetchAllUserAudio(int offset = 0, int count = 200) = 0;
 
+    virtual void SearchAudio(const std::string& query, int count, int offset,
+                             std::function<void(const std::vector<Track>& tracks, const std::string& error)> callback) {
+        if (callback) callback({}, "Search not supported for this provider");
+    }
+
+    virtual void AddTrackToFavorites(const std::string& trackId, const std::string& ownerId,
+                                     std::function<void(bool success, const std::string& error)> callback) {
+        if (callback) callback(false, "Add to favorites not supported for this provider");
+    }
+
+    virtual void RemoveTrackFromFavorites(const std::string& trackId, const std::string& ownerId,
+                                          std::function<void(bool success, const std::string& error)> callback) {
+        if (callback) callback(false, "Remove from favorites not supported for this provider");
+    }
+
     signals:
         // Общие сигналы для всех сервисов
         void AudioFetched(const std::vector<Track>& tracks);

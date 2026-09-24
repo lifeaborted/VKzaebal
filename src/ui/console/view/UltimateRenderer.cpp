@@ -31,6 +31,7 @@ static int utf8_length(const std::string& str) {
 }
 
 static std::string safeTruncate(const std::string& str, int maxChars) {
+    if (maxChars <= 0) return "";
     std::string result;
     int chars = 0;
     for (size_t i = 0; i < str.length(); ) {
@@ -39,6 +40,10 @@ static std::string safeTruncate(const std::string& str, int maxChars) {
         if ((str[i] & 0xE0) == 0xC0) charLen = 2;
         else if ((str[i] & 0xF0) == 0xE0) charLen = 3;
         else if ((str[i] & 0xF8) == 0xF0) charLen = 4;
+
+        if (i + charLen > str.length()) {
+            charLen = str.length() - i;
+        }
 
         result.append(str, i, charLen);
         i += charLen;

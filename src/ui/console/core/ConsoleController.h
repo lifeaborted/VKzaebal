@@ -20,6 +20,7 @@ class TrackDownloader;
 class LyricsFetcher;
 class CommandDispatcher;
 class ConsoleRenderer;
+class SourceRouter;
 class QNetworkAccessManager;
 class QTimer;
 
@@ -52,6 +53,7 @@ public:
     ConsoleState GetState() const { return m_currentState; }
 
     void SetCurrentProvider(IAudioProvider* provider);
+    void SetSourceRouter(SourceRouter* router);
     void SetStatusMessage(const std::string& msg);
 
     std::function<void(bool)> OnGaplessModeChanged;

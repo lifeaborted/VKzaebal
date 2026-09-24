@@ -359,3 +359,172 @@ QString YouTubeClient::generateSapisidHash(const QString& cookies, const QString
     QByteArray hash = QCryptographicHash::hash(toHash.toUtf8(), QCryptographicHash::Sha1).toHex();
     return QString("SAPISIDHASH %1_%2").arg(timestamp).arg(QString::fromUtf8(hash));
 }
+
+void YouTubeClient::SearchAudio(const std::string& query, int count, int offset,
+                                std::function<void(const std::vector<Track>& tracks, const std::string& error)> callback) {
+    Q_UNUSED(count);
+    Q_UNUSED(offset);
+    if (query.empty()) {
+        if (callback) callback({}, "");
+        return;
+    }
+
+    QUrl url("https://music.youtube.com/youtubei/v1/search?prettyPrint=false");
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
+    request.setRawHeader("Origin", "https://music.youtube.com");
+    request.setRawHeader("Referer", "https://music.youtube.com/");
+    request.setRawHeader("X-Origin", "https://music.youtube.com");
+    request.setRawHeader("X-YouTube-Client-Name", "67");
+    request.setRawHeader("X-YouTube-Client-Version", "1.20250101.01.00");
+    request.setRawHeader("X-Goog-AuthUser", "0");
+    request.setRawHeader("Accept", "*/*");
+    request.setTransferTimeout(8000);
+
+    QString cookieStr = QString::fromStdString(m_accessToken);
+    if (!cookieStr.isEmpty()) {
+        request.setRawHeader("Cookie", cookieStr.toUtf8());
+        QString sapisidAuth = generateSapisidHash(cookieStr, "https://music.youtube.com");
+        if (!sapisidAuth.isEmpty()) {
+            request.setRawHeader("Authorization", sapisidAuth.toUtf8());
+        }
+    }
+
+    QJsonObject clientObj;
+    clientObj["clientName"] = "WEB_REMIX";
+    clientObj["clientVersion"] = "1.20250101.01.00";
+    clientObj["hl"] = "ru";
+    clientObj["gl"] = "RU";
+
+    QJsonObject contextObj;
+    contextObj["client"] = clientObj;
+
+    QJsonObject requestObj;
+    requestObj["context"] = contextObj;
+    requestObj["query"] = QString::fromStdString(query);
+    // params фильтра по музыкальным композициям в YouTube Music
+    requestObj["params"] = "Eg-KAQwIARAAGAAgACgAMABqChAEEAMQCRAFEAo%3D";
+
+    QByteArray payload = QJsonDocument(requestObj).toJson(QJsonDocument::Compact);
+
+    SendJsonRequest(request, [this, callback](const QJsonDocument& json) {
+        QJsonObject root = json.object();
+        std::vector<Track> tracks = parseTracksFromBrowseResponse(root);
+        if (callback) callback(tracks, "");
+    }, [callback](const std::string& err) {
+        if (callback) callback({}, err);
+    }, payload);
+}
+
+void YouTubeClient::AddTrackToFavorites(const std::string& trackId, const std::string& /*ownerId*/,
+                                       std::function<void(bool success, const std::string& error)> callback) {
+    if (m_accessToken.empty()) {
+        if (callback) callback(false, "YouTube cookies/session is empty");
+        return;
+    }
+
+    QUrl url("https://music.youtube.com/youtubei/v1/like/like?prettyPrint=false");
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
+    request.setRawHeader("Origin", "https://music.youtube.com");
+    request.setRawHeader("Referer", "https://music.youtube.com/");
+    request.setRawHeader("X-Origin", "https://music.youtube.com");
+    request.setRawHeader("X-YouTube-Client-Name", "67");
+    request.setRawHeader("X-YouTube-Client-Version", "1.20250101.01.00");
+    request.setRawHeader("X-Goog-AuthUser", "0");
+    request.setRawHeader("Accept", "*/*");
+
+    QString cookieStr = QString::fromStdString(m_accessToken);
+    request.setRawHeader("Cookie", cookieStr.toUtf8());
+    QString sapisidAuth = generateSapisidHash(cookieStr, "https://music.youtube.com");
+    if (!sapisidAuth.isEmpty()) {
+        request.setRawHeader("Authorization", sapisidAuth.toUtf8());
+    }
+
+    QJsonObject clientObj;
+    clientObj["clientName"] = "WEB_REMIX";
+    clientObj["clientVersion"] = "1.20250101.01.00";
+    clientObj["hl"] = "ru";
+    clientObj["gl"] = "RU";
+
+    QJsonObject contextObj;
+    contextObj["client"] = clientObj;
+
+    QJsonObject targetObj;
+    targetObj["videoId"] = QString::fromStdString(trackId);
+
+    QJsonObject requestObj;
+    requestObj["context"] = contextObj;
+    requestObj["target"] = targetObj;
+
+    QByteArray payload = QJsonDocument(requestObj).toJson(QJsonDocument::Compact);
+
+    SendJsonRequest(request, [callback](const QJsonDocument& json) {
+        if (json.object().contains("actions") || !json.object().contains("error")) {
+            if (callback) callback(true, "");
+        } else {
+            std::string err = json.object()["error"].toObject()["message"].toString().toStdString();
+            if (callback) callback(false, err.empty() ? "Error adding to YouTube likes" : err);
+        }
+    }, [callback](const std::string& err) {
+        if (callback) callback(false, err);
+    }, payload);
+}
+
+void YouTubeClient::RemoveTrackFromFavorites(const std::string& trackId, const std::string& /*ownerId*/,
+                                           std::function<void(bool success, const std::string& error)> callback) {
+    if (m_accessToken.empty()) {
+        if (callback) callback(false, "YouTube cookies/session is empty");
+        return;
+    }
+
+    QUrl url("https://music.youtube.com/youtubei/v1/like/removelike?prettyPrint=false");
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
+    request.setRawHeader("Origin", "https://music.youtube.com");
+    request.setRawHeader("Referer", "https://music.youtube.com/");
+    request.setRawHeader("X-Origin", "https://music.youtube.com");
+    request.setRawHeader("X-YouTube-Client-Name", "67");
+    request.setRawHeader("X-YouTube-Client-Version", "1.20250101.01.00");
+    request.setRawHeader("X-Goog-AuthUser", "0");
+    request.setRawHeader("Accept", "*/*");
+
+    QString cookieStr = QString::fromStdString(m_accessToken);
+    request.setRawHeader("Cookie", cookieStr.toUtf8());
+    QString sapisidAuth = generateSapisidHash(cookieStr, "https://music.youtube.com");
+    if (!sapisidAuth.isEmpty()) {
+        request.setRawHeader("Authorization", sapisidAuth.toUtf8());
+    }
+
+    QJsonObject clientObj;
+    clientObj["clientName"] = "WEB_REMIX";
+    clientObj["clientVersion"] = "1.20250101.01.00";
+    clientObj["hl"] = "ru";
+    clientObj["gl"] = "RU";
+
+    QJsonObject contextObj;
+    contextObj["client"] = clientObj;
+
+    QJsonObject targetObj;
+    targetObj["videoId"] = QString::fromStdString(trackId);
+
+    QJsonObject requestObj;
+    requestObj["context"] = contextObj;
+    requestObj["target"] = targetObj;
+
+    QByteArray payload = QJsonDocument(requestObj).toJson(QJsonDocument::Compact);
+
+    SendJsonRequest(request, [callback](const QJsonDocument& json) {
+        if (json.object().contains("actions") || !json.object().contains("error")) {
+            if (callback) callback(true, "");
+        } else {
+            std::string err = json.object()["error"].toObject()["message"].toString().toStdString();
+            if (callback) callback(false, err.empty() ? "Error removing from YouTube likes" : err);
+        }
+    }, [callback](const std::string& err) {
+        if (callback) callback(false, err);
+    }, payload);
+}

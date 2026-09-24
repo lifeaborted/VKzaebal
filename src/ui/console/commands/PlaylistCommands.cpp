@@ -3,6 +3,11 @@
 #include "core/playlist/PlaylistManager.h"
 #include "services/database/DatabaseManager.h"
 #include "utils/path/PathManager.h"
+#include "core/auth/router/SourceRouter.h"
+#include "core/api/IAudioProvider.h"
+#include "services/downloader/TrackDownloader.h"
+#include "utils/platform/IDialogService.h"
+#include "utils/logger/Logger.h"
 
 #include <QCoreApplication>
 #include <QMetaObject>
@@ -10,6 +15,9 @@
 #include <QString>
 #include <vector>
 #include <string>
+#include <mutex>
+#include <algorithm>
+#include <cctype>
 
 namespace {
     void RunInMainThread(std::function<void()> func) {
@@ -265,6 +273,338 @@ namespace {
             }
         }
     };
+
+    std::mutex s_searchMutex;
+    std::vector<Track> s_lastSearchResults;
+
+    class FindCommand : public IConsoleCommand {
+    public:
+        void Execute(const std::string& rawArg, CommandContext& ctx) override {
+            std::string arg = Trim(rawArg);
+            if (arg.empty()) {
+                if (ctx.print) {
+                    std::string help = "\n=== Онлайн поиск треков ===\n"
+                                       "Команды:\n"
+                                       "  find <запрос>        - Поиск по всем сервисам (VK, Ya, YT, SC)\n"
+                                       "  find vk <запрос>     - Поиск в ВКонтакте\n"
+                                       "  find ya <запрос>     - Поиск в Яндекс Музыке\n"
+                                       "  find yt <запрос>     - Поиск в YouTube Music\n"
+                                       "  find sc <запрос>     - Поиск в SoundCloud\n"
+                                       "  find all <запрос>    - Поиск во всех сервисах\n\n"
+                                       "Действия с найденными треками:\n"
+                                       "  pf <номер>           - Воспроизвести найденный трек (playfind)\n"
+                                       "  lf <номер>           - Добавить в избранное сервиса (likefind)\n"
+                                       "  af <номер>           - Добавить в локальный плейлист (addfind)\n"
+                                       "  df <номер>           - Скачать трек (dlfind)\n\n> ";
+                    ctx.print(help);
+                }
+                return;
+            }
+
+            if (!ctx.router) {
+                if (ctx.print) ctx.print("[Ошибка] Роутер источников недоступен.\n\n> ");
+                return;
+            }
+
+            std::string targetSource = "all";
+            std::string query = arg;
+
+            size_t firstSpace = arg.find(' ');
+            if (firstSpace != std::string::npos) {
+                std::string prefix = arg.substr(0, firstSpace);
+                for (char& c : prefix) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                if (prefix == "vk" || prefix == "ya" || prefix == "yandex" ||
+                    prefix == "yt" || prefix == "youtube" ||
+                    prefix == "sc" || prefix == "soundcloud" ||
+                    prefix == "all") {
+                    if (prefix == "ya" || prefix == "yandex") targetSource = "Yandex";
+                    else if (prefix == "yt" || prefix == "youtube") targetSource = "YouTube";
+                    else if (prefix == "sc" || prefix == "soundcloud") targetSource = "SoundCloud";
+                    else if (prefix == "vk") targetSource = "VK";
+                    else targetSource = "all";
+
+                    query = Trim(arg.substr(firstSpace + 1));
+                }
+            }
+
+            if (query.empty()) {
+                if (ctx.print) ctx.print("[Ошибка] Пустой поисковый запрос.\n\n> ");
+                return;
+            }
+
+            if (ctx.print) {
+                ctx.print("[Поиск] Запрос \"" + query + "\" [" + targetSource + "]... Поиск в сервисах...\n\n> ");
+            }
+
+            RunInMainThread([router = ctx.router, targetSource, query, print = ctx.print]() {
+                router->Search(targetSource, query, 20, 0, [print, query, targetSource](const std::vector<Track>& tracks, const std::string& err) {
+                    if (!err.empty()) {
+                        if (print) print("[Ошибка] Ошибка поиска: " + err + "\n\n> ");
+                        return;
+                    }
+
+                    {
+                        std::lock_guard<std::mutex> lock(s_searchMutex);
+                        s_lastSearchResults = tracks;
+                    }
+
+                    if (tracks.empty()) {
+                        if (print) print("[Поиск] По запросу \"" + query + "\" в [" + targetSource + "] ничего не найдено.\n\n> ");
+                        return;
+                    }
+
+                    std::string s(55, '-');
+                    std::string out = "\n" + s + "\n[Поиск] Результаты по запросу \"" + query + "\" (" + std::to_string(tracks.size()) + " треков):\n" + s + "\n";
+                    for (size_t i = 0; i < tracks.size(); ++i) {
+                        const auto& t = tracks[i];
+                        std::string srcTag = t.source.empty() ? "" : ("[" + t.source + "] ");
+                        std::string dur = t.GetFormattedDuration();
+                        out += "[" + std::to_string(i + 1) + "] " + srcTag + t.artist + " - " + t.title;
+                        if (!dur.empty() && dur != "0:00") {
+                            out += " (" + dur + ")";
+                        }
+                        out += "\n";
+                    }
+                    out += s + "\n"
+                           "  pf <номер> - Воспроизвести  |  lf <номер> - В избранное сервиса\n"
+                           "  af <номер> - В плейлист     |  df <номер> - Скачать\n" + s + "\n\n> ";
+
+                    if (print) print(out);
+                });
+            });
+        }
+    };
+
+    class PlayFindCommand : public IConsoleCommand {
+    public:
+        void Execute(const std::string& rawArg, CommandContext& ctx) override {
+            std::string arg = Trim(rawArg);
+            if (arg.empty()) {
+                if (ctx.print) ctx.print("[Ошибка] Укажите номер трека: pf <номер>\n\n> ");
+                return;
+            }
+
+            try {
+                int num = std::stoi(arg);
+                int idx = num - 1;
+                Track track;
+                {
+                    std::lock_guard<std::mutex> lock(s_searchMutex);
+                    if (idx < 0 || idx >= static_cast<int>(s_lastSearchResults.size())) {
+                        if (ctx.print) ctx.print("[Ошибка] Неверный номер трека (в результатах всего " + std::to_string(s_lastSearchResults.size()) + ").\n\n> ");
+                        return;
+                    }
+                    track = s_lastSearchResults[idx];
+                }
+
+                RunInMainThread([pl = &ctx.playlist, track, print = ctx.print]() {
+                    pl->AddTrack(track);
+                    int lastIdx = static_cast<int>(pl->GetQueueTracks().size()) - 1;
+                    pl->JumpToQueueIndex(lastIdx);
+                    if (print) {
+                        print("[Воспроизведение] Запущен найденный трек: " + track.artist + " - " + track.title + " [" + track.source + "]\n\n> ");
+                    }
+                });
+            } catch (...) {
+                if (ctx.print) ctx.print("[Ошибка] Неверный формат номера: pf <номер>\n\n> ");
+            }
+        }
+    };
+
+    class LikeFindCommand : public IConsoleCommand {
+    public:
+        void Execute(const std::string& rawArg, CommandContext& ctx) override {
+            std::string arg = Trim(rawArg);
+            if (arg.empty()) {
+                if (ctx.print) ctx.print("[Ошибка] Укажите номер трека: lf <номер>\n\n> ");
+                return;
+            }
+
+            if (!ctx.router) {
+                if (ctx.print) ctx.print("[Ошибка] Роутер недоступен.\n\n> ");
+                return;
+            }
+
+            try {
+                int num = std::stoi(arg);
+                int idx = num - 1;
+                Track track;
+                {
+                    std::lock_guard<std::mutex> lock(s_searchMutex);
+                    if (idx < 0 || idx >= static_cast<int>(s_lastSearchResults.size())) {
+                        if (ctx.print) ctx.print("[Ошибка] Неверный номер трека.\n\n> ");
+                        return;
+                    }
+                    track = s_lastSearchResults[idx];
+                }
+
+                std::string title = track.artist + " - " + track.title;
+                std::string src = track.source;
+
+                RunInMainThread([router = ctx.router, track, title, src, print = ctx.print]() {
+                    router->AddTrackToFavorites(track, [print, title, src](bool success, const std::string& err) {
+                        if (success) {
+                            if (print) print("[Избранное] Трек \"" + title + "\" добавлен в избранное [" + src + "]!\n\n> ");
+                        } else {
+                            if (print) print("[Ошибка] Не удалось добавить в избранное [" + src + "]: " + err + "\n\n> ");
+                        }
+                    });
+                });
+            } catch (...) {
+                if (ctx.print) ctx.print("[Ошибка] Неверный формат номера: lf <номер>\n\n> ");
+            }
+        }
+    };
+
+    class AddFindCommand : public IConsoleCommand {
+    public:
+        void Execute(const std::string& rawArg, CommandContext& ctx) override {
+            std::string arg = Trim(rawArg);
+            if (arg.empty()) {
+                if (ctx.print) ctx.print("[Ошибка] Укажите номер трека: af <номер>\n\n> ");
+                return;
+            }
+
+            try {
+                int num = std::stoi(arg);
+                int idx = num - 1;
+                Track track;
+                {
+                    std::lock_guard<std::mutex> lock(s_searchMutex);
+                    if (idx < 0 || idx >= static_cast<int>(s_lastSearchResults.size())) {
+                        if (ctx.print) ctx.print("[Ошибка] Неверный номер трека.\n\n> ");
+                        return;
+                    }
+                    track = s_lastSearchResults[idx];
+                }
+
+                if (ctx.onSelectPlaylist) {
+                    RunInMainThread([cb = ctx.onSelectPlaylist, track]() {
+                        cb(track);
+                    });
+                }
+            } catch (...) {
+                if (ctx.print) ctx.print("[Ошибка] Неверный формат номера: af <номер>\n\n> ");
+            }
+        }
+    };
+
+    class DlFindCommand : public IConsoleCommand {
+    public:
+        void Execute(const std::string& rawArg, CommandContext& ctx) override {
+            std::string arg = Trim(rawArg);
+            if (arg.empty()) {
+                if (ctx.print) ctx.print("[Ошибка] Укажите номер трека: df <номер>\n\n> ");
+                return;
+            }
+
+            try {
+                int num = std::stoi(arg);
+                int idx = num - 1;
+                Track track;
+                {
+                    std::lock_guard<std::mutex> lock(s_searchMutex);
+                    if (idx < 0 || idx >= static_cast<int>(s_lastSearchResults.size())) {
+                        if (ctx.print) ctx.print("[Ошибка] Неверный номер трека.\n\n> ");
+                        return;
+                    }
+                    track = s_lastSearchResults[idx];
+                }
+
+                if (!ctx.router) return;
+                IAudioProvider* prov = ctx.router->GetOrCreateProvider(track.source);
+                if (!prov) {
+                    if (ctx.print) ctx.print("[Ошибка] Не найден провайдер для источника " + track.source + "\n\n> ");
+                    return;
+                }
+
+                QString customDir = PathManager::GetCustomDownloadsDir();
+                QString targetDir = customDir;
+                if (targetDir.isEmpty()) {
+                    std::string nativeFolder = ctx.dialogService.ChooseFolderDialog("Выберите папку для сохранения аудио");
+                    targetDir = QString::fromStdString(nativeFolder);
+                    if (targetDir.isEmpty()) {
+                        if (ctx.print) ctx.print("[Загрузка] Скачивание отменено (папка не выбрана).\n\n> ");
+                        return;
+                    }
+                    PathManager::SetSessionDownloadsDir(targetDir);
+                }
+
+                if (ctx.print) ctx.print("[Загрузка] Получение ссылки для " + track.title + "...\n\n> ");
+
+                RunInMainThread([prov, downloader = &ctx.downloader, track, targetDir, print = ctx.print]() {
+                    prov->FetchTrackUrl(track.id, [downloader, track, targetDir, print](const std::string& url, bool err) {
+                        if (!err && !url.empty()) {
+                            downloader->Download(track, url, targetDir);
+                            if (print) print("[Загрузка] Начинается скачивание: " + track.artist + " - " + track.title + "\n\n> ");
+                        } else {
+                            if (print) print("[Ошибка] Не удалось получить аудиопоток для скачивания.\n\n> ");
+                        }
+                    });
+                });
+            } catch (...) {
+                if (ctx.print) ctx.print("[Ошибка] Неверный формат номера: df <номер>\n\n> ");
+            }
+        }
+    };
+
+    class LikeCurrentCommand : public IConsoleCommand {
+    public:
+        void Execute(const std::string&, CommandContext& ctx) override {
+            if (!ctx.router) {
+                if (ctx.print) ctx.print("[Ошибка] Роутер недоступен.\n\n> ");
+                return;
+            }
+
+            Track current = ctx.playlist.GetCurrentTrack();
+            if (current.id.empty()) {
+                if (ctx.print) ctx.print("[Ошибка] Сейчас никакой трек не играет.\n\n> ");
+                return;
+            }
+
+            std::string title = current.artist + " - " + current.title;
+            std::string src = current.source;
+
+            RunInMainThread([router = ctx.router, current, title, src, print = ctx.print]() {
+                router->AddTrackToFavorites(current, [print, title, src](bool success, const std::string& err) {
+                    if (success) {
+                        if (print) print("[Избранное] Текущий трек \"" + title + "\" добавлен в избранное [" + src + "]!\n\n> ");
+                    } else {
+                        if (print) print("[Ошибка] Не удалось добавить в избранное [" + src + "]: " + err + "\n\n> ");
+                    }
+                });
+            });
+        }
+    };
+
+    class DislikeCurrentCommand : public IConsoleCommand {
+    public:
+        void Execute(const std::string&, CommandContext& ctx) override {
+            if (!ctx.router) {
+                if (ctx.print) ctx.print("[Ошибка] Роутер недоступен.\n\n> ");
+                return;
+            }
+
+            Track current = ctx.playlist.GetCurrentTrack();
+            if (current.id.empty()) {
+                if (ctx.print) ctx.print("[Ошибка] Сейчас никакой трек не играет.\n\n> ");
+                return;
+            }
+
+            std::string title = current.artist + " - " + current.title;
+            std::string src = current.source;
+
+            RunInMainThread([router = ctx.router, current, title, src, print = ctx.print]() {
+                router->RemoveTrackFromFavorites(current, [print, title, src](bool success, const std::string& err) {
+                    if (success) {
+                        if (print) print("[Избранное] Трек \"" + title + "\" удален из избранного [" + src + "].\n\n> ");
+                    } else {
+                        if (print) print("[Ошибка] Не удалось удалить из избранного [" + src + "]: " + err + "\n\n> ");
+                    }
+                });
+            });
+        }
+    };
 }
 
 void RegisterPlaylistCommands(std::map<std::string, std::unique_ptr<IConsoleCommand>>& commands) {
@@ -274,4 +614,20 @@ void RegisterPlaylistCommands(std::map<std::string, std::unique_ptr<IConsoleComm
     commands["pls"] = std::make_unique<PlaylistListCommand>();
     commands["add"] = std::make_unique<AddTrackToPlaylistCommand>();
     commands["drop"] = std::make_unique<DropTrackFromPlaylistCommand>();
+
+    // Онлайн поиск и избранное
+    commands["find"] = std::make_unique<FindCommand>();
+    commands["f"] = std::make_unique<FindCommand>();
+    commands["playfind"] = std::make_unique<PlayFindCommand>();
+    commands["pf"] = std::make_unique<PlayFindCommand>();
+    commands["likefind"] = std::make_unique<LikeFindCommand>();
+    commands["lf"] = std::make_unique<LikeFindCommand>();
+    commands["addfind"] = std::make_unique<AddFindCommand>();
+    commands["af"] = std::make_unique<AddFindCommand>();
+    commands["dlfind"] = std::make_unique<DlFindCommand>();
+    commands["df"] = std::make_unique<DlFindCommand>();
+    commands["like"] = std::make_unique<LikeCurrentCommand>();
+    commands["fav"] = std::make_unique<LikeCurrentCommand>();
+    commands["dislike"] = std::make_unique<DislikeCurrentCommand>();
+    commands["unfav"] = std::make_unique<DislikeCurrentCommand>();
 }

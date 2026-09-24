@@ -6,6 +6,7 @@
 #include <QRegularExpression>
 #include <QJsonObject>
 #include <QSettings>
+#include <QTimer>
 
 SoundCloudClient::SoundCloudClient(QObject* parent, QNetworkAccessManager* manager) : BaseApiProvider(parent, manager) {
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
@@ -145,44 +146,7 @@ void SoundCloudClient::FetchAllUserAudio(int offset, int count) {
 
     SendJsonRequest(request, [this, offset, count](const QJsonDocument& json) {
         QJsonArray collection = json.object()["collection"].toArray();
-        std::vector<Track> chunkTracks;
-        chunkTracks.reserve(collection.size());
-
-        for (const QJsonValue& val : collection) {
-            QJsonObject item = val.toObject();
-            if (!item.contains("track")) continue;
-            QJsonObject trackObj = item["track"].toObject();
-
-            Track track;
-            track.id = std::to_string(trackObj["id"].toInt());
-            track.source = "SoundCloud";
-            track.ownerId = std::to_string(trackObj["user"].toObject()["id"].toInt());
-            track.artist = trackObj["user"].toObject()["username"].toString().toStdString();
-            track.title = trackObj["title"].toString().toStdString();
-            track.duration = trackObj["duration"].toInt() / 1000;
-            QString artwork = trackObj["artwork_url"].toString();
-            if (artwork.isEmpty()) artwork = trackObj["user"].toObject()["avatar_url"].toString();
-            if (!artwork.isEmpty()) {
-                artwork.replace("-large.jpg", "-t500x500.jpg");
-                track.coverUrl = artwork.toStdString();
-            }
-
-            // ОПТИМИЗАЦИЯ OPT-AUTH-02: Кэшируем транскодинг сразу при парсинге коллекции
-            QString trackAuth = trackObj["track_authorization"].toString();
-            QJsonArray transcodings = trackObj["media"].toObject()["transcodings"].toArray();
-            QString transUrl;
-            for (const QJsonValue& tval : transcodings) {
-                QJsonObject trans = tval.toObject();
-                QString protocol = trans["format"].toObject()["protocol"].toString();
-                if (protocol == "progressive") { transUrl = trans["url"].toString(); break; }
-                if (protocol == "hls" && transUrl.isEmpty()) transUrl = trans["url"].toString();
-            }
-            if (!transUrl.isEmpty()) {
-                m_trackTranscodings[track.id] = {transUrl, trackAuth};
-            }
-
-            chunkTracks.push_back(std::move(track));
-        }
+        std::vector<Track> chunkTracks = ParseSoundCloudTracks(collection);
 
         if (!chunkTracks.empty()) emit AudioFetched(chunkTracks);
         if (json.object().contains("next_href") && !json.object()["next_href"].isNull()) {
@@ -190,6 +154,140 @@ void SoundCloudClient::FetchAllUserAudio(int offset, int count) {
             FetchAllUserAudio(offset + chunkTracks.size(), count);
         } else emit FinishedFetching();
     }, [this](const std::string&) { emit FinishedFetching(); });
+}
+
+std::vector<Track> SoundCloudClient::ParseSoundCloudTracks(const QJsonArray& collection) {
+    std::vector<Track> chunkTracks;
+    chunkTracks.reserve(collection.size());
+
+    for (const QJsonValue& val : collection) {
+        QJsonObject item = val.toObject();
+        QJsonObject trackObj = item.contains("track") ? item["track"].toObject() : item;
+
+        int trackIdInt = trackObj["id"].toInt();
+        if (trackIdInt == 0) continue;
+
+        Track track;
+        track.id = std::to_string(trackIdInt);
+        track.source = "SoundCloud";
+        track.ownerId = std::to_string(trackObj["user"].toObject()["id"].toInt());
+        track.artist = trackObj["user"].toObject()["username"].toString().toStdString();
+        track.title = trackObj["title"].toString().toStdString();
+        track.duration = trackObj["duration"].toInt() / 1000;
+        QString artwork = trackObj["artwork_url"].toString();
+        if (artwork.isEmpty()) artwork = trackObj["user"].toObject()["avatar_url"].toString();
+        if (!artwork.isEmpty()) {
+            artwork.replace("-large.jpg", "-t500x500.jpg");
+            track.coverUrl = artwork.toStdString();
+        }
+
+        // ОПТИМИЗАЦИЯ OPT-AUTH-02: Кэшируем транскодинг сразу при парсинге
+        QString trackAuth = trackObj["track_authorization"].toString();
+        QJsonArray transcodings = trackObj["media"].toObject()["transcodings"].toArray();
+        QString transUrl;
+        for (const QJsonValue& tval : transcodings) {
+            QJsonObject trans = tval.toObject();
+            QString protocol = trans["format"].toObject()["protocol"].toString();
+            if (protocol == "progressive") { transUrl = trans["url"].toString(); break; }
+            if (protocol == "hls" && transUrl.isEmpty()) transUrl = trans["url"].toString();
+        }
+        if (!transUrl.isEmpty()) {
+            m_trackTranscodings[track.id] = {transUrl, trackAuth};
+        }
+
+        chunkTracks.push_back(std::move(track));
+    }
+    return chunkTracks;
+}
+
+void SoundCloudClient::SearchAudio(const std::string& query, int count, int offset,
+                                   std::function<void(const std::vector<Track>& tracks, const std::string& error)> callback) {
+    if (query.empty()) {
+        if (callback) callback({}, "");
+        return;
+    }
+
+    auto doSearch = [this, query, count, offset, callback]() {
+        QUrl url("https://api-v2.soundcloud.com/search/tracks");
+        QUrlQuery q;
+        q.addQueryItem("q", QString::fromStdString(query));
+        q.addQueryItem("client_id", QString::fromStdString(m_clientId));
+        q.addQueryItem("limit", QString::number(count));
+        q.addQueryItem("offset", QString::number(offset));
+        url.setQuery(q);
+
+        QNetworkRequest request(url);
+        if (!m_accessToken.empty()) {
+            request.setRawHeader("Authorization", QByteArray("OAuth ") + QByteArray::fromStdString(m_accessToken));
+        }
+        request.setTransferTimeout(8000);
+
+        SendJsonRequest(request, [this, callback](const QJsonDocument& json) {
+            QJsonArray collection = json.object()["collection"].toArray();
+            std::vector<Track> tracks = ParseSoundCloudTracks(collection);
+            if (callback) callback(tracks, "");
+        }, [callback](const std::string& err) {
+            if (callback) callback({}, err);
+        });
+    };
+
+    if (m_clientId.empty()) {
+        if (!m_isFetchingClientId) FetchClientId();
+        QTimer::singleShot(1000, this, [doSearch]() { doSearch(); });
+    } else {
+        doSearch();
+    }
+}
+
+void SoundCloudClient::AddTrackToFavorites(const std::string& trackId, const std::string& /*ownerId*/,
+                                          std::function<void(bool success, const std::string& error)> callback) {
+    if (m_accessToken.empty()) {
+        if (callback) callback(false, "SoundCloud access token is empty");
+        return;
+    }
+    if (m_userId.empty() || m_clientId.empty()) {
+        if (callback) callback(false, "SoundCloud user ID or client ID not ready");
+        return;
+    }
+
+    QUrl url(QString("https://api-v2.soundcloud.com/users/%1/track_likes/%2?client_id=%3")
+                 .arg(QString::fromStdString(m_userId), QString::fromStdString(trackId), QString::fromStdString(m_clientId)));
+    QNetworkRequest request(url);
+    request.setRawHeader("Authorization", QByteArray("OAuth ") + QByteArray::fromStdString(m_accessToken));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    QNetworkReply* reply = m_manager->post(request, QByteArray("{}"));
+    connect(reply, &QNetworkReply::finished, this, [reply, callback]() {
+        bool ok = (reply->error() == QNetworkReply::NoError);
+        std::string err = ok ? "" : reply->errorString().toStdString();
+        reply->deleteLater();
+        if (callback) callback(ok, err);
+    });
+}
+
+void SoundCloudClient::RemoveTrackFromFavorites(const std::string& trackId, const std::string& /*ownerId*/,
+                                             std::function<void(bool success, const std::string& error)> callback) {
+    if (m_accessToken.empty()) {
+        if (callback) callback(false, "SoundCloud access token is empty");
+        return;
+    }
+    if (m_userId.empty() || m_clientId.empty()) {
+        if (callback) callback(false, "SoundCloud user ID or client ID not ready");
+        return;
+    }
+
+    QUrl url(QString("https://api-v2.soundcloud.com/users/%1/track_likes/%2?client_id=%3")
+                 .arg(QString::fromStdString(m_userId), QString::fromStdString(trackId), QString::fromStdString(m_clientId)));
+    QNetworkRequest request(url);
+    request.setRawHeader("Authorization", QByteArray("OAuth ") + QByteArray::fromStdString(m_accessToken));
+
+    QNetworkReply* reply = m_manager->deleteResource(request);
+    connect(reply, &QNetworkReply::finished, this, [reply, callback]() {
+        bool ok = (reply->error() == QNetworkReply::NoError);
+        std::string err = ok ? "" : reply->errorString().toStdString();
+        reply->deleteLater();
+        if (callback) callback(ok, err);
+    });
 }
 
 void SoundCloudClient::RequestCdnUrl(const QString& transUrl, const QString& trackAuth, std::function<void(const std::string&, bool)> callback) {
