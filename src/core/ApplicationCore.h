@@ -6,6 +6,7 @@
 #include <QString>
 #include <vector>
 #include <string>
+#include <unordered_set>
 
 class DatabaseManager;
 class MiniaudioEngine;
@@ -57,5 +58,6 @@ private:
     std::string m_activeSource;
     bool m_isPlaybackStarted = false;
     int m_vkSyncIndex = 0;
+    std::unordered_set<std::string> m_syncExistingIds;
     QTimer* m_audioPollTimer = nullptr;
 };

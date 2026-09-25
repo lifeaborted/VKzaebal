@@ -12,27 +12,77 @@
 #include <QQmlContext>
 #include <QWindow>
 #include <QUrl>
+#include "core/api/vk/VkAuthService.h"
+#include "core/api/vk/VkDeviceManager.h"
 #include <QPointer>
 #include <QTimer>
 #include <QDateTime>
 #include <QNetworkAccessManager>
 #include <algorithm>
 
-namespace {
-constexpr const char* kVkAuthUrl = "https://oauth.vk.com/authorize?client_id=6287487&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=audio,offline&response_type=token&v=5.131";
-}
 
 SourceRouter::SourceRouter(const QMap<QString, QString>& envVars,
                            QNetworkAccessManager* networkManager,
                            QObject* parent)
     : QObject(parent), m_networkManager(networkManager), m_envVars(envVars) {
     m_authManager = std::make_unique<OAuthManager>(this, m_networkManager);
+    m_vkAuthService = std::make_unique<VkAuthService>(this, m_networkManager);
+
+    connect(m_vkAuthService.get(), &VkAuthService::AuthSuccess, this, [this](const std::string& token, const std::string& secret, int userId) {
+        m_authManager->SaveToken(token, "VK");
+        if (!secret.empty()) {
+            m_authManager->SaveSecret(secret, "VK");
+        }
+        if (userId > 0) {
+            m_authManager->SaveUserId(std::to_string(userId), "VK");
+        }
+        emit AuthUiStateChanged(false);
+        EmitStatus("[УСПЕХ] Вход в VK выполнен через нативный протокол VK Android!");
+
+        auto* vk = GetVkClient();
+        if (vk) {
+            vk->SetAccessToken(token);
+            if (!secret.empty()) vk->SetSecret(secret);
+            vk->FetchAllUserAudio(0, 200);
+        }
+        emit ProviderReady(true);
+    });
+
+    connect(m_vkAuthService.get(), &VkAuthService::StatusChanged, this, [this](const QString& status) {
+        EmitStatus("[VK] " + status.toStdString());
+    });
+
+    connect(m_vkAuthService.get(), &VkAuthService::AuthError, this, [this](const QString& err) {
+        EmitStatus("[ОШИБКА VK] " + err.toStdString());
+    });
+
+    connect(m_vkAuthService.get(), &VkAuthService::PasswordRequired, this, [this](const QString& /*sid*/) {
+        EmitStatus("[VK] Введите пароль от аккаунта командой:\n     pass <ваш_пароль>");
+    });
+
+    connect(m_vkAuthService.get(), &VkAuthService::CodeRequired, this, [this](const QString& method, const QString& /*sid*/, const QString& mask) {
+        std::string methodDesc = "код подтверждения";
+        if (method == "codegen" || method == "2fa") {
+            methodDesc = "2FA-код из Google Authenticator / приложения VK";
+        } else if (method == "sms") {
+            methodDesc = "SMS-код" + (mask.isEmpty() ? std::string() : (" (на номер " + mask.toStdString() + ")"));
+        } else if (method == "push") {
+            methodDesc = "Push-код из уведомления VK";
+        }
+        EmitStatus("[VK] Требуется " + methodDesc + ". Введите код командой:\n     code <код>");
+    });
+
+    connect(m_vkAuthService.get(), &VkAuthService::CaptchaRequired, this, [this](const QString& redirectUri, const QString& captchaImg, const QString& /*sid*/) {
+        std::string msg = "[VK] Внимание: сервер запрашивает капчу!\n";
+        if (!captchaImg.isEmpty()) msg += "     Картинка: " + captchaImg.toStdString() + "\n";
+        if (!redirectUri.isEmpty()) msg += "     Страница: " + redirectUri.toStdString() + "\n";
+        msg += "     Для отправки решения введите: captcha <текст_с_картинки>";
+        EmitStatus(msg);
+    });
 
     // Прием универсального токена из WebView
     connect(m_authManager.get(), &OAuthManager::TokenReceived, this, [this](const std::string& token) {
-        if (m_currentAuthService == "VK") {
-            OnVkTokenReceived(token);
-        } else if (m_currentAuthService == "Spotify") {
+        if (m_currentAuthService == "Spotify") {
             OnSpotifyTokenReceived(token);
         } else if (m_currentAuthService == "SoundCloud") {
             if (m_authEngine) { m_authEngine->deleteLater(); m_authEngine = nullptr; }
@@ -136,9 +186,7 @@ IAudioProvider* SourceRouter::GetOrCreateProvider(const std::string& sourceName)
         connect(vk.get(), &VkClient::TokenExpired, this, &SourceRouter::OnVkTokenExpired);
         connect(vk.get(), &VkClient::UserBlocked, this, [this](const std::string& service, const std::string& reason) {
             Logger::Log(LogLevel::ERROR, "SourceRouter: User blocked on " + service + ": " + reason);
-            EmitStatus("[ВНИМАНИЕ] Аккаунт " + service + " временно заморожен! Открываем окно для разморозки...");
-            emit AuthUiStateChanged(true);
-            StartAuthFlow(QString::fromStdString(service), kVkAuthUrl, /*forceVisible=*/true);
+            EmitStatus("[ВНИМАНИЕ] Аккаунт " + service + " временно заморожен (" + reason + ")! Проверьте аккаунт в официальном приложении VK.");
         });
         provider = std::move(vk);
     } else if (key == "Spotify") {
@@ -282,27 +330,6 @@ void SourceRouter::StartAuthFlow(const QString& service, const QString& authUrl,
     }
 }
 
-void SourceRouter::OnVkTokenReceived(const std::string& token) {
-    if (m_silentAuthTimer) {
-        m_silentAuthTimer->stop();
-        m_silentAuthTimer->deleteLater();
-        m_silentAuthTimer = nullptr;
-    }
-    m_isAuthFlowActive = false;
-    if (m_authEngine) { m_authEngine->deleteLater(); m_authEngine = nullptr; }
-    m_authManager->SaveToken(token, "VK");
-
-    emit AuthUiStateChanged(false);
-    EmitStatus("[УСПЕХ] Авторизация VK успешно завершена!");
-
-    auto* vk = GetVkClient();
-    if (vk) {
-        vk->SetAccessToken(token);
-        vk->FetchAllUserAudio(0, 200);
-    }
-    emit ProviderReady(true);
-}
-
 void SourceRouter::OnSpotifyTokenReceived(const std::string& token) {
     m_isAuthFlowActive = false;
     m_authManager->SaveToken(token, "Spotify");
@@ -335,11 +362,41 @@ void SourceRouter::OnVkTokenExpired() {
     }
     m_lastAuthAttemptMs = now;
 
-    Logger::Log(LogLevel::WARNING, "SourceRouter: VK token expired. Opening auth window...");
-    auto* vk = GetVkClient();
-    if (vk) vk->SetAccessToken("");
-    m_authManager->ClearSavedToken("VK");
-    StartAuthFlow("VK", kVkAuthUrl, /*forceVisible=*/true);
+    QPointer<SourceRouter> safeThis(this);
+    m_authManager->GetSavedSecret("VK", [safeThis](const std::string& secret) {
+        if (!safeThis) return;
+        if (!secret.empty()) {
+            safeThis->EmitStatus("[VK] Токен устарел. Выполняется фоновое продление сессии через secret...");
+            safeThis->m_vkAuthService->RefreshToken(secret, [safeThis, secret](bool ok, const std::string& newToken, const std::string& err) {
+                if (!safeThis) return;
+                if (ok && !newToken.empty()) {
+                    safeThis->m_authManager->SaveToken(newToken, "VK");
+                    auto* vk = safeThis->GetVkClient();
+                    if (vk) {
+                        vk->SetAccessToken(newToken);
+                        vk->SetSecret(secret);
+                        Logger::Log(LogLevel::INFO, "SourceRouter: VK token silently refreshed via secret!");
+                        safeThis->EmitStatus("[УСПЕХ] Токен VK успешно продлен в фоне!");
+                        emit safeThis->ProviderReady(true);
+                    }
+                    return;
+                }
+
+                Logger::Log(LogLevel::WARNING, "SourceRouter: Silent refresh failed (" + err + "). Requesting manual login.");
+                safeThis->EmitStatus("[VK] Не удалось продлить сессию в фоне. Для входа введите в консоли:\n     vk <номер_телефона_или_email>");
+                auto* vk = safeThis->GetVkClient();
+                if (vk) vk->SetAccessToken("");
+                safeThis->m_authManager->ClearSavedToken("VK");
+            });
+            return;
+        }
+
+        Logger::Log(LogLevel::WARNING, "SourceRouter: No VK secret found.");
+        safeThis->EmitStatus("[VK] Для авторизации через официальный VK Android введите в консоли:\n     vk <номер_телефона_или_email>");
+        auto* vk = safeThis->GetVkClient();
+        if (vk) vk->SetAccessToken("");
+        safeThis->m_authManager->ClearSavedToken("VK");
+    });
 }
 
 void SourceRouter::StartVkService() {
@@ -347,26 +404,28 @@ void SourceRouter::StartVkService() {
     m_authManager->GetSavedToken("VK", [safeThis](const std::string& savedToken) {
         if (!safeThis) return;
         if (savedToken.empty()) {
-            safeThis->EmitStatus("[VK] Токен не найден. Открываем окно авторизации...");
-            safeThis->StartAuthFlow("VK", kVkAuthUrl, /*forceVisible=*/true);
+            safeThis->EmitStatus("[VK] Токен не найден. Для авторизации через официальный VK Android введите в консоли:\n     vk <номер_телефона_или_email>");
         } else {
             safeThis->EmitStatus("[VK] Проверка сохраненного токена...");
             auto* vk = safeThis->GetVkClient();
             if (vk) {
-                vk->SetAccessToken(savedToken);
-                vk->ValidateToken([safeThis, vk, savedToken](bool isValid) {
-                    if (!safeThis) return;
-                    if (isValid) {
-                        Logger::Log(LogLevel::INFO, "SourceRouter: Saved VK token is valid.");
-                        emit safeThis->AuthUiStateChanged(false);
-                        emit safeThis->ProviderReady(true);
-                        vk->FetchAllUserAudio(0, 200);
-                    } else {
-                        safeThis->EmitStatus("[VK] Сохраненный токен устарел. Открываем окно авторизации...");
-                        if (vk) vk->SetAccessToken("");
-                        safeThis->m_authManager->ClearSavedToken("VK");
-                        safeThis->StartAuthFlow("VK", kVkAuthUrl, /*forceVisible=*/true);
-                    }
+                safeThis->m_authManager->GetSavedSecret("VK", [safeThis, vk, savedToken](const std::string& savedSecret) {
+                    if (!safeThis || !vk) return;
+                    vk->SetAccessToken(savedToken);
+                    if (!savedSecret.empty()) vk->SetSecret(savedSecret);
+
+                    vk->ValidateToken([safeThis, vk](bool isValid) {
+                        if (!safeThis) return;
+                        if (isValid) {
+                            Logger::Log(LogLevel::INFO, "SourceRouter: Saved VK token is valid.");
+                            emit safeThis->AuthUiStateChanged(false);
+                            emit safeThis->ProviderReady(true);
+                            vk->FetchAllUserAudio(0, 200);
+                        } else {
+                            Logger::Log(LogLevel::WARNING, "SourceRouter: Saved VK token is invalid or expired. Attempting refresh...");
+                            safeThis->OnVkTokenExpired();
+                        }
+                    });
                 });
             }
         }
@@ -719,11 +778,17 @@ void SourceRouter::PreinitializeVkClient() {
     m_authManager->GetSavedToken("VK", [safeThis](const std::string& savedToken) {
         if (!safeThis || savedToken.empty()) return;
 
-        auto* vkClient = safeThis->GetVkClient();
-        if (vkClient && vkClient->GetAccessToken().empty()) {
-            vkClient->SetAccessToken(savedToken);
-            Logger::Log(LogLevel::INFO, "SourceRouter: Pre-initialized VK client with saved token.");
-        }
+        safeThis->m_authManager->GetSavedSecret("VK", [safeThis, savedToken](const std::string& savedSecret) {
+            if (!safeThis) return;
+            auto* vkClient = safeThis->GetVkClient();
+            if (vkClient && vkClient->GetAccessToken().empty()) {
+                vkClient->SetAccessToken(savedToken);
+                if (!savedSecret.empty()) {
+                    vkClient->SetSecret(savedSecret);
+                }
+                Logger::Log(LogLevel::INFO, "SourceRouter: Pre-initialized VK client with saved token & secret.");
+            }
+        });
     });
 }
 

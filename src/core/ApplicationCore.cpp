@@ -32,6 +32,15 @@ ApplicationCore::~ApplicationCore() {
     if (m_audioPollTimer) {
         m_audioPollTimer->stop();
     }
+    if (m_console) {
+        m_console->Stop();
+    }
+    if (m_streamer) {
+        m_streamer->StopDownload();
+    }
+    if (m_audio) {
+        m_audio->Pause();
+    }
     if (m_sessionService && m_audio && m_playlist && m_dbManager && m_configService) {
         m_sessionService->SaveSessionState(m_activeSource, *m_audio, *m_playlist, *m_dbManager, *m_configService);
     }
@@ -185,6 +194,10 @@ void ApplicationCore::WireConnections() {
     connect(m_router.get(), &SourceRouter::ProviderReady, this, [this](bool isOnline) {
         m_vkSyncIndex = 0;
         InitPlaylistAndStart(isOnline);
+        m_syncExistingIds.clear();
+        for (const auto& t : m_playlist->GetAllTracks()) {
+            m_syncExistingIds.insert(t.id);
+        }
     });
 
     // TASK-19: Вывод статусов авторизации и сервисов в TUI
@@ -222,18 +235,10 @@ void ApplicationCore::InitPlaylistAndStart(bool isOnline) {
 }
 
 void ApplicationCore::OnAudioFetched(const std::vector<Track>& tracks) {
-    auto allTracks = m_playlist->GetAllTracks();
-
-    std::unordered_set<std::string> existingIds;
-    existingIds.reserve(allTracks.size());
-    for (const auto& c : allTracks) {
-        existingIds.insert(c.id);
-    }
-
     for (const auto& track : tracks) {
-        if (existingIds.find(track.id) == existingIds.end()) {
+        if (m_syncExistingIds.find(track.id) == m_syncExistingIds.end()) {
             m_playlist->InsertTrack(m_vkSyncIndex, track);
-            existingIds.insert(track.id);
+            m_syncExistingIds.insert(track.id);
         }
         m_vkSyncIndex++;
     }
@@ -244,6 +249,7 @@ void ApplicationCore::OnAudioFetched(const std::vector<Track>& tracks) {
 
 void ApplicationCore::OnFinishedFetching() {
     Logger::Log(LogLevel::INFO, "=== ФОНОВАЯ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА ===");
+    m_syncExistingIds.clear();
     m_dbManager->SaveQueue(m_playlist->GetAllTracks(), m_activeSource, false);
     m_dbManager->SaveQueue(m_playlist->GetQueueTracks(), m_activeSource, m_playlist->IsShuffle());
     m_dbManager->ExportQueueToTxt(m_playlist->GetQueueTracks(), "playlist.txt", m_playlist->IsShuffle());

@@ -1,4 +1,5 @@
 #include "VkClient.h"
+#include "VkDeviceManager.h"
 #include "utils/logger/Logger.h"
 
 #include <QUrl>
@@ -6,13 +7,19 @@
 #include <QNetworkRequest>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QCryptographicHash>
 
 VkClient::VkClient(QObject* parent, QNetworkAccessManager* manager) : BaseApiProvider(parent, manager) {
-    Logger::Log(LogLevel::INFO, "VkClient created.");
+    Logger::Log(LogLevel::INFO, "VkClient created with VK Android API v5.87 specification.");
 }
 
 VkClient::~VkClient() {
     Logger::Log(LogLevel::INFO, "VkClient destroyed.");
+}
+
+void VkClient::SetSecret(const std::string& secret) {
+    m_secret = secret;
+    Logger::Log(LogLevel::INFO, "VkClient: Updated session secret for request signing.");
 }
 
 bool VkClient::HandleApiError(const QJsonDocument& json, int /*httpStatusCode*/) {
@@ -38,24 +45,63 @@ bool VkClient::HandleApiError(const QJsonDocument& json, int /*httpStatusCode*/)
     return false;
 }
 
-namespace {
-constexpr const char* kVkApiUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+QString VkClient::CalculateSig(const std::string& method, const std::vector<std::pair<QString, QString>>& params) const {
+    if (m_secret.empty()) return "";
+
+    QString src = "/method/" + QString::fromStdString(method) + "?";
+    for (size_t i = 0; i < params.size(); ++i) {
+        if (i > 0) src += "&";
+        src += params[i].first + "=" + params[i].second;
+    }
+    src += QString::fromStdString(m_secret);
+
+    return QString::fromUtf8(QCryptographicHash::hash(src.toUtf8(), QCryptographicHash::Md5).toHex()).toLower();
+}
+
+QNetworkRequest VkClient::BuildSignedPostRequest(const std::string& method,
+                                                 const std::vector<std::pair<QString, QString>>& params,
+                                                 QByteArray& outBody) const {
+    QUrl url("https://api.vk.ru/method/" + QString::fromStdString(method));
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+    request.setRawHeader("User-Agent", VkDeviceManager::Instance().GetAudioUserAgent().toUtf8());
+    request.setRawHeader("x-vk-android-client", "new");
+    request.setRawHeader("x-screen", "nowhere");
+
+    QUrlQuery query;
+    for (const auto& [k, v] : params) {
+        query.addQueryItem(k, v);
+    }
+
+    if (!m_secret.empty()) {
+        QString sig = CalculateSig(method, params);
+        if (!sig.isEmpty()) {
+            query.addQueryItem("sig", sig);
+        }
+    }
+
+    outBody = query.query(QUrl::FullyEncoded).toUtf8();
+    return request;
 }
 
 void VkClient::ValidateToken(std::function<void(bool)> callback) {
-    if (m_accessToken.empty()) { callback(false); return; }
+    if (m_accessToken.empty()) {
+        if (callback) callback(false);
+        return;
+    }
 
     m_isValidatingToken = true;
 
-    QUrl url("https://api.vk.com/method/users.get");
-    QUrlQuery query;
-    query.addQueryItem("v", QString::fromStdString(m_apiVersion));
-    query.addQueryItem("access_token", QString::fromStdString(m_accessToken));
-    query.addQueryItem("fields", "deactivated");
-    url.setQuery(query);
+    std::vector<std::pair<QString, QString>> params = {
+        {"access_token", QString::fromStdString(m_accessToken)},
+        {"v", QString::fromStdString(m_apiVersion)},
+        {"fields", "deactivated"},
+        {"lang", "ru"},
+        {"https", "1"}
+    };
 
-    QNetworkRequest request(url);
-    request.setRawHeader("User-Agent", kVkApiUserAgent);
+    QByteArray body;
+    QNetworkRequest request = BuildSignedPostRequest("users.get", params, body);
 
     SendJsonRequest(request, [this, callback](const QJsonDocument& json) {
         m_isValidatingToken = false;
@@ -66,40 +112,67 @@ void VkClient::ValidateToken(std::function<void(bool)> callback) {
                 std::string status = u["deactivated"].toString().toStdString();
                 Logger::Log(LogLevel::ERROR, "VK: Account is deactivated/frozen: " + status);
                 emit UserBlocked("VK", "User account is " + status);
-                callback(false);
+                if (callback) callback(false);
                 return;
             }
         }
-        Logger::Log(LogLevel::INFO, "api: Token is valid.");
-        callback(true);
+        Logger::Log(LogLevel::INFO, "VkClient: Token validated successfully.");
+        if (callback) callback(true);
     }, [this, callback](const std::string&) {
         m_isValidatingToken = false;
-        callback(false);
-    });
+        if (callback) callback(false);
+    }, body);
 }
 
 void VkClient::FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) {
-    QUrl url("https://api.vk.com/method/audio.getById");
-    QUrlQuery query;
-    query.addQueryItem("audios", QString::fromStdString(trackId));
-    query.addQueryItem("access_token", QString::fromStdString(m_accessToken));
-    query.addQueryItem("v", QString::fromStdString(m_apiVersion));
-    url.setQuery(query);
+    std::vector<std::pair<QString, QString>> params = {
+        {"audios", QString::fromStdString(trackId)},
+        {"access_token", QString::fromStdString(m_accessToken)},
+        {"v", QString::fromStdString(m_apiVersion)},
+        {"lang", "ru"},
+        {"https", "1"}
+    };
 
-    QNetworkRequest request(url);
-    request.setRawHeader("User-Agent", kVkApiUserAgent);
+    QByteArray body;
+    QNetworkRequest request = BuildSignedPostRequest("audio.getById", params, body);
     request.setTransferTimeout(5000);
 
-    SendJsonRequest(request, [callback](const QJsonDocument& json) {
+    SendJsonRequest(request, [this, trackId, callback](const QJsonDocument& json) {
         std::string freshUrl = "";
         QJsonArray responseArray = json.object()["response"].toArray();
         if (!responseArray.isEmpty()) {
             freshUrl = responseArray[0].toObject()["url"].toString().toStdString();
         }
-        callback(freshUrl, false);
+
+        // Check if URL is invalid/empty or points to unavailable audio stub
+        if (freshUrl.empty() || freshUrl.find("audio_api_unavailable.mp3") != std::string::npos) {
+            Logger::Log(LogLevel::WARNING, "VkClient: audio.getById returned empty/unavailable URL, attempting execute fallback...");
+            
+            // Execute fallback: return API.audio.getById({"audios":"..."})[0].url;
+            std::vector<std::pair<QString, QString>> execParams = {
+                {"code", QString("return API.audio.getById({\"audios\":\"%1\"})[0].url;").arg(QString::fromStdString(trackId))},
+                {"access_token", QString::fromStdString(m_accessToken)},
+                {"v", QString::fromStdString(m_apiVersion)},
+                {"lang", "ru"},
+                {"https", "1"}
+            };
+            QByteArray execBody;
+            QNetworkRequest execReq = BuildSignedPostRequest("execute", execParams, execBody);
+            execReq.setTransferTimeout(5000);
+
+            SendJsonRequest(execReq, [callback](const QJsonDocument& execJson) {
+                std::string fallbackUrl = execJson.object()["response"].toString().toStdString();
+                if (callback) callback(fallbackUrl, false);
+            }, [callback](const std::string&) {
+                if (callback) callback("", true);
+            }, execBody);
+            return;
+        }
+
+        if (callback) callback(freshUrl, false);
     }, [callback](const std::string&) {
-        callback("", true);
-    });
+        if (callback) callback("", true);
+    }, body);
 }
 
 std::vector<Track> VkClient::ParseVkTracks(const QJsonArray& items) {
@@ -114,6 +187,7 @@ std::vector<Track> VkClient::ParseVkTracks(const QJsonArray& items) {
         int audio_id = trackJson["id"].toInt();
 
         track.id = std::to_string(owner_id) + "_" + std::to_string(audio_id);
+
         track.source = "VK";
         track.ownerId = std::to_string(owner_id);
         track.artist = trackJson["artist"].toString().toStdString();
@@ -144,16 +218,17 @@ std::vector<Track> VkClient::ParseVkTracks(const QJsonArray& items) {
 }
 
 void VkClient::FetchAllUserAudio(int offset, int count) {
-    QUrl url("https://api.vk.com/method/audio.get");
-    QUrlQuery query;
-    query.addQueryItem("access_token", QString::fromStdString(m_accessToken));
-    query.addQueryItem("v", QString::fromStdString(m_apiVersion));
-    query.addQueryItem("offset", QString::number(offset));
-    query.addQueryItem("count", QString::number(count));
-    url.setQuery(query);
+    std::vector<std::pair<QString, QString>> params = {
+        {"access_token", QString::fromStdString(m_accessToken)},
+        {"v", QString::fromStdString(m_apiVersion)},
+        {"offset", QString::number(offset)},
+        {"count", QString::number(count)},
+        {"lang", "ru"},
+        {"https", "1"}
+    };
 
-    QNetworkRequest request(url);
-    request.setRawHeader("User-Agent", kVkApiUserAgent);
+    QByteArray body;
+    QNetworkRequest request = BuildSignedPostRequest("audio.get", params, body);
 
     SendJsonRequest(request, [this, offset, count](const QJsonDocument& json) {
         QJsonArray items = json.object()["response"].toObject()["items"].toArray();
@@ -166,7 +241,7 @@ void VkClient::FetchAllUserAudio(int offset, int count) {
 
     }, [this](const std::string&) {
         emit FinishedFetching();
-    });
+    }, body);
 }
 
 void VkClient::SearchAudio(const std::string& query, int count, int offset,
@@ -176,19 +251,20 @@ void VkClient::SearchAudio(const std::string& query, int count, int offset,
         return;
     }
 
-    QUrl url("https://api.vk.com/method/audio.search");
-    QUrlQuery q;
-    q.addQueryItem("access_token", QString::fromStdString(m_accessToken));
-    q.addQueryItem("v", QString::fromStdString(m_apiVersion));
-    q.addQueryItem("q", QString::fromStdString(query));
-    q.addQueryItem("count", QString::number(count));
-    q.addQueryItem("offset", QString::number(offset));
-    q.addQueryItem("auto_complete", "1");
-    q.addQueryItem("sort", "2");
-    url.setQuery(q);
+    std::vector<std::pair<QString, QString>> params = {
+        {"access_token", QString::fromStdString(m_accessToken)},
+        {"v", QString::fromStdString(m_apiVersion)},
+        {"q", QString::fromStdString(query)},
+        {"count", QString::number(count)},
+        {"offset", QString::number(offset)},
+        {"auto_complete", "1"},
+        {"sort", "2"},
+        {"lang", "ru"},
+        {"https", "1"}
+    };
 
-    QNetworkRequest request(url);
-    request.setRawHeader("User-Agent", kVkApiUserAgent);
+    QByteArray body;
+    QNetworkRequest request = BuildSignedPostRequest("audio.search", params, body);
     request.setTransferTimeout(8000);
 
     SendJsonRequest(request, [callback](const QJsonDocument& json) {
@@ -197,111 +273,89 @@ void VkClient::SearchAudio(const std::string& query, int count, int offset,
         if (callback) callback(tracks, "");
     }, [callback](const std::string& err) {
         if (callback) callback({}, err);
-    });
+    }, body);
 }
 
 void VkClient::AddTrackToFavorites(const std::string& trackId, const std::string& ownerId,
-                                   std::function<void(bool success, const std::string& error)> callback) {
+                                   std::function<void(bool, const std::string&)> callback) {
     if (m_accessToken.empty()) {
         if (callback) callback(false, "VK access token is empty");
         return;
     }
 
-    int audioIdNum = 0;
-    int ownerIdNum = 0;
-
-    auto underscorePos = trackId.find('_');
+    std::string cleanAudioId = trackId;
+    auto underscorePos = cleanAudioId.find('_');
     if (underscorePos != std::string::npos) {
-        try {
-            ownerIdNum = std::stoi(trackId.substr(0, underscorePos));
-            audioIdNum = std::stoi(trackId.substr(underscorePos + 1));
-        } catch (...) {}
-    } else {
-        try {
-            audioIdNum = std::stoi(trackId);
-            if (!ownerId.empty()) ownerIdNum = std::stoi(ownerId);
-        } catch (...) {}
+        cleanAudioId = cleanAudioId.substr(underscorePos + 1);
+        auto secondUnderscore = cleanAudioId.find('_');
+        if (secondUnderscore != std::string::npos) {
+            cleanAudioId = cleanAudioId.substr(0, secondUnderscore);
+        }
     }
 
-    if (audioIdNum == 0) {
-        if (callback) callback(false, "Invalid VK track ID: " + trackId);
-        return;
-    }
+    std::vector<std::pair<QString, QString>> params = {
+        {"audio_id", QString::fromStdString(cleanAudioId)},
+        {"owner_id", QString::fromStdString(ownerId)},
+        {"access_token", QString::fromStdString(m_accessToken)},
+        {"v", QString::fromStdString(m_apiVersion)},
+        {"lang", "ru"},
+        {"https", "1"}
+    };
 
-    QUrl url("https://api.vk.com/method/audio.add");
-    QUrlQuery q;
-    q.addQueryItem("access_token", QString::fromStdString(m_accessToken));
-    q.addQueryItem("v", QString::fromStdString(m_apiVersion));
-    q.addQueryItem("audio_id", QString::number(audioIdNum));
-    q.addQueryItem("owner_id", QString::number(ownerIdNum));
-    url.setQuery(q);
-
-    QNetworkRequest request(url);
-    request.setRawHeader("User-Agent", kVkApiUserAgent);
+    QByteArray body;
+    QNetworkRequest request = BuildSignedPostRequest("audio.add", params, body);
 
     SendJsonRequest(request, [callback](const QJsonDocument& json) {
-        if (json.object().contains("response")) {
-            if (callback) callback(true, "");
+        QJsonObject root = json.object();
+        if (root.contains("error")) {
+            std::string errMsg = root["error"].toObject()["error_msg"].toString().toStdString();
+            if (callback) callback(false, errMsg);
         } else {
-            std::string err = json.object().contains("error")
-                ? json.object()["error"].toObject()["error_msg"].toString().toStdString()
-                : "Unknown error adding track";
-            if (callback) callback(false, err);
+            if (callback) callback(true, "");
         }
     }, [callback](const std::string& err) {
         if (callback) callback(false, err);
-    });
+    }, body);
 }
 
 void VkClient::RemoveTrackFromFavorites(const std::string& trackId, const std::string& ownerId,
-                                      std::function<void(bool success, const std::string& error)> callback) {
+                                        std::function<void(bool, const std::string&)> callback) {
     if (m_accessToken.empty()) {
         if (callback) callback(false, "VK access token is empty");
         return;
     }
 
-    int audioIdNum = 0;
-    int ownerIdNum = 0;
-
-    auto underscorePos = trackId.find('_');
+    std::string cleanAudioId = trackId;
+    auto underscorePos = cleanAudioId.find('_');
     if (underscorePos != std::string::npos) {
-        try {
-            ownerIdNum = std::stoi(trackId.substr(0, underscorePos));
-            audioIdNum = std::stoi(trackId.substr(underscorePos + 1));
-        } catch (...) {}
-    } else {
-        try {
-            audioIdNum = std::stoi(trackId);
-            if (!ownerId.empty()) ownerIdNum = std::stoi(ownerId);
-        } catch (...) {}
+        cleanAudioId = cleanAudioId.substr(underscorePos + 1);
+        auto secondUnderscore = cleanAudioId.find('_');
+        if (secondUnderscore != std::string::npos) {
+            cleanAudioId = cleanAudioId.substr(0, secondUnderscore);
+        }
     }
 
-    if (audioIdNum == 0) {
-        if (callback) callback(false, "Invalid VK track ID: " + trackId);
-        return;
-    }
+    std::vector<std::pair<QString, QString>> params = {
+        {"audio_id", QString::fromStdString(cleanAudioId)},
+        {"owner_id", QString::fromStdString(ownerId)},
+        {"access_token", QString::fromStdString(m_accessToken)},
+        {"v", QString::fromStdString(m_apiVersion)},
+        {"lang", "ru"},
+        {"https", "1"}
+    };
 
-    QUrl url("https://api.vk.com/method/audio.delete");
-    QUrlQuery q;
-    q.addQueryItem("access_token", QString::fromStdString(m_accessToken));
-    q.addQueryItem("v", QString::fromStdString(m_apiVersion));
-    q.addQueryItem("audio_id", QString::number(audioIdNum));
-    q.addQueryItem("owner_id", QString::number(ownerIdNum));
-    url.setQuery(q);
-
-    QNetworkRequest request(url);
-    request.setRawHeader("User-Agent", kVkApiUserAgent);
+    QByteArray body;
+    QNetworkRequest request = BuildSignedPostRequest("audio.delete", params, body);
 
     SendJsonRequest(request, [callback](const QJsonDocument& json) {
-        if (json.object().contains("response")) {
-            if (callback) callback(true, "");
+        QJsonObject root = json.object();
+        if (root.contains("error")) {
+            std::string errMsg = root["error"].toObject()["error_msg"].toString().toStdString();
+            if (callback) callback(false, errMsg);
         } else {
-            std::string err = json.object().contains("error")
-                ? json.object()["error"].toObject()["error_msg"].toString().toStdString()
-                : "Unknown error removing track";
-            if (callback) callback(false, err);
+            if (callback) callback(true, "");
         }
     }, [callback](const std::string& err) {
         if (callback) callback(false, err);
-    });
+    }, body);
 }

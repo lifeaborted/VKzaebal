@@ -116,6 +116,62 @@ void OAuthManager::ClearSavedToken(const QString& service) const {
     WebViewCookieReader::ClearServiceCache(service.toStdString());
 }
 
+void OAuthManager::SaveSecret(const std::string& secret, const QString& service) const {
+    if (secret.empty()) return;
+
+    auto* job = new QKeychain::WritePasswordJob(service);
+    job->setAutoDelete(true);
+    job->setKey("oauth_secret");
+    job->setTextData(QString::fromStdString(secret));
+
+    connect(job, &QKeychain::Job::finished, [service](QKeychain::Job* baseJob) {
+        if (baseJob->error()) {
+            Logger::Log(LogLevel::ERROR, "auth: Failed to securely save secret for " + service.toStdString() + ": " + baseJob->errorString().toStdString());
+        } else {
+            Logger::Log(LogLevel::INFO, "auth: Secret securely saved for " + service.toStdString());
+        }
+    });
+
+    job->start();
+}
+
+void OAuthManager::GetSavedSecret(const QString& service, std::function<void(const std::string&)> callback) const {
+    auto* job = new QKeychain::ReadPasswordJob(service);
+    job->setAutoDelete(true);
+    job->setKey("oauth_secret");
+
+    connect(job, &QKeychain::Job::finished, [service, callback](QKeychain::Job* baseJob) {
+        if (baseJob->error()) {
+            if (baseJob->error() != QKeychain::Error::EntryNotFound) {
+                Logger::Log(LogLevel::ERROR, "auth: Failed to read secret for " + service.toStdString() + ": " + baseJob->errorString().toStdString());
+            }
+            callback("");
+        } else {
+            auto* readJob = qobject_cast<QKeychain::ReadPasswordJob*>(baseJob);
+            std::string secret = readJob ? readJob->textData().trimmed().toStdString() : "";
+            callback(secret);
+        }
+    });
+
+    job->start();
+}
+
+void OAuthManager::ClearSavedSecret(const QString& service) const {
+    auto* job = new QKeychain::DeletePasswordJob(service);
+    job->setAutoDelete(true);
+    job->setKey("oauth_secret");
+
+    connect(job, &QKeychain::Job::finished, [service](QKeychain::Job* baseJob) {
+        if (baseJob->error() && baseJob->error() != QKeychain::Error::EntryNotFound) {
+            Logger::Log(LogLevel::ERROR, "auth: Failed to delete secret for " + service.toStdString() + ": " + baseJob->errorString().toStdString());
+        } else {
+            Logger::Log(LogLevel::INFO, "auth: Secret securely removed for " + service.toStdString());
+        }
+    });
+
+    job->start();
+}
+
 void OAuthManager::SaveCookies(const std::string& cookies, const QString& service) const {
     if (cookies.empty()) return;
 
@@ -229,15 +285,12 @@ void OAuthManager::ClearSavedUserId(const QString& service) const {
 }
 
 void OAuthManager::onUrlIntercepted(const QString& urlStr) {
-    bool isVkCallback = urlStr.startsWith("https://oauth.vk.com/blank.html") ||
-                        urlStr.startsWith("https://oauth.vk.ru/blank.html");
-
     bool isSpotifyCallback = urlStr.startsWith("http://127.0.0.1:8080/callback");
 
     bool isYandexCallback = urlStr.startsWith("https://music.yandex.ru/") ||
                             urlStr.startsWith("https://oauth.yandex.ru/");
 
-    if (!isVkCallback && !isSpotifyCallback && !isYandexCallback) {
+    if (!isSpotifyCallback && !isYandexCallback) {
         return;
     }
 

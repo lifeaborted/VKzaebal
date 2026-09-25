@@ -18,6 +18,7 @@ class YandexClient;
 class YouTubeClient;
 class QNetworkAccessManager;
 
+class VkAuthService;
 class OAuthManager;
 class IAudioProvider;
 class QQmlApplicationEngine;
@@ -43,6 +44,7 @@ public:
     YouTubeClient* GetYouTubeClient() const;
 
     OAuthManager* GetAuthManager() const { return m_authManager.get(); }
+    VkAuthService* GetVkAuthService() const { return m_vkAuthService.get(); }
 
     void CheckSourceAuthorized(const std::string& source, std::function<void(bool isAuth)> callback) const;
     void FindNextAuthorizedSource(const std::string& excludedSource, std::function<void(const std::string& nextSource)> callback) const;
@@ -71,7 +73,6 @@ public slots:
     void OnVkTokenExpired();
 
 private slots:
-    void OnVkTokenReceived(const std::string& token);
     void OnSpotifyTokenReceived(const std::string& token);
     void OnSpotifyAuthError(const std::string& err);
 
@@ -93,6 +94,7 @@ private:
     std::unordered_map<std::string, std::unique_ptr<IAudioProvider>> m_providers;
 
     std::unique_ptr<OAuthManager> m_authManager;
+    std::unique_ptr<VkAuthService> m_vkAuthService;
 
     QQmlApplicationEngine* m_authEngine = nullptr;
     QTimer* m_silentAuthTimer = nullptr;

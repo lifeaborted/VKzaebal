@@ -104,6 +104,8 @@ static std::string GetInterpolatedColor(float t, const std::vector<RGB>& stops, 
 
     float scaled_t = t * (stops.size() - 1);
     int idx = static_cast<int>(scaled_t);
+    if (idx >= static_cast<int>(stops.size()) - 1) idx = static_cast<int>(stops.size()) - 2;
+    if (idx < 0) idx = 0;
     float fract = scaled_t - idx;
 
     const auto& c1 = stops[idx];

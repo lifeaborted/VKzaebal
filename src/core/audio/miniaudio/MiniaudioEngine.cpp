@@ -36,6 +36,9 @@ MiniaudioEngine::MiniaudioEngine() : m_demuxer([this](const uint8_t* payload, si
 }
 
 MiniaudioEngine::~MiniaudioEngine() {
+    if (m_isDeviceInitialized) {
+        ma_device_stop(&m_device);
+    }
     m_isDecoding = false;
     m_decodeCv.notify_all();
 
@@ -44,12 +47,15 @@ MiniaudioEngine::~MiniaudioEngine() {
     }
     if (m_isDeviceInitialized) {
         ma_device_uninit(&m_device);
+        m_isDeviceInitialized = false;
     }
     StopFadeOut();
     m_decoder.reset();
     if (m_aacDecoder) {
         aacDecoder_Close(m_aacDecoder);
+        m_aacDecoder = nullptr;
     }
+    m_pcmBuffer.Clear();
 }
 
 float MiniaudioEngine::GetVolume() const { return m_volume; }

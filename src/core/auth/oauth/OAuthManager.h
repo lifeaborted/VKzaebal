@@ -19,6 +19,10 @@ public:
     void SaveToken(const std::string& token, const QString& service = "VK") const;
     void ClearSavedToken(const QString& service = "VK") const;
 
+    void SaveSecret(const std::string& secret, const QString& service = "VK") const;
+    void GetSavedSecret(const QString& service, std::function<void(const std::string&)> callback) const;
+    void ClearSavedSecret(const QString& service = "VK") const;
+
     void SaveCookies(const std::string& cookies, const QString& service = "VK") const;
     void GetSavedCookies(const QString& service, std::function<void(const std::string&)> callback) const;
     void ClearSavedCookies(const QString& service = "VK") const;

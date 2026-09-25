@@ -12,6 +12,8 @@
 #include "core/shazam/IAudioCaptureService.h"
 #include "core/shazam/ShazamFFI.h"
 #include "core/api/vk/VkClient.h"
+#include "core/api/vk/VkAuthService.h"
+#include "core/auth/router/SourceRouter.h"
 #include <qtkeychain/keychain.h>
 
 #include <QCoreApplication>
@@ -325,36 +327,60 @@ namespace {
                 if (ctx.onQuit) ctx.onQuit();
             } else if (m_cmdType == "help") {
                 std::string s(50, '*');
-                std::string helpText = "\n" + s + "\n [P] Play/Pause\n [N] Next\n [B] Prev\n [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n [seek <time>] Seek (e.g. seek 1:30 or seek 90)\n [st] Standard Order\n [sh] Shuffle\n [R] Repeat Mode\n [J <num>] Jump to track\n [cv] Current volume\n [rs] Reset Session\n [mode <0/1>] 0 - Standard, 1 - Gapless transition\n [savepos <0/1/2>] 0 - Off, 1 - Track only, 2 - Track + Position\n [search <text>] Search tracks in local playlist\n [find <query>] Online search across services (VK, Ya, YT, SC, ALL)\n [pf <num>] Play track from search results\n [lf <num>] Add search result to service favorites\n [af <num>] Add search result to local playlist\n [df <num>] Download search result track\n [like] / [dislike] Add/remove playing track from favorites\n [ly] Show lyrics for current track\n [logout / logout <service>] Logout and clear service cache\n [source] Select audio source\n [tl] Export tracklist to TXT\n [dl] / [dl <num>] Download track\n [rm] / [rm <num>] Delete downloaded track\n [pl <name>] Create playlist\n [pls] List playlists\n [pl play] Play playlist\n [pl rm <name>] Delete playlist\n [add] / [add <num>] Add track to playlist\n [drop <num>] Remove track from queue\n [vis] Toggle visualizer\n [expire_vk] Test silent VK token renewal\n [Q] Quit\n" + s + "\n\n> ";
+                std::string helpText = "\n" + s + "\n [P] Play/Pause\n [N] Next\n [B] Prev\n [+] Vol Up\n [-] Vol Down\n [v <num>] Set Volume\n [seek <time>] Seek (e.g. seek 1:30 or seek 90)\n [st] Standard Order\n [sh] Shuffle\n [R] Repeat Mode\n [J <num>] Jump to track\n [cv] Current volume\n [rs] Reset Session\n [mode <0/1>] 0 - Standard, 1 - Gapless transition\n [savepos <0/1/2>] 0 - Off, 1 - Track only, 2 - Track + Position\n [search <text>] Search tracks in local playlist\n [find <query>] Online search across services (VK, Ya, YT, SC, ALL)\n [pf <num>] Play track from search results\n [lf <num>] Add search result to service favorites\n [af <num>] Add search result to local playlist\n [df <num>] Download search result track\n [like] / [dislike] Add/remove playing track from favorites\n [ly] Show lyrics for current track\n [logout / logout <service>] Logout and clear service cache\n [source] Select audio source\n [vk <login>] VK Android Login (Phone or Email)\n [pass <pwd>] Submit VK Password\n [code <num>] Submit VK 2FA Code\n [captcha <text>] Submit VK Captcha\n [tl] Export tracklist to TXT\n [dl] / [dl <num>] Download track\n [rm] / [rm <num>] Delete downloaded track\n [pl <name>] Create playlist\n [pls] List playlists\n [pl play] Play playlist\n [pl rm <name>] Delete playlist\n [add] / [add <num>] Add track to playlist\n [drop <num>] Remove track from queue\n [vis] Toggle visualizer\n [Q] Quit\n" + s + "\n\n> ";
                 if (ctx.print) ctx.print(helpText);
             }
         }
     };
 
-    class TestExpireVkCommand : public IConsoleCommand {
+    class VkAuthCommand : public IConsoleCommand {
+        std::string m_action;
     public:
-        void Execute(const std::string&, CommandContext& ctx) override {
-            RunInMainThread([provider = ctx.currentProvider, print = ctx.print]() {
-                auto* vk = dynamic_cast<VkClient*>(provider);
-                if (!vk) {
-                    if (print) print("[Тест] Активный источник не VK. Переключитесь на VK (команда 'source') перед тестом.\n\n> ");
+        explicit VkAuthCommand(const std::string& action) : m_action(action) {}
+        void Execute(const std::string& arg, CommandContext& ctx) override {
+            RunInMainThread([router = ctx.router, action = m_action, arg, print = ctx.print]() {
+                if (!router || !router->GetVkAuthService()) {
+                    if (print) print("[VK] Ошибка: сервис авторизации VK недоступен.\n\n> ");
                     return;
                 }
-                if (print) print("[Тест] Эмуляция истечения токена: записываем фиктивный токен и вызываем OnVkTokenExpired...\n\n> ");
-
-                auto* job = new QKeychain::WritePasswordJob("VK");
-                job->setAutoDelete(true);
-                job->setKey("oauth_token");
-                job->setTextData("[\"vk1.a.EXPIRED_DUMMY_TOKEN_FOR_TEST_000000000000000000000000000000000000000000000000000000000000000000000000000000\"]");
-                QObject::connect(job, &QKeychain::Job::finished, [vk, print](QKeychain::Job* baseJob) {
-                    if (baseJob->error()) {
-                        if (print) print("[Тест] Ошибка записи фиктивного токена в QKeychain: " + baseJob->errorString().toStdString() + "\n\n> ");
+                auto* authService = router->GetVkAuthService();
+                if (action == "login") {
+                    if (arg.empty()) {
+                        if (print) print("[VK] Укажите телефон или email: vk +79991234567 [пароль]\n\n> ");
                         return;
                     }
-                    vk->SetAccessToken("vk1.a.EXPIRED_DUMMY_TOKEN_FOR_TEST_000000000000000000000000000000000000000000000000000000000000000000000000000000");
-                    emit vk->TokenExpired();
-                });
-                job->start();
+                    std::string login = arg;
+                    std::string password = "";
+                    auto spacePos = arg.find(' ');
+                    if (spacePos != std::string::npos) {
+                        login = arg.substr(0, spacePos);
+                        password = arg.substr(spacePos + 1);
+                        while (!password.empty() && password.front() == ' ') password.erase(0, 1);
+                    }
+                    if (print) print("[VK] Запуск проверки учетной записи: " + login + "\n\n> ");
+                    authService->StartLogin(QString::fromStdString(login), QString::fromStdString(password));
+                } else if (action == "password") {
+                    if (arg.empty()) {
+                        if (print) print("[VK] Укажите пароль: pass <ваш_пароль>\n\n> ");
+                        return;
+                    }
+                    if (print) print("[VK] Отправка пароля...\n\n> ");
+                    authService->SubmitPassword(QString::fromStdString(arg));
+                } else if (action == "code") {
+                    if (arg.empty()) {
+                        if (print) print("[VK] Укажите код подтверждения: code <код>\n\n> ");
+                        return;
+                    }
+                    if (print) print("[VK] Отправка кода подтверждения...\n\n> ");
+                    authService->SubmitCode(QString::fromStdString(arg));
+                } else if (action == "captcha") {
+                    if (arg.empty()) {
+                        if (print) print("[VK] Укажите ответ с картинки: captcha <текст>\n\n> ");
+                        return;
+                    }
+                    if (print) print("[VK] Отправка решения капчи...\n\n> ");
+                    authService->SubmitCaptchaKey(QString::fromStdString(arg));
+                }
             });
         }
     };
@@ -376,5 +402,14 @@ void RegisterSystemCommands(std::map<std::string, std::unique_ptr<IConsoleComman
     commands["i"] = std::make_unique<SystemCommand>("info");
     commands["q"] = std::make_unique<SystemCommand>("quit");
     commands["h"] = std::make_unique<SystemCommand>("help");
-    commands["expire_vk"] = std::make_unique<TestExpireVkCommand>();
+
+    // VK Native Android Direct Auth commands
+    commands["vk"] = std::make_unique<VkAuthCommand>("login");
+    commands["vk_login"] = std::make_unique<VkAuthCommand>("login");
+    commands["pass"] = std::make_unique<VkAuthCommand>("password");
+    commands["vk_pass"] = std::make_unique<VkAuthCommand>("password");
+    commands["code"] = std::make_unique<VkAuthCommand>("code");
+    commands["vk_code"] = std::make_unique<VkAuthCommand>("code");
+    commands["captcha"] = std::make_unique<VkAuthCommand>("captcha");
+    commands["vk_captcha"] = std::make_unique<VkAuthCommand>("captcha");
 }
