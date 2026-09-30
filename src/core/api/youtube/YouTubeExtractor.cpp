@@ -18,13 +18,27 @@ YouTubeExtractor::YouTubeExtractor(QNetworkAccessManager* networkManager, YouTub
     : QObject(parent), m_manager(networkManager), m_tokenGen(tokenGen) {
 }
 
+void YouTubeExtractor::cancelExtraction() {
+    m_currentExtractionGen++;
+    if (m_currentReply) {
+        m_currentReply->disconnect();
+        m_currentReply->abort();
+        m_currentReply->deleteLater();
+        m_currentReply = nullptr;
+    }
+}
+
 void YouTubeExtractor::extractAudioUrl(const QString& videoId, std::function<void(const QString&, bool)> callback) {
+    cancelExtraction();
+    uint64_t gen = m_currentExtractionGen;
     Logger::Log(LogLevel::INFO, "YouTubeExtractor: Starting audio extraction for video: " + videoId.toStdString());
 
     // Шаг 1: Получаем base.js и visitorData
-    fetchBaseJs(videoId, [this, videoId, callback](const QString& baseJs, const QString& visitorData) {
+    fetchBaseJs(videoId, [this, videoId, callback, gen](const QString& baseJs, const QString& visitorData) {
+        if (gen != m_currentExtractionGen) return;
         // Шаг 2: В первую очередь запрашиваем через VisionOS клиент (отдает прямые потоки без BotGuard)
-        sendVisionOsRequest(videoId, visitorData, baseJs, [this, videoId, visitorData, baseJs, callback](const QString& url, bool isError) {
+        sendVisionOsRequest(videoId, visitorData, baseJs, [this, videoId, visitorData, baseJs, callback, gen](const QString& url, bool isError) {
+            if (gen != m_currentExtractionGen) return;
             if (!isError && !url.isEmpty()) {
                 callback(url, false);
                 return;
@@ -34,12 +48,19 @@ void YouTubeExtractor::extractAudioUrl(const QString& videoId, std::function<voi
 
             // Шаг 3: Фолбэк на Web клиент с генерацией poToken
             if (m_tokenGen) {
-                m_tokenGen->generateToken("", [this, videoId, visitorData, baseJs, callback](QString poToken, QString genVisitorData) {
+                m_tokenGen->generateToken("", [this, videoId, visitorData, baseJs, callback, gen](QString poToken, QString genVisitorData) {
+                    if (gen != m_currentExtractionGen) return;
                     QString effVisitor = !visitorData.isEmpty() ? visitorData : genVisitorData;
-                    sendWebRequest(videoId, poToken, effVisitor, baseJs, callback);
+                    sendWebRequest(videoId, poToken, effVisitor, baseJs, [this, callback, gen](const QString& u, bool err) {
+                        if (gen != m_currentExtractionGen) return;
+                        callback(u, err);
+                    });
                 });
             } else {
-                sendWebRequest(videoId, "", visitorData, baseJs, callback);
+                sendWebRequest(videoId, "", visitorData, baseJs, [this, callback, gen](const QString& u, bool err) {
+                    if (gen != m_currentExtractionGen) return;
+                    callback(u, err);
+                });
             }
         });
     });

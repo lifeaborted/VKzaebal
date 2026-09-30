@@ -42,4 +42,10 @@ public:
 
     int GetDiskCacheSizeMb() const;
     void SetDiskCacheSizeMb(int mb);
+
+    int GetSeekStepSeconds() const;
+    void SetSeekStepSeconds(int seconds);
+
+    bool GetGaplessPlayback() const;
+    void SetGaplessPlayback(bool enabled);
 };

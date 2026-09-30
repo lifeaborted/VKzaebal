@@ -111,9 +111,6 @@ void OAuthManager::ClearSavedToken(const QString& service) const {
     job->start();
 
     ClearSavedCookies(service);
-
-    // Удаляем связанные cookies и веб-кэш для данного сервиса
-    WebViewCookieReader::ClearServiceCache(service.toStdString());
 }
 
 void OAuthManager::SaveSecret(const std::string& secret, const QString& service) const {
@@ -332,8 +329,6 @@ void OAuthManager::onScTokenIntercepted(const QString& tokenStr) {
 }
 
 void OAuthManager::onYtAuthIntercepted(const QString& cookies) {
-    Logger::Log(LogLevel::INFO, "auth: YouTube Auth successful via JS-Sniper! Intercepted session cookies (length: " + std::to_string(cookies.size()) + ")");
-    std::string token = cookies.toStdString();
-    SaveToken(token, "YouTube");
-    emit YtAuthSucceeded(token);
+    Logger::Log(LogLevel::INFO, "auth: YouTube Auth detected via JS-Sniper! Intercepted basic session cookies (length: " + std::to_string(cookies.size()) + ")");
+    emit YtAuthSucceeded(cookies.toStdString());
 }

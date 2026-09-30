@@ -509,15 +509,6 @@ void MiniaudioEngine::DecodeLoop() {
 void MiniaudioEngine::DecodeAACFrames() {
     std::lock_guard<std::mutex> lock(m_networkMutex);
 
-    static int s_aacLogCount = 0;
-    if (++s_aacLogCount % 20 == 1) {
-        Logger::Log(LogLevel::INFO, "DecodeAACFrames: aacBuf=" + std::to_string(m_aacBuffer.size()) +
-                    " mp3Buf=" + std::to_string(m_mp3Buffer.size()) +
-                    " mp3Offset=" + std::to_string(m_mp3ReadOffset) +
-                    " pcmWrite=" + std::to_string(m_pcmBuffer.GetAvailableWrite()) +
-                    " pcmRead=" + std::to_string(m_pcmBuffer.GetAvailableRead()));
-    }
-
     if (m_demuxer.IsTsStreamDetermined() && !m_demuxer.IsTsStream()) {
         if (!m_aacBuffer.empty()) {
             m_demuxer.ProcessBytes(m_aacBuffer.data(), m_aacBuffer.size());
@@ -609,10 +600,6 @@ void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSiz
             }
 
             if (framesToOutput > 0) {
-                static int s_aacDecCount = 0;
-                if (++s_aacDecCount <= 5) {
-                    Logger::Log(LogLevel::INFO, "DecodeAacPayload: decoded " + std::to_string(framesToOutput) + " frames.");
-                }
                 size_t bytesToOutput = framesToOutput * 2 * sizeof(int16_t);
                 m_pcmBuffer.Write(reinterpret_cast<uint8_t*>(pcmDataPtr), bytesToOutput);
             }
@@ -734,7 +721,9 @@ void MiniaudioEngine::ClearBuffers(bool crossfade, int nextDurationSec) {
     {
         std::lock_guard<std::mutex> netLock(m_networkMutex);
         m_aacBuffer.clear();
+        m_aacBuffer.shrink_to_fit();
         m_mp3Buffer.clear();
+        m_mp3Buffer.shrink_to_fit();
         m_mp3ReadOffset = 0;
         m_demuxer.Reset();
         if (m_aacDecoder) {
@@ -783,6 +772,7 @@ void MiniaudioEngine::InitiateCrossfade() {
 void MiniaudioEngine::StopFadeOut() {
     m_fadeOutDecoder.reset();
     m_fadeOutPcm.clear();
+    m_fadeOutPcm.shrink_to_fit();
     m_isCrossfading = false;
 }
 

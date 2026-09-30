@@ -24,22 +24,12 @@ NetworkStreamer::~NetworkStreamer() {
 
 void NetworkStreamer::StartDownload(const std::string& urlString) {
     Logger::Log(LogLevel::INFO, "Starting network stream from: " + urlString);
-    m_streamGeneration.fetch_add(1, std::memory_order_relaxed);
+    StopDownload();
+    uint64_t currentGen = m_streamGeneration.load(std::memory_order_relaxed);
     m_pendingSeekPos = -1.0;
     m_totalFileSize = 0;
-
-    if (m_reply) {
-        StopDownload();
-    }
     m_streamType = StreamType::DirectHttp;
     m_baseUrl = QUrl(QString::fromStdString(urlString));
-
-    m_chunkQueue.clear();
-    m_hlsChunks.clear();
-    m_currentChunk = HlsChunk();
-    m_loadedKeyUrl = QUrl();
-    m_aesKey.clear();
-    m_currentChunkData.clear();
 
     QUrl url(QString::fromStdString(urlString));
     QNetworkRequest request(url);
@@ -53,7 +43,14 @@ void NetworkStreamer::StartDownload(const std::string& urlString) {
     m_isPaused = false;
 
     if (urlString.find(".m3u8") != std::string::npos) {
-        connect(m_reply, &QNetworkReply::finished, this, [this, url]() {
+        connect(m_reply, &QNetworkReply::finished, this, [this, url, currentGen]() {
+            if (m_streamGeneration.load(std::memory_order_relaxed) != currentGen) {
+                if (m_reply) {
+                    m_reply->deleteLater();
+                    m_reply = nullptr;
+                }
+                return;
+            }
             if (m_reply && m_reply->error() == QNetworkReply::NoError) {
                 QString manifest = m_reply->readAll();
                 m_reply->deleteLater();
@@ -81,10 +78,15 @@ void NetworkStreamer::StartDownload(const std::string& urlString) {
 void NetworkStreamer::StopDownload() {
     m_streamGeneration.fetch_add(1, std::memory_order_relaxed);
     m_chunkQueue.clear();
+    m_hlsChunks.clear();
     m_currentChunk = HlsChunk();
     m_isPaused = false;
     m_readyChunks.clear();
     m_chunksInFlight = 0;
+    m_currentChunkData.clear();
+    m_currentChunkData.squeeze();
+    m_aesKey.clear();
+    m_loadedKeyUrl = QUrl();
     if (m_reply) {
         Logger::Log(LogLevel::INFO, "Aborting network stream.");
         
@@ -209,7 +211,15 @@ void NetworkStreamer::DownloadKey(const QUrl& keyUrl) {
 
     m_reply = m_manager->get(request);
 
-    connect(m_reply, &QNetworkReply::finished, this, [this]() {
+    uint64_t currentGen = m_streamGeneration.load(std::memory_order_relaxed);
+    connect(m_reply, &QNetworkReply::finished, this, [this, currentGen]() {
+        if (m_streamGeneration.load(std::memory_order_relaxed) != currentGen) {
+            if (m_reply) {
+                m_reply->deleteLater();
+                m_reply = nullptr;
+            }
+            return;
+        }
         if (m_reply && m_reply->error() == QNetworkReply::NoError) {
             m_aesKey = m_reply->readAll();
             Logger::Log(LogLevel::INFO, "AES key downloaded successfully.");
@@ -220,6 +230,10 @@ void NetworkStreamer::DownloadKey(const QUrl& keyUrl) {
             StartChunkDownload();
         } else {
             Logger::Log(LogLevel::ERROR, "Failed to download AES key.");
+            if (m_reply) {
+                m_reply->deleteLater();
+                m_reply = nullptr;
+            }
         }
     });
 }

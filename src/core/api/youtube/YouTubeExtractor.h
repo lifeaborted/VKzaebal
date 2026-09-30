@@ -4,6 +4,7 @@
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <QNetworkAccessManager>
+#include <QPointer>
 #include <QList>
 #include <functional>
 
@@ -32,6 +33,7 @@ public:
      * @param callback Колбэк с полученным URL аудиопотока и флагом ошибки
      */
     void extractAudioUrl(const QString& videoId, std::function<void(const QString& streamUrl, bool isError)> callback);
+    void cancelExtraction();
 
     /**
      * @brief C++ функция декодирования зашифрованной подписи (аналог yt-dlp AST парсера)
@@ -62,6 +64,8 @@ private:
 
     QNetworkAccessManager* m_manager = nullptr;
     YouTubePoTokenGenerator* m_tokenGen = nullptr;
+    QPointer<QNetworkReply> m_currentReply = nullptr;
+    uint64_t m_currentExtractionGen = 0;
 
     QString m_cachedBaseJs;
     QString m_baseJsUrl;

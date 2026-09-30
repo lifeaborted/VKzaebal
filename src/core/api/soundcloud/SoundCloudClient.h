@@ -1,5 +1,6 @@
 #pragma once
 #include "core/api/BaseApiProvider.h"
+#include <QPointer>
 #include <QString>
 #include <vector>
 #include <utility>
@@ -15,6 +16,7 @@ public:
 
     void InitializeWithToken();
     void FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) override;
+    void CancelFetchTrackUrl() override;
     void FetchAllUserAudio(int offset = 0, int count = 200) override;
 
     void SearchAudio(const std::string& query, int count, int offset,
@@ -47,4 +49,5 @@ private:
     bool m_isFetchingClientId = false;
     std::vector<std::pair<std::string, std::function<void(const std::string&, bool)>>> m_pendingTrackRequests;
     std::unordered_map<std::string, TranscodingInfo> m_trackTranscodings;
+    QPointer<QNetworkReply> m_currentFetchReply = nullptr;
 };

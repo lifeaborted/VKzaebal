@@ -16,7 +16,9 @@ class LyricsFetcher;
 class NetworkStreamer;
 class PlaybackController;
 class SourceRouter;
-class ConsoleController;
+namespace tui {
+class TuiController;
+}
 class ConfigurationService;
 class PlaybackSessionService;
 class QNetworkAccessManager;
@@ -52,12 +54,12 @@ private:
     std::unique_ptr<NetworkStreamer> m_streamer;
     std::unique_ptr<PlaybackController> m_playbackCtrl;
     std::unique_ptr<SourceRouter> m_router;
-    std::unique_ptr<ConsoleController> m_console;
+    std::unique_ptr<tui::TuiController> m_tui;
 
     QMap<QString, QString> m_envVars;
     std::string m_activeSource;
     bool m_isPlaybackStarted = false;
-    int m_vkSyncIndex = 0;
+    int m_syncIndex = 0;
     std::unordered_set<std::string> m_syncExistingIds;
     QTimer* m_audioPollTimer = nullptr;
 };

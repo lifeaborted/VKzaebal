@@ -222,9 +222,33 @@ void SoundCloudClient::SearchAudio(const std::string& query, int count, int offs
         }
         request.setTransferTimeout(8000);
 
-        SendJsonRequest(request, [this, callback](const QJsonDocument& json) {
+        SendJsonRequest(request, [this, count, callback](const QJsonDocument& json) {
             QJsonArray collection = json.object()["collection"].toArray();
             std::vector<Track> tracks = ParseSoundCloudTracks(collection);
+            QString nextHref = json.object()["next_href"].toString();
+            if (tracks.size() < static_cast<size_t>(count) && !nextHref.isEmpty() && tracks.size() >= 15) {
+                QUrl nextUrl(nextHref);
+                QUrlQuery nq(nextUrl);
+                if (!nq.hasQueryItem("client_id") && !m_clientId.empty()) {
+                    nq.addQueryItem("client_id", QString::fromStdString(m_clientId));
+                    nextUrl.setQuery(nq);
+                }
+                QNetworkRequest nextReq(nextUrl);
+                if (!m_accessToken.empty()) {
+                    nextReq.setRawHeader("Authorization", QByteArray("OAuth ") + QByteArray::fromStdString(m_accessToken));
+                }
+                nextReq.setTransferTimeout(8000);
+                auto accumulatedTracks = std::make_shared<std::vector<Track>>(std::move(tracks));
+                SendJsonRequest(nextReq, [this, accumulatedTracks, callback](const QJsonDocument& nextJson) {
+                    QJsonArray nextCollection = nextJson.object()["collection"].toArray();
+                    std::vector<Track> moreTracks = ParseSoundCloudTracks(nextCollection);
+                    accumulatedTracks->insert(accumulatedTracks->end(), moreTracks.begin(), moreTracks.end());
+                    if (callback) callback(*accumulatedTracks, "");
+                }, [accumulatedTracks, callback](const std::string&) {
+                    if (callback) callback(*accumulatedTracks, "");
+                });
+                return;
+            }
             if (callback) callback(tracks, "");
         }, [callback](const std::string& err) {
             if (callback) callback({}, err);
@@ -300,12 +324,27 @@ void SoundCloudClient::RequestCdnUrl(const QString& transUrl, const QString& tra
     url.setQuery(transQuery);
 
     QNetworkRequest cdnReq(url);
-    SendJsonRequest(cdnReq, [callback](const QJsonDocument& cdnJson) {
+    m_currentFetchReply = SendJsonRequest(cdnReq, [this, callback](const QJsonDocument& cdnJson) {
+        m_currentFetchReply = nullptr;
         callback(cdnJson.object()["url"].toString().toStdString(), false);
-    }, [callback](const std::string&) { callback("", true); });
+    }, [this, callback](const std::string&) {
+        m_currentFetchReply = nullptr;
+        callback("", true);
+    });
+}
+
+void SoundCloudClient::CancelFetchTrackUrl() {
+    if (m_currentFetchReply) {
+        m_currentFetchReply->disconnect();
+        m_currentFetchReply->abort();
+        m_currentFetchReply->deleteLater();
+        m_currentFetchReply = nullptr;
+    }
+    m_pendingTrackRequests.clear();
 }
 
 void SoundCloudClient::FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) {
+    CancelFetchTrackUrl();
     if (m_clientId.empty()) {
         Logger::Log(LogLevel::INFO, "SoundCloud: Client ID not ready yet, queueing track URL request for " + trackId);
         m_pendingTrackRequests.push_back({trackId, callback});
@@ -327,7 +366,8 @@ void SoundCloudClient::FetchTrackUrl(const std::string& trackId, std::function<v
     QString trackUrl = QString("https://api-v2.soundcloud.com/tracks/%1?client_id=%2").arg(QString::fromStdString(trackId), QString::fromStdString(m_clientId));
     QNetworkRequest request((QUrl(trackUrl)));
 
-    SendJsonRequest(request, [this, trackId, callback](const QJsonDocument& json) {
+    m_currentFetchReply = SendJsonRequest(request, [this, trackId, callback](const QJsonDocument& json) {
+        m_currentFetchReply = nullptr;
         QJsonObject trackObj = json.object();
         QString trackAuth = trackObj["track_authorization"].toString();
         QJsonArray transcodings = trackObj["media"].toObject()["transcodings"].toArray();
@@ -344,5 +384,8 @@ void SoundCloudClient::FetchTrackUrl(const std::string& trackId, std::function<v
 
         m_trackTranscodings[trackId] = {transUrl, trackAuth};
         RequestCdnUrl(transUrl, trackAuth, callback);
-    }, [callback](const std::string&) { callback("", true); });
+    }, [this, callback](const std::string&) {
+        m_currentFetchReply = nullptr;
+        callback("", true);
+    });
 }

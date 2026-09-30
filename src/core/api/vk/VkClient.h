@@ -1,5 +1,6 @@
 #pragma once
 #include "core/api/BaseApiProvider.h"
+#include <QPointer>
 #include <vector>
 #include <utility>
 
@@ -12,8 +13,12 @@ public:
     void SetSecret(const std::string& secret);
     [[nodiscard]] std::string GetSecret() const { return m_secret; }
 
+    void SetUserId(const std::string& userId) { m_userId = userId; }
+    [[nodiscard]] std::string GetUserId() const { return m_userId; }
+
     void ValidateToken(std::function<void(bool isValid)> callback);
     void FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool isNetworkError)> callback) override;
+    void CancelFetchTrackUrl() override;
     void FetchAllUserAudio(int offset = 0, int count = 200) override;
 
     void SearchAudio(const std::string& query, int count, int offset,
@@ -38,6 +43,8 @@ protected:
 
 private:
     std::string m_secret;
+    std::string m_userId;
     std::string m_apiVersion = "5.87";
     bool m_isValidatingToken = false;
+    QPointer<QNetworkReply> m_currentFetchReply = nullptr;
 };

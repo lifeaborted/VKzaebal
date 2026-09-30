@@ -160,6 +160,7 @@ std::string WebViewCookieReader::GetCookiesForDomains(const QStringList& domainP
                 QFile::remove(path);
                 QFile::remove(path + "-wal");
                 QFile::remove(path + "-shm");
+                QFile::remove(path + "-journal");
             }
         }
     } tempDbGuard{tempCookiesPath};
@@ -211,8 +212,15 @@ std::string WebViewCookieReader::GetCookiesForDomains(const QStringList& domainP
         Logger::Log(LogLevel::ERROR, "WebViewCookieReader: Failed to copy Cookies database to secure temp path.");
         return "";
     }
-    robustCopy(baseDir + "/Default/Network/Cookies-wal", tempCookiesPath + "-wal");
-    robustCopy(baseDir + "/Default/Network/Cookies-shm", tempCookiesPath + "-shm");
+    if (QFile::exists(baseDir + "/Default/Network/Cookies-wal")) {
+        robustCopy(baseDir + "/Default/Network/Cookies-wal", tempCookiesPath + "-wal");
+    }
+    if (QFile::exists(baseDir + "/Default/Network/Cookies-shm")) {
+        robustCopy(baseDir + "/Default/Network/Cookies-shm", tempCookiesPath + "-shm");
+    }
+    if (QFile::exists(baseDir + "/Default/Network/Cookies-journal")) {
+        robustCopy(baseDir + "/Default/Network/Cookies-journal", tempCookiesPath + "-journal");
+    }
 
     // 5. Читаем и расшифровываем куки из SQLite
     QMap<QString, QString> cookieMap;
@@ -227,15 +235,17 @@ std::string WebViewCookieReader::GetCookiesForDomains(const QStringList& domainP
                 for (const QString& pat : domainPatterns) {
                     whereClauses.append("host_key LIKE '" + pat + "'");
                 }
-                QString sql = "SELECT name, encrypted_value FROM cookies";
+                QString sql = "SELECT name, encrypted_value, value FROM cookies";
                 if (!whereClauses.isEmpty()) {
                     sql += " WHERE " + whereClauses.join(" OR ");
                 }
+                sql += " ORDER BY CASE WHEN host_key LIKE '%youtube.com' THEN 1 WHEN host_key LIKE '%vk.com%' OR host_key LIKE '%vk.ru%' THEN 1 ELSE 0 END ASC, creation_utc ASC";
                 query.prepare(sql);
                 if (query.exec()) {
                     while (query.next()) {
                         QString name = query.value(0).toString();
                         QByteArray enc = query.value(1).toByteArray();
+                        QString plain = query.value(2).toString();
                         if (enc.startsWith("v10") || enc.startsWith("v11")) {
                             if (enc.size() > 3 + 12 + 16) {
                                 QByteArray nonce = enc.mid(3, 12);
@@ -262,6 +272,8 @@ std::string WebViewCookieReader::GetCookiesForDomains(const QStringList& domainP
                             }
                         } else if (!enc.isEmpty()) {
                             cookieMap[name] = QString::fromUtf8(enc);
+                        } else if (!plain.isEmpty()) {
+                            cookieMap[name] = plain;
                         }
                     }
                 } else {
@@ -278,6 +290,7 @@ std::string WebViewCookieReader::GetCookiesForDomains(const QStringList& domainP
     QFile::remove(tempCookiesPath);
     QFile::remove(tempCookiesPath + "-wal");
     QFile::remove(tempCookiesPath + "-shm");
+    QFile::remove(tempCookiesPath + "-journal");
 
     if (cookieMap.isEmpty()) {
         return "";
@@ -295,9 +308,9 @@ std::string WebViewCookieReader::GetCookiesForDomains(const QStringList& domainP
 }
 
 std::string WebViewCookieReader::GetFullYouTubeCookies() {
-    std::string cookies = GetCookiesForDomains({"%youtube.com"});
+    std::string cookies = GetCookiesForDomains({"%google.%", "%youtube.com"});
     if (!cookies.empty()) {
-        Logger::Log(LogLevel::INFO, "WebViewCookieReader: Decrypted YouTube cookies (length: " + std::to_string(cookies.size()) + ")");
+        Logger::Log(LogLevel::INFO, "WebViewCookieReader: Decrypted YouTube/Google cookies (length: " + std::to_string(cookies.size()) + ")");
     }
     return cookies;
 }
@@ -336,7 +349,7 @@ bool WebViewCookieReader::ClearServiceCache(const std::string& service) {
     } else if (svc == "yandex") {
         whereClause = "host_key LIKE '%yandex%' OR host_key LIKE '%ya.ru%'";
     } else if (svc == "youtube" || svc == "yt") {
-        whereClause = "host_key LIKE '%youtube.com%' OR host_key LIKE '%google.com%' OR host_key LIKE '%google.ru%' OR host_key LIKE '%googlevideo.com%'";
+        whereClause = "host_key LIKE '%youtube.com%' OR host_key LIKE '%google.%' OR host_key LIKE '%googlevideo.com%'";
     } else if (svc == "all") {
         whereClause = "";
     } else {

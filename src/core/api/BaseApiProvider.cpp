@@ -16,7 +16,7 @@ void BaseApiProvider::SetAccessToken(const std::string& token) {
     m_accessToken = token;
 }
 
-void BaseApiProvider::SendJsonRequest(QNetworkRequest request, std::function<void(const QJsonDocument&)> onSuccess, std::function<void(const std::string&)> onFail, const QByteArray& postData) {
+QNetworkReply* BaseApiProvider::SendJsonRequest(QNetworkRequest request, std::function<void(const QJsonDocument&)> onSuccess, std::function<void(const std::string&)> onFail, const QByteArray& postData) {
 
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
     QNetworkReply* reply = postData.isEmpty() ? m_manager->get(request) : m_manager->post(request, postData);
@@ -66,4 +66,6 @@ void BaseApiProvider::SendJsonRequest(QNetworkRequest request, std::function<voi
 
         reply->deleteLater();
     });
+
+    return reply;
 }

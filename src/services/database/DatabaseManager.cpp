@@ -12,6 +12,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <unordered_map>
 
 namespace {
 int ParseDurationSeconds(const QString& durationStr) {
@@ -127,19 +128,27 @@ void DatabaseManager::MigrateSchemaIfNeeded() {
         Logger::Log(LogLevel::INFO, "DB: Successfully migrated " + std::to_string(migratedCount) + " tracks to new schema.");
     }
 
-    // Проверяем наличие shuffle_queue в SourceSessions
+    // Проверяем наличие shuffle_queue и standard_queue в SourceSessions
     QSqlQuery checkSessions("PRAGMA table_info(SourceSessions)", m_db);
     bool hasShuffleQueue = false;
+    bool hasStandardQueue = false;
     bool sessionsExists = false;
     while (checkSessions.next()) {
         sessionsExists = true;
-        if (checkSessions.value(1).toString() == "shuffle_queue") {
+        QString col = checkSessions.value(1).toString();
+        if (col == "shuffle_queue") {
             hasShuffleQueue = true;
+        } else if (col == "standard_queue") {
+            hasStandardQueue = true;
         }
     }
     if (sessionsExists && !hasShuffleQueue) {
         QSqlQuery q(m_db);
         q.exec("ALTER TABLE SourceSessions ADD COLUMN shuffle_queue TEXT;");
+    }
+    if (sessionsExists && !hasStandardQueue) {
+        QSqlQuery q(m_db);
+        q.exec("ALTER TABLE SourceSessions ADD COLUMN standard_queue TEXT;");
     }
 }
 
@@ -186,6 +195,7 @@ void DatabaseManager::CreateTables() {
                "track_index INTEGER, "
                "position_seconds REAL, "
                "shuffle_queue TEXT, "
+               "standard_queue TEXT, "
                "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
 }
 
@@ -226,13 +236,13 @@ void DatabaseManager::SaveQueue(const std::vector<Track>& currentQueue, const st
 
             if (db.open()) {
                 QSqlQuery query(db);
-                if (isShuffle) {
-                    QJsonArray arr;
-                    for (const auto& track : currentQueue) {
-                        arr.append(QString::fromStdString(track.id));
-                    }
-                    QString jsonQueue = QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+                QJsonArray arr;
+                for (const auto& track : currentQueue) {
+                    arr.append(QString::fromStdString(track.id));
+                }
+                QString jsonQueue = QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
 
+                if (isShuffle) {
                     query.prepare(
                         "INSERT INTO SourceSessions (source, shuffle_queue, updated_at) "
                         "VALUES (:source, :queue, CURRENT_TIMESTAMP) "
@@ -240,14 +250,18 @@ void DatabaseManager::SaveQueue(const std::vector<Track>& currentQueue, const st
                         "shuffle_queue = excluded.shuffle_queue, "
                         "updated_at = CURRENT_TIMESTAMP"
                     );
-                    query.bindValue(":source", QString::fromStdString(source));
-                    query.bindValue(":queue", jsonQueue);
-                    query.exec();
                 } else {
-                    query.prepare("UPDATE SourceSessions SET shuffle_queue = '' WHERE source = :source");
-                    query.bindValue(":source", QString::fromStdString(source));
-                    query.exec();
+                    query.prepare(
+                        "INSERT INTO SourceSessions (source, standard_queue, updated_at) "
+                        "VALUES (:source, :queue, CURRENT_TIMESTAMP) "
+                        "ON CONFLICT(source) DO UPDATE SET "
+                        "standard_queue = excluded.standard_queue, "
+                        "updated_at = CURRENT_TIMESTAMP"
+                    );
                 }
+                query.bindValue(":source", QString::fromStdString(source));
+                query.bindValue(":queue", jsonQueue);
+                query.exec();
                 db.close();
             } else {
                 Logger::Log(LogLevel::ERROR, "DB: Failed to open threaded connection for SaveQueue.");
@@ -351,8 +365,37 @@ std::vector<Track> DatabaseManager::LoadTracks(const std::string& source) {
             t.lyrics_id = query.value(6).toString().toStdString();
             t.lyrics = query.value(7).toString().toStdString();
             t.source = query.value(8).toString().toStdString();
+            auto usPos = t.id.find('_');
+            if (usPos != std::string::npos) {
+                t.ownerId = t.id.substr(0, usPos);
+            }
 
             tracks.push_back(std::move(t));
+        }
+    }
+
+    if (source != "Offline") {
+        std::vector<std::string> standardOrder = LoadQueueIds(source, false);
+        if (!standardOrder.empty()) {
+            std::unordered_map<std::string, Track> trackMap;
+            trackMap.reserve(tracks.size());
+            for (auto& t : tracks) {
+                trackMap.emplace(t.id, std::move(t));
+            }
+
+            std::vector<Track> ordered;
+            ordered.reserve(tracks.size());
+            for (const auto& id : standardOrder) {
+                auto it = trackMap.find(id);
+                if (it != trackMap.end()) {
+                    ordered.push_back(std::move(it->second));
+                    trackMap.erase(it);
+                }
+            }
+            for (auto& pair : trackMap) {
+                ordered.push_back(std::move(pair.second));
+            }
+            tracks = std::move(ordered);
         }
     }
 
@@ -372,10 +415,14 @@ void DatabaseManager::UpdateTrackLyrics(const std::string& trackId, const std::s
 
 std::vector<std::string> DatabaseManager::LoadQueueIds(const std::string& source, bool isShuffle) const {
     std::vector<std::string> ids;
-    if (!isShuffle || source.empty()) return ids;
+    if (source.empty()) return ids;
 
     QSqlQuery query(m_db);
-    query.prepare("SELECT shuffle_queue FROM SourceSessions WHERE source = :source");
+    if (isShuffle) {
+        query.prepare("SELECT shuffle_queue FROM SourceSessions WHERE source = :source");
+    } else {
+        query.prepare("SELECT standard_queue FROM SourceSessions WHERE source = :source");
+    }
     query.bindValue(":source", QString::fromStdString(source));
     if (query.exec() && query.next()) {
         QString jsonStr = query.value(0).toString();
@@ -400,7 +447,7 @@ void DatabaseManager::ClearTracksForSource(const std::string& source) {
             Logger::Log(LogLevel::ERROR, "DB: Failed to clear Tracks: " + q1.lastError().text().toStdString());
         }
         QSqlQuery q2(m_db);
-        q2.exec("UPDATE SourceSessions SET shuffle_queue = ''");
+        q2.exec("UPDATE SourceSessions SET shuffle_queue = '', standard_queue = ''");
         Logger::Log(LogLevel::INFO, "DB: Cleared all tracks and queues from database.");
     } else {
         QSqlQuery q1(m_db);
@@ -411,7 +458,7 @@ void DatabaseManager::ClearTracksForSource(const std::string& source) {
         }
 
         QSqlQuery q2(m_db);
-        q2.prepare("UPDATE SourceSessions SET shuffle_queue = '' WHERE source = :source");
+        q2.prepare("UPDATE SourceSessions SET shuffle_queue = '', standard_queue = '' WHERE source = :source");
         q2.bindValue(":source", QString::fromStdString(source));
         q2.exec();
 
@@ -451,6 +498,10 @@ std::vector<Track> DatabaseManager::LoadAllSourcesTracks() {
             t.lyrics_id = query.value(6).toString().toStdString();
             t.lyrics = query.value(7).toString().toStdString();
             t.source = query.value(8).toString().toStdString();
+            auto usPos = t.id.find('_');
+            if (usPos != std::string::npos) {
+                t.ownerId = t.id.substr(0, usPos);
+            }
             tracks.push_back(std::move(t));
         }
     }
@@ -529,6 +580,10 @@ std::vector<PlaylistInfo> DatabaseManager::GetPlaylists() {
 bool DatabaseManager::AddTrackToPlaylist(int playlistId, const std::string& trackId) {
     if (trackId.empty() || playlistId <= 0) return false;
 
+    if (IsTrackInPlaylist(playlistId, trackId)) {
+        return false;
+    }
+
     QSqlQuery posQuery(m_db);
     posQuery.prepare("SELECT COALESCE(MAX(position), -1) + 1 FROM PlaylistTracks WHERE playlist_id = :pid");
     posQuery.bindValue(":pid", playlistId);
@@ -543,6 +598,29 @@ bool DatabaseManager::AddTrackToPlaylist(int playlistId, const std::string& trac
     insQuery.bindValue(":pos", nextPos);
     insQuery.bindValue(":tid", QString::fromStdString(trackId));
     return insQuery.exec();
+}
+
+bool DatabaseManager::IsTrackInPlaylist(int playlistId, const std::string& trackId) {
+    if (trackId.empty() || playlistId <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT 1 FROM PlaylistTracks WHERE playlist_id = :pid AND track_id = :tid LIMIT 1;");
+    q.bindValue(":pid", playlistId);
+    q.bindValue(":tid", QString::fromStdString(trackId));
+    return q.exec() && q.next();
+}
+
+std::vector<int> DatabaseManager::GetPlaylistIdsContainingTrack(const std::string& trackId) {
+    std::vector<int> ids;
+    if (trackId.empty()) return ids;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT DISTINCT playlist_id FROM PlaylistTracks WHERE track_id = :tid;");
+    q.bindValue(":tid", QString::fromStdString(trackId));
+    if (q.exec()) {
+        while (q.next()) {
+            ids.push_back(q.value(0).toInt());
+        }
+    }
+    return ids;
 }
 
 bool DatabaseManager::RemoveTrackFromPlaylist(int playlistId, int position) {
@@ -581,6 +659,10 @@ std::vector<Track> DatabaseManager::LoadPlaylistTracks(int playlistId) {
             t.lyrics_id = query.value(6).toString().toStdString();
             t.lyrics = query.value(7).toString().toStdString();
             t.source = query.value(8).toString().toStdString();
+            auto usPos = t.id.find('_');
+            if (usPos != std::string::npos) {
+                t.ownerId = t.id.substr(0, usPos);
+            }
             tracks.push_back(std::move(t));
         }
     }
@@ -621,7 +703,7 @@ void DatabaseManager::SaveSourceSession(const std::string& source, const std::st
 std::optional<SourceSession> DatabaseManager::LoadSourceSession(const std::string& source) const {
     if (source.empty()) return std::nullopt;
     QSqlQuery query(m_db);
-    query.prepare("SELECT source, track_id, track_index, position_seconds, shuffle_queue FROM SourceSessions WHERE source = :source");
+    query.prepare("SELECT source, track_id, track_index, position_seconds, shuffle_queue, standard_queue FROM SourceSessions WHERE source = :source");
     query.bindValue(":source", QString::fromStdString(source));
     if (query.exec() && query.next()) {
         SourceSession session;
@@ -630,6 +712,7 @@ std::optional<SourceSession> DatabaseManager::LoadSourceSession(const std::strin
         session.trackIndex = query.value(2).toInt();
         session.positionSeconds = query.value(3).toDouble();
         session.shuffleQueue = query.value(4).toString().toStdString();
+        session.standardQueue = query.value(5).toString().toStdString();
         return session;
     }
     return std::nullopt;

@@ -18,6 +18,7 @@ struct SourceSession {
     int trackIndex = 0;
     double positionSeconds = 0.0;
     std::string shuffleQueue;
+    std::string standardQueue;
 };
 
 class DatabaseManager {
@@ -51,6 +52,8 @@ public:
     bool DeletePlaylist(int playlistId);
     std::vector<PlaylistInfo> GetPlaylists();
     bool AddTrackToPlaylist(int playlistId, const std::string& trackId);
+    bool IsTrackInPlaylist(int playlistId, const std::string& trackId);
+    std::vector<int> GetPlaylistIdsContainingTrack(const std::string& trackId);
     bool RemoveTrackFromPlaylist(int playlistId, int position);
     std::vector<Track> LoadPlaylistTracks(int playlistId);
     std::vector<Track> LoadPlaylistTracksByName(const std::string& name, int& outId);

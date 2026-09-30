@@ -124,7 +124,18 @@ void VkClient::ValidateToken(std::function<void(bool)> callback) {
     }, body);
 }
 
+void VkClient::CancelFetchTrackUrl() {
+    if (m_currentFetchReply) {
+        m_currentFetchReply->disconnect();
+        m_currentFetchReply->abort();
+        m_currentFetchReply->deleteLater();
+        m_currentFetchReply = nullptr;
+    }
+}
+
 void VkClient::FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) {
+    CancelFetchTrackUrl();
+
     std::vector<std::pair<QString, QString>> params = {
         {"audios", QString::fromStdString(trackId)},
         {"access_token", QString::fromStdString(m_accessToken)},
@@ -137,7 +148,8 @@ void VkClient::FetchTrackUrl(const std::string& trackId, std::function<void(cons
     QNetworkRequest request = BuildSignedPostRequest("audio.getById", params, body);
     request.setTransferTimeout(5000);
 
-    SendJsonRequest(request, [this, trackId, callback](const QJsonDocument& json) {
+    m_currentFetchReply = SendJsonRequest(request, [this, trackId, callback](const QJsonDocument& json) {
+        m_currentFetchReply = nullptr;
         std::string freshUrl = "";
         QJsonArray responseArray = json.object()["response"].toArray();
         if (!responseArray.isEmpty()) {
@@ -160,17 +172,20 @@ void VkClient::FetchTrackUrl(const std::string& trackId, std::function<void(cons
             QNetworkRequest execReq = BuildSignedPostRequest("execute", execParams, execBody);
             execReq.setTransferTimeout(5000);
 
-            SendJsonRequest(execReq, [callback](const QJsonDocument& execJson) {
+            m_currentFetchReply = SendJsonRequest(execReq, [this, callback](const QJsonDocument& execJson) {
+                m_currentFetchReply = nullptr;
                 std::string fallbackUrl = execJson.object()["response"].toString().toStdString();
                 if (callback) callback(fallbackUrl, false);
-            }, [callback](const std::string&) {
+            }, [this, callback](const std::string&) {
+                m_currentFetchReply = nullptr;
                 if (callback) callback("", true);
             }, execBody);
             return;
         }
 
         if (callback) callback(freshUrl, false);
-    }, [callback](const std::string&) {
+    }, [this, callback](const std::string&) {
+        m_currentFetchReply = nullptr;
         if (callback) callback("", true);
     }, body);
 }
@@ -284,18 +299,25 @@ void VkClient::AddTrackToFavorites(const std::string& trackId, const std::string
     }
 
     std::string cleanAudioId = trackId;
+    std::string cleanOwnerId = ownerId;
     auto underscorePos = cleanAudioId.find('_');
     if (underscorePos != std::string::npos) {
+        if (cleanOwnerId.empty()) {
+            cleanOwnerId = cleanAudioId.substr(0, underscorePos);
+        }
         cleanAudioId = cleanAudioId.substr(underscorePos + 1);
         auto secondUnderscore = cleanAudioId.find('_');
         if (secondUnderscore != std::string::npos) {
             cleanAudioId = cleanAudioId.substr(0, secondUnderscore);
         }
     }
+    if (cleanOwnerId.empty()) {
+        cleanOwnerId = m_userId;
+    }
 
     std::vector<std::pair<QString, QString>> params = {
         {"audio_id", QString::fromStdString(cleanAudioId)},
-        {"owner_id", QString::fromStdString(ownerId)},
+        {"owner_id", QString::fromStdString(cleanOwnerId)},
         {"access_token", QString::fromStdString(m_accessToken)},
         {"v", QString::fromStdString(m_apiVersion)},
         {"lang", "ru"},
@@ -326,18 +348,25 @@ void VkClient::RemoveTrackFromFavorites(const std::string& trackId, const std::s
     }
 
     std::string cleanAudioId = trackId;
+    std::string cleanOwnerId = ownerId;
     auto underscorePos = cleanAudioId.find('_');
     if (underscorePos != std::string::npos) {
+        if (cleanOwnerId.empty()) {
+            cleanOwnerId = cleanAudioId.substr(0, underscorePos);
+        }
         cleanAudioId = cleanAudioId.substr(underscorePos + 1);
         auto secondUnderscore = cleanAudioId.find('_');
         if (secondUnderscore != std::string::npos) {
             cleanAudioId = cleanAudioId.substr(0, secondUnderscore);
         }
     }
+    if (cleanOwnerId.empty()) {
+        cleanOwnerId = m_userId;
+    }
 
     std::vector<std::pair<QString, QString>> params = {
         {"audio_id", QString::fromStdString(cleanAudioId)},
-        {"owner_id", QString::fromStdString(ownerId)},
+        {"owner_id", QString::fromStdString(cleanOwnerId)},
         {"access_token", QString::fromStdString(m_accessToken)},
         {"v", QString::fromStdString(m_apiVersion)},
         {"lang", "ru"},

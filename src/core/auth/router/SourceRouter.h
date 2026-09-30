@@ -84,6 +84,7 @@ private:
     void StartSoundCloudService();
     void StartYandexService();
     void StartYouTubeService();
+    void TryFinalizeYouTubeAuth(int attempt, const std::string& jsCookies);
 
     void StartAuthFlow(const QString& service, const QString& authUrl, bool forceVisible = false);
     void CheckNextCandidate(const std::shared_ptr<const std::vector<std::string>>& candidates,

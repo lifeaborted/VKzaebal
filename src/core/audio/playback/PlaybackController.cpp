@@ -13,7 +13,13 @@
 #include <QSettings>
 
 PlaybackController::PlaybackController(IAudioEngine& audio, PlaylistManager& playlist, NetworkStreamer& streamer, QObject* parent)
-    : QObject(parent), m_audio(audio), m_playlist(playlist), m_streamer(streamer) {}
+    : QObject(parent), m_audio(audio), m_playlist(playlist), m_streamer(streamer) {
+    m_debounceTimer = new QTimer(this);
+    m_debounceTimer->setSingleShot(true);
+    connect(m_debounceTimer, &QTimer::timeout, this, [this]() {
+        ExecuteAttemptPlay(m_pendingTrack, 1, m_pendingGen);
+    });
+}
 
 void PlaybackController::SetCurrentProvider(IAudioProvider* provider) {
     m_currentProvider = provider;
@@ -32,7 +38,18 @@ void PlaybackController::SetSavedPosition(double pos, const std::string& trackId
     m_savedPositionTrackId = trackId;
 }
 
+void PlaybackController::CancelProviderFetch() {
+    if (m_currentProvider) {
+        m_currentProvider->CancelFetchTrackUrl();
+    }
+}
+
 void PlaybackController::ClearState() {
+    if (m_debounceTimer) {
+        m_debounceTimer->stop();
+    }
+    m_playbackGeneration.fetch_add(1, std::memory_order_relaxed);
+    CancelProviderFetch();
     m_streamer.StopDownload();
     m_audio.ClearBuffers(false, 0);
     m_audio.Pause();
@@ -40,6 +57,18 @@ void PlaybackController::ClearState() {
     m_cachedNextUrl = "";
     m_savedPosition = 0.0;
     m_savedPositionTrackId = "";
+}
+
+void PlaybackController::CancelPlaybackAndRetries() {
+    if (m_debounceTimer) {
+        m_debounceTimer->stop();
+    }
+    m_playbackGeneration.fetch_add(1, std::memory_order_relaxed);
+    CancelProviderFetch();
+    m_streamer.StopDownload();
+    m_audio.Pause();
+    m_audio.ClearBuffers(false, 0);
+    Logger::Log(LogLevel::INFO, "PlaybackController: Playback and retries cancelled.");
 }
 
 void PlaybackController::HandleTrackFinished() {
@@ -68,6 +97,10 @@ void PlaybackController::HandleTrackNearEnd() {
 void PlaybackController::AttemptPlay(const Track& track, int attempt) {
     int currentGen = (attempt == 1) ? ++m_playbackGeneration : m_playbackGeneration.load();
 
+    if (m_debounceTimer) {
+        m_debounceTimer->stop();
+    }
+
     if (attempt == 1) {
         if (m_savedPositionTrackId != track.id) {
             m_savedPosition = 0.0;
@@ -81,8 +114,9 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
     }
     bool isDownloaded = QFile::exists(localPath);
 
-    // 1. Локальный трек (скачан на диск)
+    // 1. Локальный трек (скачан на диск) - играть немедленно без дебаунса
     if (isDownloaded) {
+        CancelProviderFetch();
         m_skipCount = 0;
         m_streamer.StopDownload();
         bool shouldCrossfade = m_crossfadeEnabled && m_audio.IsPlaying();
@@ -100,8 +134,9 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
         return;
     }
 
-    // 2. Предзагруженный сетевой URL (плавный переход в конце трека)
+    // 2. Предзагруженный сетевой URL - играть немедленно без дебаунса
     if (attempt == 1 && !m_cachedNextUrl.empty() && m_preloadedTrack.id == track.id) {
+        CancelProviderFetch();
         std::string urlToPlay = m_cachedNextUrl;
         m_cachedNextUrl = "";
         m_preloadedTrack = Track();
@@ -125,19 +160,41 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
     }
 
     // 3. Сетевой трек (ссылка еще не получена)
+    // Мгновенно останавливаем предыдущий аудиопоток и отменяем предыдущий запрос ссылки
+    CancelProviderFetch();
+    m_streamer.StopDownload();
+    if (!m_crossfadeEnabled || !m_audio.IsPlaying()) {
+        m_audio.Pause();
+        m_audio.ClearBuffers(false, track.duration);
+    }
+
     if (attempt == 1) {
         Logger::Log(LogLevel::INFO, "[Загрузка] " + track.artist + " - " + track.title + "...");
-        if (!m_crossfadeEnabled || !m_audio.IsPlaying()) {
-            m_streamer.StopDownload();
-            m_audio.Pause();
-            m_audio.ClearBuffers(false, track.duration);
+        m_pendingTrack = track;
+        m_pendingGen = currentGen;
+        m_debounceTimer->start(180); // 180ms debounce
+    } else {
+        ExecuteAttemptPlay(track, attempt, currentGen);
+    }
+}
+
+void PlaybackController::ExecuteAttemptPlay(const Track& track, int attempt, int expectedGen) {
+    if (expectedGen != m_playbackGeneration.load()) {
+        return;
+    }
+
+    IAudioProvider* provider = (m_providerResolver && !track.source.empty()) ? m_providerResolver(track.source) : m_currentProvider;
+    if (!provider) {
+        if (expectedGen == m_playbackGeneration.load()) {
+            m_playlist.Next();
         }
+        return;
     }
 
     QPointer<PlaybackController> safeThis(this);
-    auto executePlay = [safeThis, track, attempt, currentGen](const std::string& freshUrl, bool isNetworkError) {
+    auto executePlay = [safeThis, track, attempt, expectedGen](const std::string& freshUrl, bool isNetworkError) {
         if (!safeThis) return;
-        if (currentGen != safeThis->m_playbackGeneration.load()) return;
+        if (expectedGen != safeThis->m_playbackGeneration.load()) return;
 
         if (!isNetworkError && freshUrl.empty()) {
             safeThis->m_skipCount++;
@@ -179,9 +236,9 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
 
         if (attempt < 3) {
             Logger::Log(LogLevel::INFO, "Retrying stream in 2 seconds...");
-            QTimer::singleShot(2000, safeThis.data(), [safeThis, track, attempt, currentGen]() {
-                if (safeThis && safeThis->m_playbackGeneration.load() == currentGen) {
-                    safeThis->AttemptPlay(track, attempt + 1);
+            QTimer::singleShot(2000, safeThis.data(), [safeThis, track, attempt, expectedGen]() {
+                if (safeThis && safeThis->m_playbackGeneration.load() == expectedGen) {
+                    safeThis->ExecuteAttemptPlay(track, attempt + 1, expectedGen);
                 }
             });
         } else {
@@ -189,22 +246,5 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
         }
     };
 
-    IAudioProvider* provider = (m_providerResolver && !track.source.empty()) ? m_providerResolver(track.source) : m_currentProvider;
-
-    if (provider) {
-        provider->FetchTrackUrl(track.id, executePlay);
-    } else if (!isDownloaded) {
-        QMetaObject::invokeMethod(this, [safeThis, currentGen]() {
-            if (safeThis && safeThis->m_playbackGeneration.load() == currentGen) {
-                safeThis->m_playlist.Next();
-            }
-        }, Qt::QueuedConnection);
-    }
-}
-
-void PlaybackController::CancelPlaybackAndRetries() {
-    m_playbackGeneration.fetch_add(1);
-    m_audio.Pause();
-    m_audio.ClearBuffers(false, 0);
-    Logger::Log(LogLevel::INFO, "PlaybackController: Playback and retries cancelled.");
+    provider->FetchTrackUrl(track.id, executePlay);
 }

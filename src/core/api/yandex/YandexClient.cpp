@@ -41,7 +41,7 @@ void YandexClient::FetchAllUserAudio(int offset, int count) {
         FetchUserId();
     } else {
         Logger::Log(LogLevel::INFO, "Yandex: Using cached User ID (" + m_userId + "). Skipping account status request.");
-        FetchLikesIds(offset, count);
+        FetchLikesIds();
     }
 }
 
@@ -79,30 +79,53 @@ void YandexClient::EnsureUserId(std::function<void(bool)> callback) {
 void YandexClient::FetchUserId() {
     EnsureUserId([this](bool ok) {
         if (ok) {
-            FetchLikesIds(0, 200);
+            FetchLikesIds();
         } else {
             emit ApiError("Failed to fetch Yandex status");
+            emit FinishedFetching();
         }
     });
 }
 
-void YandexClient::FetchLikesIds(int offset, int count) {
+void YandexClient::FetchLikesIds() {
     QUrl url(QString("https://api.music.yandex.net/users/%1/likes/tracks").arg(QString::fromStdString(m_userId)));
     QNetworkRequest request(url);
     request.setRawHeader("Authorization", QByteArray("OAuth ") + QByteArray::fromStdString(m_accessToken));
     request.setHeader(QNetworkRequest::UserAgentHeader, "Yandex-Music-API");
 
-    SendJsonRequest(request, [this, offset, count](const QJsonDocument& json) {
+    SendJsonRequest(request, [this](const QJsonDocument& json) {
         QJsonArray tracksArray = json.object()["result"].toObject()["library"].toObject()["tracks"].toArray();
-        QStringList chunkIds;
-        for (int i = offset; i < offset + count && i < tracksArray.size(); ++i) {
-            QJsonValue idVal = tracksArray[i].toObject()["id"];
-            chunkIds.append(idVal.isString() ? idVal.toString() : QString::number(idVal.toInt()));
+        if (tracksArray.isEmpty()) {
+            emit FinishedFetching();
+            return;
         }
-        if (!chunkIds.isEmpty()) {
-            FetchTracksMetadata(chunkIds);
-            if (offset + count < tracksArray.size()) FetchLikesIds(offset + count, count);
-        } else emit FinishedFetching();
+
+        const int chunkSize = 200;
+        int totalTracks = tracksArray.size();
+        int numChunks = (totalTracks + chunkSize - 1) / chunkSize;
+        auto pendingChunks = std::make_shared<int>(numChunks);
+
+        for (int i = 0; i < totalTracks; i += chunkSize) {
+            QStringList chunkIds;
+            int limit = std::min(i + chunkSize, totalTracks);
+            for (int j = i; j < limit; ++j) {
+                QJsonValue idVal = tracksArray[j].toObject()["id"];
+                chunkIds.append(idVal.isString() ? idVal.toString() : QString::number(idVal.toInt()));
+            }
+            if (!chunkIds.isEmpty()) {
+                FetchTracksMetadata(chunkIds, [this, pendingChunks]() {
+                    (*pendingChunks)--;
+                    if (*pendingChunks <= 0) {
+                        emit FinishedFetching();
+                    }
+                });
+            } else {
+                (*pendingChunks)--;
+                if (*pendingChunks <= 0) {
+                    emit FinishedFetching();
+                }
+            }
+        }
     }, [this](const std::string& err) {
         Logger::Log(LogLevel::WARNING, "Yandex: FetchLikesIds failed: " + err + ". Clearing cached UID.");
         m_userId.clear();
@@ -141,7 +164,7 @@ std::vector<Track> YandexClient::ParseYandexTracks(const QJsonArray& items) {
     return chunkTracks;
 }
 
-void YandexClient::FetchTracksMetadata(const QStringList& trackIds) {
+void YandexClient::FetchTracksMetadata(const QStringList& trackIds, std::function<void()> onComplete) {
     QUrl url("https://api.music.yandex.net/tracks");
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
@@ -150,11 +173,15 @@ void YandexClient::FetchTracksMetadata(const QStringList& trackIds) {
 
     QByteArray postData = "track-ids=" + trackIds.join(",").toUtf8();
 
-    SendJsonRequest(request, [this](const QJsonDocument& json) {
+    SendJsonRequest(request, [this, onComplete](const QJsonDocument& json) {
         QJsonArray items = json.object()["result"].toArray();
         std::vector<Track> chunkTracks = ParseYandexTracks(items);
         if (!chunkTracks.empty()) emit AudioFetched(chunkTracks);
-    }, nullptr, postData);
+        if (onComplete) onComplete();
+    }, [onComplete](const std::string& err) {
+        Logger::Log(LogLevel::WARNING, "Yandex: FetchTracksMetadata failed: " + err);
+        if (onComplete) onComplete();
+    }, postData);
 }
 
 void YandexClient::SearchAudio(const std::string& query, int count, int offset,
@@ -164,33 +191,66 @@ void YandexClient::SearchAudio(const std::string& query, int count, int offset,
         return;
     }
 
-    int page = count > 0 ? (offset / count) : 0;
-    QUrl url("https://api.music.yandex.net/search");
-    QUrlQuery q;
-    q.addQueryItem("text", QString::fromStdString(query));
-    q.addQueryItem("type", "track");
-    q.addQueryItem("page", QString::number(page));
-    q.addQueryItem("nocorrect", "false");
-    url.setQuery(q);
+    int startPage = offset / 20;
+    int numPages = (count > 20) ? std::clamp((count + 19) / 20, 1, 3) : 1;
 
-    QNetworkRequest request(url);
-    if (!m_accessToken.empty()) {
-        request.setRawHeader("Authorization", QByteArray("OAuth ") + QByteArray::fromStdString(m_accessToken));
+    auto pagesData = std::make_shared<std::vector<std::vector<Track>>>(numPages);
+    auto remainingPages = std::make_shared<int>(numPages);
+    auto hasCalledBack = std::make_shared<bool>(false);
+    auto lastError = std::make_shared<std::string>();
+
+    for (int p = 0; p < numPages; ++p) {
+        int pageIndex = startPage + p;
+        QUrl url("https://api.music.yandex.net/search");
+        QUrlQuery q;
+        q.addQueryItem("text", QString::fromStdString(query));
+        q.addQueryItem("type", "track");
+        q.addQueryItem("page", QString::number(pageIndex));
+        q.addQueryItem("nocorrect", "false");
+        url.setQuery(q);
+
+        QNetworkRequest request(url);
+        if (!m_accessToken.empty()) {
+            request.setRawHeader("Authorization", QByteArray("OAuth ") + QByteArray::fromStdString(m_accessToken));
+        }
+        request.setHeader(QNetworkRequest::UserAgentHeader, "Yandex-Music-API");
+        request.setTransferTimeout(8000);
+
+        SendJsonRequest(request, [p, pagesData, remainingPages, hasCalledBack, callback](const QJsonDocument& json) {
+            if (*hasCalledBack) return;
+            QJsonObject root = json.object();
+            QJsonObject resultObj = root["result"].toObject();
+            QJsonObject tracksObj = resultObj["tracks"].toObject();
+            QJsonArray results = tracksObj["results"].toArray();
+
+            (*pagesData)[p] = ParseYandexTracks(results);
+            (*remainingPages)--;
+            if (*remainingPages == 0) {
+                *hasCalledBack = true;
+                std::vector<Track> merged;
+                for (auto& pageList : *pagesData) {
+                    merged.insert(merged.end(), std::make_move_iterator(pageList.begin()), std::make_move_iterator(pageList.end()));
+                }
+                if (callback) callback(merged, "");
+            }
+        }, [lastError, remainingPages, hasCalledBack, pagesData, callback](const std::string& err) {
+            if (*hasCalledBack) return;
+            *lastError = err;
+            (*remainingPages)--;
+            if (*remainingPages == 0) {
+                *hasCalledBack = true;
+                std::vector<Track> merged;
+                for (auto& pageList : *pagesData) {
+                    merged.insert(merged.end(), std::make_move_iterator(pageList.begin()), std::make_move_iterator(pageList.end()));
+                }
+                if (!merged.empty()) {
+                    if (callback) callback(merged, "");
+                } else {
+                    if (callback) callback({}, *lastError);
+                }
+            }
+        });
     }
-    request.setHeader(QNetworkRequest::UserAgentHeader, "Yandex-Music-API");
-    request.setTransferTimeout(8000);
-
-    SendJsonRequest(request, [callback](const QJsonDocument& json) {
-        QJsonObject root = json.object();
-        QJsonObject resultObj = root["result"].toObject();
-        QJsonObject tracksObj = resultObj["tracks"].toObject();
-        QJsonArray results = tracksObj["results"].toArray();
-
-        std::vector<Track> tracks = ParseYandexTracks(results);
-        if (callback) callback(tracks, "");
-    }, [callback](const std::string& err) {
-        if (callback) callback({}, err);
-    });
 }
 
 void YandexClient::AddTrackToFavorites(const std::string& trackId, const std::string& /*ownerId*/,
@@ -261,12 +321,24 @@ void YandexClient::RemoveTrackFromFavorites(const std::string& trackId, const st
     });
 }
 
+void YandexClient::CancelFetchTrackUrl() {
+    if (m_currentFetchReply) {
+        m_currentFetchReply->disconnect();
+        m_currentFetchReply->abort();
+        m_currentFetchReply->deleteLater();
+        m_currentFetchReply = nullptr;
+    }
+}
+
 void YandexClient::FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) {
+    CancelFetchTrackUrl();
+
     QUrl url(QString("https://api.music.yandex.net/tracks/%1/download-info").arg(QString::fromStdString(trackId)));
     QNetworkRequest request(url);
     request.setRawHeader("Authorization", QByteArray("OAuth ") + QByteArray::fromStdString(m_accessToken));
 
-    SendJsonRequest(request, [this, callback](const QJsonDocument& json) {
+    m_currentFetchReply = SendJsonRequest(request, [this, callback](const QJsonDocument& json) {
+        m_currentFetchReply = nullptr;
         QJsonArray result = json.object()["result"].toArray();
         QString downloadInfoUrl;
         for (const QJsonValue& val : result) {
@@ -280,8 +352,12 @@ void YandexClient::FetchTrackUrl(const std::string& trackId, std::function<void(
         QNetworkRequest xmlRequest((QUrl(downloadInfoUrl)));
         xmlRequest.setRawHeader("Authorization", QByteArray("OAuth ") + QByteArray::fromStdString(m_accessToken));
         QNetworkReply* xmlReply = m_manager->get(xmlRequest);
+        m_currentFetchReply = xmlReply;
 
-        connect(xmlReply, &QNetworkReply::finished, this, [xmlReply, callback]() {
+        connect(xmlReply, &QNetworkReply::finished, this, [this, xmlReply, callback]() {
+            if (m_currentFetchReply == xmlReply) {
+                m_currentFetchReply = nullptr;
+            }
             if (xmlReply->error() != QNetworkReply::NoError) { callback("", true); xmlReply->deleteLater(); return; }
             QString host, path, ts, s;
             QXmlStreamReader xml(xmlReply->readAll());
@@ -301,5 +377,8 @@ void YandexClient::FetchTrackUrl(const std::string& trackId, std::function<void(
             QByteArray hash = QCryptographicHash::hash(signData.toUtf8(), QCryptographicHash::Md5);
             callback(("https://" + host + "/get-mp3/" + hash.toHex() + "/" + ts + path).toStdString(), false);
         });
-    }, [callback](const std::string&) { callback("", true); });
+    }, [this, callback](const std::string&) {
+        m_currentFetchReply = nullptr;
+        callback("", true);
+    });
 }

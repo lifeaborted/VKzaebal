@@ -21,6 +21,7 @@ void ConfigurationService::EnsureDefaultConfig() {
         settings.setValue("Ui/ShowVisualizer", true);
         settings.setValue("Downloads/Path", "");
         settings.setValue("Network/DiskCacheSizeMb", 100);
+        settings.setValue("Playback/SeekStepSeconds", 5);
         settings.sync();
     } else {
         if (!settings.contains("Network/DiskCacheSizeMb")) {
@@ -190,6 +191,29 @@ int ConfigurationService::GetDiskCacheSizeMb() const {
 void ConfigurationService::SetDiskCacheSizeMb(int mb) {
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
     settings.setValue("Network/DiskCacheSizeMb", std::clamp(mb, 10, 10000));
+    settings.sync();
+}
+
+int ConfigurationService::GetSeekStepSeconds() const {
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    int step = settings.value("Playback/SeekStepSeconds", 5).toInt();
+    return std::clamp(step, 1, 60);
+}
+
+void ConfigurationService::SetSeekStepSeconds(int seconds) {
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    settings.setValue("Playback/SeekStepSeconds", std::clamp(seconds, 1, 60));
+    settings.sync();
+}
+
+bool ConfigurationService::GetGaplessPlayback() const {
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    return settings.value("Audio/GaplessPlayback", true).toBool();
+}
+
+void ConfigurationService::SetGaplessPlayback(bool enabled) {
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    settings.setValue("Audio/GaplessPlayback", enabled);
     settings.sync();
 }
 

@@ -29,12 +29,19 @@ void PlaybackSessionService::SaveSessionState(const std::string& activeSource,
     config.SetVolume(audio.GetVolume());
     config.SetShuffle(playlist.IsShuffle());
     config.SetRepeatMode(playlist.GetRepeatMode());
+    if (!activeSource.empty()) {
+        config.SetActiveSource(activeSource);
+    }
 
     if (!activeSource.empty() && playlist.HasTracks()) {
         std::string currentTrackId = playlist.GetCurrentTrack().id;
         int currentIndex = playlist.GetCurrentAbsoluteIndex();
         double currentPos = audio.GetPositionSeconds();
         dbManager.SaveSourceSession(activeSource, currentTrackId, currentIndex, currentPos);
+        dbManager.SaveQueue(playlist.GetAllTracks(), activeSource, false);
+        if (playlist.IsShuffle()) {
+            dbManager.SaveQueue(playlist.GetQueueTracks(), activeSource, true);
+        }
     }
 }
 

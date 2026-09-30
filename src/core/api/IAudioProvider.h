@@ -14,6 +14,7 @@ public:
     virtual void SetAccessToken(const std::string& token) = 0;
     [[nodiscard]] virtual std::string GetAccessToken() const { return ""; }
     virtual void FetchTrackUrl(const std::string& trackId, std::function<void(const std::string& url, bool isNetworkError)> callback) = 0;
+    virtual void CancelFetchTrackUrl() {}
     virtual void FetchAllUserAudio(int offset = 0, int count = 200) = 0;
 
     virtual void SearchAudio(const std::string& query, int count, int offset,

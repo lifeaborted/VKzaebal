@@ -1,5 +1,6 @@
 #pragma once
 #include <QObject>
+#include <QTimer>
 #include <atomic>
 #include <string>
 #include <functional>
@@ -14,6 +15,7 @@ class PlaybackController : public QObject {
     Q_OBJECT
 public:
     PlaybackController(IAudioEngine& audio, PlaylistManager& playlist, NetworkStreamer& streamer, QObject* parent = nullptr);
+    ~PlaybackController() override = default;
 
     void SetCurrentProvider(IAudioProvider* provider);
     void SetProviderResolver(std::function<IAudioProvider*(const std::string& source)> resolver);
@@ -28,6 +30,9 @@ public:
     void CancelPlaybackAndRetries();
 
 private:
+    void ExecuteAttemptPlay(const Track& track, int attempt, int expectedGen);
+    void CancelProviderFetch();
+
     IAudioEngine& m_audio;
     PlaylistManager& m_playlist;
     NetworkStreamer& m_streamer;
@@ -45,4 +50,8 @@ private:
     std::string m_cachedNextUrl = "";
 
     bool m_startPaused = false;
+
+    QTimer* m_debounceTimer = nullptr;
+    Track m_pendingTrack;
+    int m_pendingGen = 0;
 };

@@ -1,5 +1,6 @@
 #pragma once
 #include "core/api/BaseApiProvider.h"
+#include <QPointer>
 #include <QString>
 #include <string>
 
@@ -10,6 +11,7 @@ public:
     ~YandexClient() override;
 
     void FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) override;
+    void CancelFetchTrackUrl() override;
     void FetchAllUserAudio(int offset = 0, int count = 200) override;
 
     void SearchAudio(const std::string& query, int count, int offset,
@@ -33,8 +35,9 @@ protected:
 private:
     void EnsureUserId(std::function<void(bool ok)> callback);
     void FetchUserId();
-    void FetchLikesIds(int offset, int count);
-    void FetchTracksMetadata(const QStringList& trackIds);
+    void FetchLikesIds();
+    void FetchTracksMetadata(const QStringList& trackIds, std::function<void()> onComplete = nullptr);
 
     std::string m_userId;
+    QPointer<QNetworkReply> m_currentFetchReply = nullptr;
 };

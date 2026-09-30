@@ -19,6 +19,7 @@
 #include <QDateTime>
 #include <QNetworkAccessManager>
 #include <algorithm>
+#include <unordered_set>
 
 
 SourceRouter::SourceRouter(const QMap<QString, QString>& envVars,
@@ -43,6 +44,7 @@ SourceRouter::SourceRouter(const QMap<QString, QString>& envVars,
         if (vk) {
             vk->SetAccessToken(token);
             if (!secret.empty()) vk->SetSecret(secret);
+            if (userId > 0) vk->SetUserId(std::to_string(userId));
             vk->FetchAllUserAudio(0, 200);
         }
         emit ProviderReady(true);
@@ -116,17 +118,15 @@ SourceRouter::SourceRouter(const QMap<QString, QString>& envVars,
 
     // Перехват успеха авторизации YouTube
     connect(m_authManager.get(), &OAuthManager::YtAuthSucceeded, this, [this](const std::string& cookies) {
-        if (m_authEngine) { m_authEngine->deleteLater(); m_authEngine = nullptr; }
+        if (m_authEngine) {
+            m_authEngine->deleteLater();
+            m_authEngine = nullptr;
+        }
 
         emit AuthUiStateChanged(false);
-        EmitStatus("[УСПЕХ] Авторизация YouTube Music пройдена! Синхронизация избранных треков...");
+        EmitStatus("[УСПЕХ] Авторизация YouTube Music пройдена! Чтение учетных данных сессии...");
 
-        auto* yt = GetYouTubeClient();
-        if (yt) {
-            yt->SetAccessToken(cookies);
-            yt->FetchAllUserAudio(0, 100);
-        }
-        emit ProviderReady(true);
+        TryFinalizeYouTubeAuth(0, cookies);
     });
 
     connect(m_authManager.get(), &OAuthManager::AuthCodeReceived, this, [this](const std::string& code) {
@@ -205,6 +205,10 @@ IAudioProvider* SourceRouter::GetOrCreateProvider(const std::string& sourceName)
     } else if (key == "YouTube") {
         auto yt = std::make_unique<YouTubeClient>(this, m_networkManager);
         connect(yt.get(), &YouTubeClient::TokenExpired, this, [this]() {
+            if (m_isAuthFlowActive) {
+                Logger::Log(LogLevel::INFO, "SourceRouter: Auth already in progress, skipping duplicate YouTube TokenExpired.");
+                return;
+            }
             Logger::Log(LogLevel::WARNING, "SourceRouter: YouTube session expired or BotGuard rejected.");
             EmitStatus("[ВНИМАНИЕ] Сессия YouTube Music устарела или отклонена.");
             m_authManager->ClearSavedToken("YouTube");
@@ -539,10 +543,11 @@ void SourceRouter::StartYouTubeService() {
     m_authManager->GetSavedToken("YouTube", [this, envCookie](const std::string& savedToken) {
         std::string effectiveToken = !envCookie.isEmpty() ? envCookie.toStdString() : savedToken;
 
-        if (effectiveToken.empty()) {
+        if (effectiveToken.empty() || effectiveToken.find("SID=") == std::string::npos) {
             std::string fullCookies = WebViewCookieReader::GetFullYouTubeCookies();
             if (!fullCookies.empty() &&
-                (fullCookies.find("SAPISID=") != std::string::npos || fullCookies.find("__Secure-1PAPISID=") != std::string::npos)) {
+                (fullCookies.find("SAPISID=") != std::string::npos || fullCookies.find("__Secure-1PAPISID=") != std::string::npos) &&
+                (fullCookies.find("SID=") != std::string::npos || fullCookies.find("__Secure-1PSID=") != std::string::npos)) {
                 Logger::Log(LogLevel::INFO, "SourceRouter: Retrieved active YouTube session from WebView2 storage.");
                 effectiveToken = fullCookies;
                 m_authManager->SaveToken(effectiveToken, "YouTube");
@@ -552,7 +557,10 @@ void SourceRouter::StartYouTubeService() {
         bool hasValidCookies = !effectiveToken.empty() &&
                                (effectiveToken.find("SAPISID=") != std::string::npos ||
                                 effectiveToken.find("__Secure-1PAPISID=") != std::string::npos ||
-                                effectiveToken.find("__Secure-3PAPISID=") != std::string::npos);
+                                effectiveToken.find("__Secure-3PAPISID=") != std::string::npos) &&
+                               (effectiveToken.find("SID=") != std::string::npos ||
+                                effectiveToken.find("__Secure-1PSID=") != std::string::npos ||
+                                effectiveToken.find("__Secure-3PSID=") != std::string::npos);
 
         auto* yt = GetYouTubeClient();
 
@@ -572,6 +580,54 @@ void SourceRouter::StartYouTubeService() {
             emit ProviderReady(true);
         }
     });
+}
+
+void SourceRouter::TryFinalizeYouTubeAuth(int attempt, const std::string& jsCookies) {
+    std::string fullCookies = WebViewCookieReader::GetFullYouTubeCookies();
+    bool hasAuthCookies = !fullCookies.empty() &&
+                          (fullCookies.find("SAPISID=") != std::string::npos ||
+                           fullCookies.find("__Secure-1PAPISID=") != std::string::npos ||
+                           fullCookies.find("__Secure-3PAPISID=") != std::string::npos) &&
+                          (fullCookies.find("SID=") != std::string::npos ||
+                           fullCookies.find("__Secure-1PSID=") != std::string::npos ||
+                           fullCookies.find("__Secure-3PSID=") != std::string::npos);
+
+    if (hasAuthCookies) {
+        Logger::Log(LogLevel::INFO, "SourceRouter: YouTube session successfully extracted from WebView2 storage (length: " +
+                                    std::to_string(fullCookies.size()) + ")");
+        m_authManager->SaveToken(fullCookies, "YouTube");
+        auto* yt = GetYouTubeClient();
+        if (yt) {
+            yt->SetAccessToken(fullCookies);
+            yt->FetchAllUserAudio(0, 100);
+        }
+        emit ProviderReady(true);
+        EmitStatus("[УСПЕХ] Сессия YouTube Music сохранена! Синхронизация избранных треков...");
+        return;
+    }
+
+    if (attempt < 8) {
+        Logger::Log(LogLevel::INFO, "SourceRouter: Waiting for WebView2 cookie commit, retry " + std::to_string(attempt + 1) + "/8...");
+        QPointer<SourceRouter> safeThis(this);
+        QTimer::singleShot(300, this, [safeThis, attempt, jsCookies]() {
+            if (safeThis) {
+                safeThis->TryFinalizeYouTubeAuth(attempt + 1, jsCookies);
+            }
+        });
+        return;
+    }
+
+    // Fallback: If after retries full cookies couldn't be read, try fullCookies if not empty, otherwise jsCookies
+    std::string fallbackToken = !fullCookies.empty() ? fullCookies : jsCookies;
+    Logger::Log(LogLevel::WARNING, "SourceRouter: Finalizing YouTube auth with fallback cookies (length: " +
+                                  std::to_string(fallbackToken.size()) + ")");
+    m_authManager->SaveToken(fallbackToken, "YouTube");
+    auto* yt = GetYouTubeClient();
+    if (yt) {
+        yt->SetAccessToken(fallbackToken);
+        yt->FetchAllUserAudio(0, 100);
+    }
+    emit ProviderReady(true);
 }
 
 void SourceRouter::SwitchSource(const std::string& newSource) {
@@ -713,17 +769,21 @@ void SourceRouter::CheckSourceAuthorized(const std::string& source, std::functio
         }
         m_authManager->GetSavedToken("YouTube", [callback](const std::string& savedToken) {
             std::string token = savedToken;
-            if (token.empty()) {
+            if (token.empty() || token.find("SID=") == std::string::npos) {
                 std::string fullCookies = WebViewCookieReader::GetFullYouTubeCookies();
                 if (!fullCookies.empty() &&
-                    (fullCookies.find("SAPISID=") != std::string::npos || fullCookies.find("__Secure-1PAPISID=") != std::string::npos)) {
+                    (fullCookies.find("SAPISID=") != std::string::npos || fullCookies.find("__Secure-1PAPISID=") != std::string::npos) &&
+                    (fullCookies.find("SID=") != std::string::npos || fullCookies.find("__Secure-1PSID=") != std::string::npos)) {
                     token = fullCookies;
                 }
             }
             bool hasValidCookies = (!token.empty() &&
                                    (token.find("SAPISID=") != std::string::npos ||
                                     token.find("__Secure-1PAPISID=") != std::string::npos ||
-                                    token.find("__Secure-3PAPISID=") != std::string::npos));
+                                    token.find("__Secure-3PAPISID=") != std::string::npos) &&
+                                   (token.find("SID=") != std::string::npos ||
+                                    token.find("__Secure-1PSID=") != std::string::npos ||
+                                    token.find("__Secure-3PSID=") != std::string::npos));
             callback(hasValidCookies);
         });
     } else {
@@ -786,6 +846,12 @@ void SourceRouter::PreinitializeVkClient() {
                 if (!savedSecret.empty()) {
                     vkClient->SetSecret(savedSecret);
                 }
+                safeThis->m_authManager->GetSavedUserId("VK", [safeThis, vkClient](const std::string& uid) {
+                    if (safeThis && vkClient && !uid.empty()) {
+                        vkClient->SetUserId(uid);
+                        Logger::Log(LogLevel::INFO, "SourceRouter: Pre-initialized VK client with cached UID: " + uid);
+                    }
+                });
                 Logger::Log(LogLevel::INFO, "SourceRouter: Pre-initialized VK client with saved token & secret.");
             }
         });
@@ -860,10 +926,11 @@ void SourceRouter::PreinitializeYouTubeClient() {
             if (!ytClient) return;
 
             std::string token = !envCookie.isEmpty() ? envCookie.toStdString() : savedToken;
-            if (token.empty()) {
+            if (token.empty() || token.find("SID=") == std::string::npos) {
                 std::string fullCookies = WebViewCookieReader::GetFullYouTubeCookies();
                 if (!fullCookies.empty() &&
-                    (fullCookies.find("SAPISID=") != std::string::npos || fullCookies.find("__Secure-1PAPISID=") != std::string::npos)) {
+                    (fullCookies.find("SAPISID=") != std::string::npos || fullCookies.find("__Secure-1PAPISID=") != std::string::npos) &&
+                    (fullCookies.find("SID=") != std::string::npos || fullCookies.find("__Secure-1PSID=") != std::string::npos)) {
                     token = fullCookies;
                     safeThis->m_authManager->SaveToken(token, "YouTube");
                 }
@@ -892,26 +959,58 @@ void SourceRouter::Search(const std::string& source, const std::string& query, i
     }
 
     std::string s = source;
-    if (s == "all" || s == "ALL" || s == "ВСЕ" || s == "все" || s.empty()) {
-        std::vector<std::string> activeSources = {"VK", "Yandex", "YouTube", "SoundCloud"};
-        auto mergedTracks = std::make_shared<std::vector<Track>>();
-        auto remaining = std::make_shared<int>(static_cast<int>(activeSources.size()));
+    std::string lowerS = s;
+    for (char& ch : lowerS) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
 
-        for (const auto& src : activeSources) {
+    bool isAll = (lowerS == "all" || lowerS == "все" || lowerS.empty() ||
+                  lowerS == "offline" || s.rfind("Custom:", 0) == 0 ||
+                  (lowerS != "vk" && lowerS != "yandex" && lowerS != "youtube" && lowerS != "soundcloud" && lowerS != "spotify"));
+
+    if (isAll) {
+        std::vector<std::string> activeSources = {"VK", "Yandex", "YouTube", "SoundCloud"};
+        const size_t numSources = activeSources.size();
+        auto resultsPerSource = std::make_shared<std::vector<std::vector<Track>>>(numSources);
+        auto remaining = std::make_shared<int>(static_cast<int>(numSources));
+
+        for (size_t srcIdx = 0; srcIdx < numSources; ++srcIdx) {
+            const auto& src = activeSources[srcIdx];
             IAudioProvider* prov = GetOrCreateProvider(src);
             if (!prov) {
                 (*remaining)--;
-                if (*remaining == 0 && callback) callback(*mergedTracks, "");
+                if (*remaining == 0 && callback) {
+                    callback({}, "");
+                }
                 continue;
             }
 
-            prov->SearchAudio(query, count, offset, [mergedTracks, remaining, callback](const std::vector<Track>& res, const std::string&) {
+            prov->SearchAudio(query, count, offset, [resultsPerSource, remaining, callback, srcIdx, numSources](const std::vector<Track>& res, const std::string&) {
                 if (!res.empty()) {
-                    mergedTracks->insert(mergedTracks->end(), res.begin(), res.end());
+                    (*resultsPerSource)[srcIdx] = res;
                 }
                 (*remaining)--;
                 if (*remaining == 0) {
-                    if (callback) callback(*mergedTracks, "");
+                    // Interleave results round-robin from each source for balanced relevance
+                    size_t maxLen = 0;
+                    for (const auto& list : *resultsPerSource) {
+                        if (list.size() > maxLen) maxLen = list.size();
+                    }
+                    std::vector<Track> merged;
+                    std::unordered_set<std::string> seenIds;
+                    for (size_t i = 0; i < maxLen; ++i) {
+                        for (size_t sIdx = 0; sIdx < numSources; ++sIdx) {
+                            if (i < (*resultsPerSource)[sIdx].size()) {
+                                const auto& tr = (*resultsPerSource)[sIdx][i];
+                                if (!tr.id.empty()) {
+                                    if (seenIds.insert(tr.id).second) {
+                                        merged.push_back(tr);
+                                    }
+                                } else {
+                                    merged.push_back(tr);
+                                }
+                            }
+                        }
+                    }
+                    if (callback) callback(merged, "");
                 }
             });
         }

@@ -44,6 +44,12 @@ bool YouTubeClient::HandleApiError(const QJsonDocument& json, int httpStatusCode
     return false;
 }
 
+void YouTubeClient::CancelFetchTrackUrl() {
+    if (m_extractor) {
+        m_extractor->cancelExtraction();
+    }
+}
+
 void YouTubeClient::FetchTrackUrl(const std::string& trackId, std::function<void(const std::string&, bool)> callback) {
     Logger::Log(LogLevel::INFO, "YouTubeClient: FetchTrackUrl called for trackId=" + trackId);
     QString qTrackId = QString::fromStdString(trackId);
@@ -130,15 +136,6 @@ void YouTubeClient::FetchLikedMusic(int offset, int count, const QString& contin
 
     SendJsonRequest(request, [this, count](const QJsonDocument& json) {
         QJsonObject root = json.object();
-
-        // Проверка: вернулось ли приглашение войти (значит куки недействительны)
-        QString rawJson = QString::fromUtf8(json.toJson(QJsonDocument::Compact));
-        if (rawJson.contains("\"logged_in\",\"value\":\"0\"") || rawJson.contains("signInEndpoint")) {
-            Logger::Log(LogLevel::WARNING, "YouTubeClient: Sign-in required! Session cookies expired or invalid.");
-            emit TokenExpired();
-            return;
-        }
-
         std::vector<Track> tracks = parseTracksFromBrowseResponse(root);
         if (!tracks.empty()) {
             Logger::Log(LogLevel::INFO, "YouTubeClient: Successfully parsed " + std::to_string(tracks.size()) + " tracks from Liked Music.");
@@ -150,10 +147,34 @@ void YouTubeClient::FetchLikedMusic(int offset, int count, const QString& contin
                 FetchLikedMusic(m_totalFetched, count, m_continuationToken);
                 return;
             }
-        } else {
-            Logger::Log(LogLevel::INFO, "YouTubeClient: No more tracks found in Liked Music.");
+            emit FinishedFetching();
+            return;
         }
 
+        // Tracks were empty. Only emit TokenExpired if response explicitly indicates unauthenticated state
+        QString rawJson = QString::fromUtf8(json.toJson(QJsonDocument::Compact));
+        if (rawJson.contains("\"logged_in\",\"value\":\"0\"")) {
+            Logger::Log(LogLevel::WARNING, "YouTubeClient: Sign-in required! Session cookies expired or invalid.");
+            emit TokenExpired();
+            return;
+        }
+
+        if (root.contains("alerts")) {
+            QJsonArray alerts = root["alerts"].toArray();
+            for (const auto& a : alerts) {
+                QJsonObject ar = a.toObject()["alertRenderer"].toObject();
+                if (ar["type"].toString() == "ERROR") {
+                    QString alertJson = QString::fromUtf8(QJsonDocument(ar).toJson(QJsonDocument::Compact));
+                    if (alertJson.contains("Sign in", Qt::CaseInsensitive) || alertJson.contains("Войдите", Qt::CaseInsensitive)) {
+                        Logger::Log(LogLevel::WARNING, "YouTubeClient: Sign-in required according to YouTube alerts.");
+                        emit TokenExpired();
+                        return;
+                    }
+                }
+            }
+        }
+
+        Logger::Log(LogLevel::INFO, "YouTubeClient: No tracks found in Liked Music (total fetched: " + std::to_string(m_totalFetched) + ").");
         emit FinishedFetching();
     }, [this](const std::string& err) {
         Logger::Log(LogLevel::ERROR, "YouTubeClient: Network error while fetching liked tracks: " + err);

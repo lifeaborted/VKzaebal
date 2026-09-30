@@ -9,6 +9,37 @@ void PlaylistManager::AddTrack(const Track& track) {
     m_playQueue.push_back(m_tracks.size() - 1);
 }
 
+void PlaylistManager::PlayTrackNow(const Track& track) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_activeTrack = track;
+    int foundIdx = -1;
+    for (size_t i = 0; i < m_tracks.size(); ++i) {
+        if (m_tracks[i].id == track.id) {
+            foundIdx = static_cast<int>(i);
+            break;
+        }
+    }
+    if (foundIdx == -1) {
+        m_tracks.push_back(track);
+        foundIdx = static_cast<int>(m_tracks.size() - 1);
+        if (m_playQueue.empty()) {
+            m_playQueue.push_back(foundIdx);
+            m_queueIndex = 0;
+        } else {
+            m_playQueue.insert(m_playQueue.begin() + m_queueIndex + 1, foundIdx);
+            m_queueIndex++;
+        }
+    } else {
+        auto it = std::find(m_playQueue.begin(), m_playQueue.end(), foundIdx);
+        if (it != m_playQueue.end()) {
+            m_queueIndex = std::distance(m_playQueue.begin(), it);
+        } else {
+            m_playQueue.insert(m_playQueue.begin() + m_queueIndex + 1, foundIdx);
+            m_queueIndex++;
+        }
+    }
+}
+
 bool PlaylistManager::HasTracks() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return !m_tracks.empty();
@@ -21,6 +52,9 @@ bool PlaylistManager::IsShuffle() const {
 
 Track PlaylistManager::GetCurrentTrack() const {
     std::lock_guard<std::mutex> lock(m_mutex);
+    if (!m_activeTrack.id.empty()) {
+        return m_activeTrack;
+    }
     if (m_tracks.empty() || m_queueIndex < 0 || m_queueIndex >= m_playQueue.size()) {
         return Track();
     }
@@ -92,19 +126,33 @@ void PlaylistManager::Next() {
         if (m_repeatMode == RepeatMode::One) {
             // Остаемся на том же треке
         } else {
-            m_queueIndex++;
-            if (m_queueIndex >= m_playQueue.size()) {
-                if (m_repeatMode == RepeatMode::All) {
-                    if (m_isShuffle) RebuildQueue(false);
-                    else m_queueIndex = 0;
-                } else {
-                    m_queueIndex--;
-                    Logger::Log(LogLevel::INFO, "Playlist reached the end.");
-                    return;
+            bool activeIsExternal = false;
+            if (!m_activeTrack.id.empty()) {
+                activeIsExternal = true;
+                for (const auto& t : m_tracks) {
+                    if (t.id == m_activeTrack.id) {
+                        activeIsExternal = false;
+                        break;
+                    }
+                }
+            }
+
+            if (!activeIsExternal) {
+                m_queueIndex++;
+                if (m_queueIndex >= m_playQueue.size()) {
+                    if (m_repeatMode == RepeatMode::All) {
+                        if (m_isShuffle) RebuildQueue(false);
+                        else m_queueIndex = 0;
+                    } else {
+                        m_queueIndex--;
+                        Logger::Log(LogLevel::INFO, "Playlist reached the end.");
+                        return;
+                    }
                 }
             }
         }
         nextTrack = m_tracks[m_playQueue[m_queueIndex]];
+        m_activeTrack = nextTrack;
         shouldPlay = true;
     } // Мьютекс разблокирован здесь
 
@@ -122,12 +170,26 @@ void PlaylistManager::Previous() {
         if (m_tracks.empty()) return;
 
         if (m_repeatMode != RepeatMode::One) {
-            m_queueIndex--;
-            if (m_queueIndex < 0) {
-                m_queueIndex = m_repeatMode == RepeatMode::All ? m_playQueue.size() - 1 : 0;
+            bool activeIsExternal = false;
+            if (!m_activeTrack.id.empty()) {
+                activeIsExternal = true;
+                for (const auto& t : m_tracks) {
+                    if (t.id == m_activeTrack.id) {
+                        activeIsExternal = false;
+                        break;
+                    }
+                }
+            }
+
+            if (!activeIsExternal) {
+                m_queueIndex--;
+                if (m_queueIndex < 0) {
+                    m_queueIndex = m_repeatMode == RepeatMode::All ? m_playQueue.size() - 1 : 0;
+                }
             }
         }
         prevTrack = m_tracks[m_playQueue[m_queueIndex]];
+        m_activeTrack = prevTrack;
         shouldPlay = true;
     }
 
@@ -150,6 +212,7 @@ void PlaylistManager::JumpTo(int index) {
         if (it != m_playQueue.end()) {
             m_queueIndex = std::distance(m_playQueue.begin(), it);
             targetTrack = m_tracks[m_playQueue[m_queueIndex]];
+            m_activeTrack = targetTrack;
             shouldPlay = true;
         }
     }
@@ -171,6 +234,7 @@ void PlaylistManager::JumpToQueueIndex(int index) {
 
         m_queueIndex = index;
         targetTrack = m_tracks[m_playQueue[m_queueIndex]];
+        m_activeTrack = targetTrack;
         shouldPlay = true;
     }
 
@@ -207,6 +271,31 @@ void PlaylistManager::ToggleRepeat() {
         m_repeatMode = RepeatMode::All;
         Logger::Log(LogLevel::INFO, "Repeat Mode: ALL TRACKS");
     }
+}
+
+size_t PlaylistManager::GetQueueSize() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_playQueue.size();
+}
+
+int PlaylistManager::GetCurrentQueueIndex() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_queueIndex;
+}
+
+std::vector<Track> PlaylistManager::GetQueueSlice(size_t offset, size_t count) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    std::vector<Track> slice;
+    if (offset >= m_playQueue.size()) return slice;
+    size_t end = std::min(m_playQueue.size(), offset + count);
+    slice.reserve(end - offset);
+    for (size_t i = offset; i < end; ++i) {
+        int trackIdx = m_playQueue[i];
+        if (trackIdx >= 0 && trackIdx < static_cast<int>(m_tracks.size())) {
+            slice.push_back(m_tracks[trackIdx]);
+        }
+    }
+    return slice;
 }
 
 std::vector<Track> PlaylistManager::GetQueueTracks() const {
@@ -255,6 +344,37 @@ void PlaylistManager::Clear() {
     m_tracks.clear();
     m_playQueue.clear();
     m_queueIndex = 0;
+    m_activeTrack = Track();
+}
+
+void PlaylistManager::ClearKeepActive() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_activeTrack.id.empty() && !m_tracks.empty() && m_queueIndex >= 0 && m_queueIndex < static_cast<int>(m_playQueue.size())) {
+        m_activeTrack = m_tracks[m_playQueue[m_queueIndex]];
+    }
+    m_tracks.clear();
+    m_playQueue.clear();
+    m_queueIndex = 0;
+}
+
+void PlaylistManager::SetActiveTrack(const Track& track) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_activeTrack = track;
+}
+
+void PlaylistManager::AlignWithActiveTrack() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_activeTrack.id.empty() || m_tracks.empty()) return;
+
+    for (size_t i = 0; i < m_tracks.size(); ++i) {
+        if (m_tracks[i].id == m_activeTrack.id) {
+            auto it = std::find(m_playQueue.begin(), m_playQueue.end(), static_cast<int>(i));
+            if (it != m_playQueue.end()) {
+                m_queueIndex = static_cast<int>(std::distance(m_playQueue.begin(), it));
+            }
+            break;
+        }
+    }
 }
 
 void PlaylistManager::RemoveTrack(int index) {
@@ -269,6 +389,68 @@ void PlaylistManager::RemoveTrack(int index) {
         RebuildQueue(true);
         if (m_queueIndex >= static_cast<int>(m_tracks.size())) {
             m_queueIndex = static_cast<int>(m_tracks.size()) - 1;
+        }
+    }
+}
+
+int PlaylistManager::FindTrackIndexById(const std::string& trackId) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (size_t i = 0; i < m_tracks.size(); ++i) {
+        if (m_tracks[i].id == trackId) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+void PlaylistManager::MoveTrack(int fromIndex, int toIndex) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (fromIndex < 0 || fromIndex >= static_cast<int>(m_tracks.size())) return;
+    if (toIndex < 0 || toIndex >= static_cast<int>(m_tracks.size())) return;
+    if (fromIndex == toIndex) return;
+
+    std::string currentPlayingTrackId;
+    if (m_queueIndex >= 0 && m_queueIndex < static_cast<int>(m_playQueue.size())) {
+        int trackIdx = m_playQueue[m_queueIndex];
+        if (trackIdx >= 0 && trackIdx < static_cast<int>(m_tracks.size())) {
+            currentPlayingTrackId = m_tracks[trackIdx].id;
+        }
+    }
+
+    Track t = std::move(m_tracks[fromIndex]);
+    m_tracks.erase(m_tracks.begin() + fromIndex);
+    m_tracks.insert(m_tracks.begin() + toIndex, std::move(t));
+
+    if (!m_isShuffle) {
+        m_playQueue.clear();
+        m_playQueue.reserve(m_tracks.size());
+        for (int i = 0; i < static_cast<int>(m_tracks.size()); ++i) {
+            m_playQueue.push_back(i);
+        }
+    } else {
+        for (int& idx : m_playQueue) {
+            if (idx == fromIndex) {
+                idx = toIndex;
+            } else if (fromIndex < toIndex) {
+                if (idx > fromIndex && idx <= toIndex) {
+                    idx--;
+                }
+            } else {
+                if (idx >= toIndex && idx < fromIndex) {
+                    idx++;
+                }
+            }
+        }
+    }
+
+    if (!currentPlayingTrackId.empty()) {
+        for (size_t i = 0; i < m_playQueue.size(); ++i) {
+            int trackIdx = m_playQueue[i];
+            if (trackIdx >= 0 && trackIdx < static_cast<int>(m_tracks.size()) &&
+                m_tracks[trackIdx].id == currentPlayingTrackId) {
+                m_queueIndex = static_cast<int>(i);
+                break;
+            }
         }
     }
 }

@@ -16,10 +16,10 @@ public:
     [[nodiscard]] std::string GetAccessToken() const override { return m_accessToken; }
 
 protected:
-    void SendJsonRequest(QNetworkRequest request, 
-                         std::function<void(const QJsonDocument&)> onSuccess, 
-                         std::function<void(const std::string&)> onFail = nullptr,
-                         const QByteArray& postData = QByteArray());
+    QNetworkReply* SendJsonRequest(QNetworkRequest request, 
+                                   std::function<void(const QJsonDocument&)> onSuccess, 
+                                   std::function<void(const std::string&)> onFail = nullptr,
+                                   const QByteArray& postData = QByteArray());
 
     virtual bool HandleApiError(const QJsonDocument& json, int httpStatusCode) = 0;
 

@@ -134,6 +134,29 @@ set(COMMON_SOURCES
         src/ui/console/view/UltimateRenderer.cpp
         src/ui/console/view/UltimateRenderer.h
 
+        # --- TUI (FTXUI) ---
+        src/ui/tui/TuiTheme.h
+        src/ui/tui/TuiThemeConfig.h
+        src/ui/tui/TuiThemeConfig.cpp
+        src/ui/tui/CoverArtRenderer.h
+        src/ui/tui/CoverArtRenderer.cpp
+        src/ui/tui/components/SidebarComponent.h
+        src/ui/tui/components/SidebarComponent.cpp
+        src/ui/tui/components/PlaylistModalComponent.h
+        src/ui/tui/components/PlaylistModalComponent.cpp
+        src/ui/tui/components/AddToPlaylistModalComponent.h
+        src/ui/tui/components/AddToPlaylistModalComponent.cpp
+        src/ui/tui/components/SettingsModalComponent.h
+        src/ui/tui/components/SettingsModalComponent.cpp
+        src/ui/tui/components/HelpModalComponent.h
+        src/ui/tui/components/HelpModalComponent.cpp
+        src/ui/tui/screens/NowPlayingScreen.h
+        src/ui/tui/screens/NowPlayingScreen.cpp
+        src/ui/tui/screens/SearchScreen.h
+        src/ui/tui/screens/SearchScreen.cpp
+        src/ui/tui/TuiController.h
+        src/ui/tui/TuiController.cpp
+
         # --- Utils ---
         src/utils/buffer/RingBuffer.h
         src/utils/buffer/RingBuffer.cpp
@@ -173,6 +196,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(qtkeychain)
 
+# Подключаем FTXUI для нативного TUI интерфейса (статические библиотеки)
+set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
+set(BUILD_SHARED_LIBS OFF)
+FetchContent_Declare(
+        ftxui
+        GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI.git
+        GIT_TAG        v5.0.0
+)
+FetchContent_MakeAvailable(ftxui)
+set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED})
+
 # Создаем исполняемый файл
 add_executable(${PROJECT_NAME}
         ${PROJECT_SOURCES}
@@ -197,6 +231,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         Qt6::WebView
         qt6keychain
         Qt6::Concurrent
+        ftxui::screen
+        ftxui::dom
+        ftxui::component
 )
 
 # --- Внешние библиотеки и FFI ---
@@ -229,4 +266,11 @@ else()
             -mavx2
             -ffast-math
     )
+endif()
+
+# Включение межпроцедурной оптимизации (LTO/LTCG) для Release конфигурации
+include(CheckIPOSupported)
+check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
+if(ipo_supported)
+    set_property(TARGET ${PROJECT_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 endif()
