@@ -249,11 +249,7 @@ void TuiController::SetupComponents() {
             m_tabContainer->Render() | ftxui::flex
         }) | ftxui::flex;
 
-        bool isModalVisible = (m_settingsModal && m_settingsModal->IsVisible()) ||
-                              (m_helpModal && m_helpModal->IsVisible()) ||
-                              (m_playlistModal && m_playlistModal->IsVisible()) ||
-                              (m_addToPlaylistModal && m_addToPlaylistModal->IsVisible());
-        bool hasBottom = !isModalVisible && (m_isCommandMode || m_showBottomBar);
+        bool hasBottom = (m_isCommandMode || m_showBottomBar);
         ftxui::Element bottomElement;
         if (m_isCommandMode) {
             bottomElement = ftxui::hbox({
@@ -383,7 +379,10 @@ void TuiController::SetupComponents() {
                 m_screen.PostEvent(ftxui::Event::Custom);
                 return true;
             }
-            return m_commandInputComponent->OnEvent(event);
+            if (m_commandInputComponent) {
+                m_commandInputComponent->OnEvent(event);
+            }
+            return true;
         }
 
         bool isTypingInSearch = (m_activeScreenIndex == 1 && m_searchScreen && m_searchScreen->IsInputActive());

@@ -80,6 +80,7 @@ private:
     int m_editingCategory = -1;
     int m_editingOption = -1;
     std::string m_editingBuffer;
+    int m_editCursor = 0;
 
     // Cache of General options
     int m_sourceIndex = 0;

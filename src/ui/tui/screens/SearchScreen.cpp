@@ -825,10 +825,11 @@ bool SearchScreen::OnEvent(ftxui::Event event) {
                 return true;
             }
         }
-        if (m_inputComponent && m_inputComponent->OnEvent(event)) {
+        if (m_inputComponent) {
+            m_inputComponent->OnEvent(event);
             return true;
         }
-        return false;
+        return true;
     }
 
     // 2. If text input is NOT active: browsing, toggling mode, and playing results

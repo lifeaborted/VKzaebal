@@ -205,10 +205,8 @@ ftxui::Element HelpModalComponent::RenderHelpView() {
     modalChildren.push_back(std::move(topBar));
     modalChildren.push_back(ftxui::text(""));
     modalChildren.push_back(ftxui::vbox(std::move(visibleRows)) | ftxui::flex);
-    if (m_showBottomBar) {
-        modalChildren.push_back(ftxui::separatorLight() | ftxui::color(theme.border));
-        modalChildren.push_back(std::move(sysInfoRow));
-    }
+    modalChildren.push_back(ftxui::separatorLight() | ftxui::color(theme.border));
+    modalChildren.push_back(std::move(sysInfoRow));
 
     ftxui::Element modalWindow = ftxui::vbox(std::move(modalChildren))
     | ftxui::border

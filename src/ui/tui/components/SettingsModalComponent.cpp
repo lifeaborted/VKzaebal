@@ -352,10 +352,32 @@ ftxui::Element SettingsModalComponent::RenderOptionsList(int bodyHeight) {
                 swatchElem = ftxui::hbox(std::move(stopBoxes));
             }
 
+            std::string before = m_editingBuffer.substr(0, std::clamp(m_editCursor, 0, static_cast<int>(m_editingBuffer.size())));
+            ftxui::Element textWithCursor;
+            if (m_editCursor < static_cast<int>(m_editingBuffer.size())) {
+                int next = m_editCursor + 1;
+                while (next < static_cast<int>(m_editingBuffer.size()) && (static_cast<unsigned char>(m_editingBuffer[next]) & 0xC0) == 0x80) {
+                    next++;
+                }
+                std::string curChar = m_editingBuffer.substr(m_editCursor, next - m_editCursor);
+                std::string after = m_editingBuffer.substr(next);
+
+                textWithCursor = ftxui::hbox({
+                    ftxui::text(before) | ftxui::bold | ftxui::color(ftxui::Color::White),
+                    ftxui::text(curChar) | ftxui::bold | ftxui::color(ftxui::Color::Black) | ftxui::bgcolor(theme.accentCyan),
+                    ftxui::text(after) | ftxui::bold | ftxui::color(ftxui::Color::White)
+                });
+            } else {
+                textWithCursor = ftxui::hbox({
+                    ftxui::text(before) | ftxui::bold | ftxui::color(ftxui::Color::White),
+                    ftxui::text("█") | ftxui::bold | ftxui::color(theme.accentCyan)
+                });
+            }
+
             rightControl = ftxui::hbox({
                 swatchElem,
                 ftxui::text("[ ") | ftxui::bold | ftxui::color(theme.accentCyan),
-                ftxui::text(m_editingBuffer + "█") | ftxui::bold | ftxui::color(ftxui::Color::White),
+                std::move(textWithCursor),
                 ftxui::text(" ]") | ftxui::bold | ftxui::color(theme.accentCyan)
             });
         } else if (item.type == SettingType::CHOICE) {
@@ -617,17 +639,78 @@ bool SettingsModalComponent::OnEvent(ftxui::Event event) {
             m_isEditing = false;
             return true;
         }
+        if (event == ftxui::Event::ArrowLeft) {
+            if (m_editCursor > 0) {
+                int prev = m_editCursor - 1;
+                while (prev > 0 && (static_cast<unsigned char>(m_editingBuffer[prev]) & 0xC0) == 0x80) {
+                    prev--;
+                }
+                m_editCursor = prev;
+            }
+            return true;
+        }
+        if (event == ftxui::Event::ArrowRight) {
+            if (m_editCursor < static_cast<int>(m_editingBuffer.size())) {
+                int next = m_editCursor + 1;
+                while (next < static_cast<int>(m_editingBuffer.size()) && (static_cast<unsigned char>(m_editingBuffer[next]) & 0xC0) == 0x80) {
+                    next++;
+                }
+                m_editCursor = next;
+            }
+            return true;
+        }
+        if (event == ftxui::Event::Home) {
+            m_editCursor = 0;
+            return true;
+        }
+        if (event == ftxui::Event::End) {
+            m_editCursor = static_cast<int>(m_editingBuffer.size());
+            return true;
+        }
         if (event == ftxui::Event::Backspace) {
-            if (!m_editingBuffer.empty()) {
-                m_editingBuffer.pop_back();
+            if (m_editCursor > 0) {
+                int prev = m_editCursor - 1;
+                while (prev > 0 && (static_cast<unsigned char>(m_editingBuffer[prev]) & 0xC0) == 0x80) {
+                    prev--;
+                }
+                int count = m_editCursor - prev;
+                m_editingBuffer.erase(prev, count);
+                m_editCursor = prev;
+            }
+            return true;
+        }
+        if (event == ftxui::Event::Delete) {
+            if (m_editCursor < static_cast<int>(m_editingBuffer.size())) {
+                int next = m_editCursor + 1;
+                while (next < static_cast<int>(m_editingBuffer.size()) && (static_cast<unsigned char>(m_editingBuffer[next]) & 0xC0) == 0x80) {
+                    next++;
+                }
+                int count = next - m_editCursor;
+                m_editingBuffer.erase(m_editCursor, count);
             }
             return true;
         }
         if (event.is_character()) {
-            m_editingBuffer += event.character();
+            std::string ch = event.character();
+            m_editingBuffer.insert(m_editCursor, ch);
+            m_editCursor += static_cast<int>(ch.size());
             return true;
         }
-        return true;
+        if (event.is_mouse()) {
+            const auto& mouse = event.mouse();
+            if (mouse.button == ftxui::Mouse::Left && mouse.motion == ftxui::Mouse::Pressed) {
+                if (m_editingOption >= 0 && m_editingOption < maxOpts) {
+                    const auto& item = items[m_editingOption];
+                    m_themeConfig.SetRawValue(item.section, item.key, m_editingBuffer);
+                    if (OnSettingsChanged) OnSettingsChanged();
+                }
+                m_isEditing = false;
+            } else {
+                return true;
+            }
+        } else {
+            return true;
+        }
     }
 
     // Toggle bottom hints panel with Shift+I or i / ш / Ш
@@ -750,6 +833,7 @@ bool SettingsModalComponent::OnEvent(ftxui::Event event) {
                         m_editingCategory = m_selectedCategory;
                         m_editingOption = m_selectedOption;
                         m_editingBuffer = m_themeConfig.GetRawValue(item.section, item.key);
+                        m_editCursor = static_cast<int>(m_editingBuffer.size());
                     } else {
                         ChangeOptionValue(+1);
                     }
@@ -834,6 +918,7 @@ bool SettingsModalComponent::OnEvent(ftxui::Event event) {
                 m_editingCategory = m_selectedCategory;
                 m_editingOption = m_selectedOption;
                 m_editingBuffer = m_themeConfig.GetRawValue(item.section, item.key);
+                m_editCursor = static_cast<int>(m_editingBuffer.size());
                 return true;
             }
         }
