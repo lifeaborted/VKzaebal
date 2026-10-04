@@ -5,12 +5,28 @@ project(VKAudioPlayer VERSION 0.1 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Опции модульной сборки интерфейса
+option(ENABLE_FTXUI "Build with modern FTXUI terminal interface" ON)
+
 # Включаем автоматическую генерацию мета-кода Qt глобально
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-# set(CMAKE_PREFIX_PATH "C:/Qt/6.11.1/msvc2022_64")
+# Автоматическое определение путей к Qt6 (если CMAKE_PREFIX_PATH не задан вручную)
+if(NOT CMAKE_PREFIX_PATH)
+    if(DEFINED ENV{QTDIR})
+        list(APPEND CMAKE_PREFIX_PATH "$ENV{QTDIR}")
+    elseif(DEFINED ENV{Qt6_DIR})
+        list(APPEND CMAKE_PREFIX_PATH "$ENV{Qt6_DIR}")
+    elseif(EXISTS "C:/Qt/6.11.1/msvc2022_64")
+        list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.11.1/msvc2022_64")
+    elseif(EXISTS "C:/Qt/6.8.0/msvc2022_64")
+        list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.8.0/msvc2022_64")
+    elseif(EXISTS "C:/Qt/6.7.2/msvc2022_64")
+        list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.7.2/msvc2022_64")
+    endif()
+endif()
 
 # Ищем базовые модули Qt
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Sql Qml WebView Concurrent)
@@ -113,7 +129,12 @@ set(COMMON_SOURCES
         src/core/shazam/AudioCaptureService.h
         src/core/shazam/AudioCaptureService.cpp
 
-        # --- UI ---
+        # --- UI Interface & Factory ---
+        src/ui/IUiController.h
+        src/ui/UiFactory.h
+        src/ui/UiFactory.cpp
+
+        # --- CLI ---
         src/ui/console/core/ConsoleController.h
         src/ui/console/core/ConsoleController.cpp
 
@@ -134,28 +155,8 @@ set(COMMON_SOURCES
         src/ui/console/view/UltimateRenderer.cpp
         src/ui/console/view/UltimateRenderer.h
 
-        # --- TUI (FTXUI) ---
-        src/ui/tui/TuiTheme.h
-        src/ui/tui/TuiThemeConfig.h
-        src/ui/tui/TuiThemeConfig.cpp
-        src/ui/tui/CoverArtRenderer.h
-        src/ui/tui/CoverArtRenderer.cpp
-        src/ui/tui/components/SidebarComponent.h
-        src/ui/tui/components/SidebarComponent.cpp
-        src/ui/tui/components/PlaylistModalComponent.h
-        src/ui/tui/components/PlaylistModalComponent.cpp
-        src/ui/tui/components/AddToPlaylistModalComponent.h
-        src/ui/tui/components/AddToPlaylistModalComponent.cpp
-        src/ui/tui/components/SettingsModalComponent.h
-        src/ui/tui/components/SettingsModalComponent.cpp
-        src/ui/tui/components/HelpModalComponent.h
-        src/ui/tui/components/HelpModalComponent.cpp
-        src/ui/tui/screens/NowPlayingScreen.h
-        src/ui/tui/screens/NowPlayingScreen.cpp
-        src/ui/tui/screens/SearchScreen.h
-        src/ui/tui/screens/SearchScreen.cpp
-        src/ui/tui/TuiController.h
-        src/ui/tui/TuiController.cpp
+        src/ui/console/light/LightConsoleController.h
+        src/ui/console/light/LightConsoleController.cpp
 
         # --- Utils ---
         src/utils/buffer/RingBuffer.h
@@ -179,33 +180,83 @@ set(COMMON_SOURCES
         src/utils/path/PathManager.cpp
 )
 
+# --- TUI (FTXUI) Источники (опционально) ---
+if(ENABLE_FTXUI)
+    set(FTXUI_SOURCES
+        src/ui/tui/TuiTheme.h
+        src/ui/tui/TuiThemeConfig.h
+        src/ui/tui/TuiThemeConfig.cpp
+        src/ui/tui/CoverArtRenderer.h
+        src/ui/tui/CoverArtRenderer.cpp
+        src/ui/tui/components/SidebarComponent.h
+        src/ui/tui/components/SidebarComponent.cpp
+        src/ui/tui/components/PlaylistModalComponent.h
+        src/ui/tui/components/PlaylistModalComponent.cpp
+        src/ui/tui/components/AddToPlaylistModalComponent.h
+        src/ui/tui/components/AddToPlaylistModalComponent.cpp
+        src/ui/tui/components/SettingsModalComponent.h
+        src/ui/tui/components/SettingsModalComponent.cpp
+        src/ui/tui/components/HelpModalComponent.h
+        src/ui/tui/components/HelpModalComponent.cpp
+        src/ui/tui/screens/NowPlayingScreen.h
+        src/ui/tui/screens/NowPlayingScreen.cpp
+        src/ui/tui/screens/SearchScreen.h
+        src/ui/tui/screens/SearchScreen.cpp
+        src/ui/tui/TuiController.h
+        src/ui/tui/TuiController.cpp
+    )
+endif()
+
 set(PROJECT_SOURCES
         src/main.cpp
         ${COMMON_SOURCES}
+        ${FTXUI_SOURCES}
 )
 
 # --- Подключаем внешние библиотеки ---
-add_subdirectory(libs/fdk-aac)
 
-# Подключаем безопасное хранилище QtKeychain
-include(FetchContent)
-FetchContent_Declare(
-        qtkeychain
-        GIT_REPOSITORY https://github.com/frankosterfeld/qtkeychain.git
-        GIT_TAG        0.17.0
-)
-FetchContent_MakeAvailable(qtkeychain)
+# 1. fdk-aac: проверяем Conan-пакет или локальную папку libs/fdk-aac
+find_package(libfdk_aac QUIET CONFIG)
+if(TARGET libfdk_aac::libfdk_aac)
+    set(FDK_AAC_LIB libfdk_aac::libfdk_aac)
+elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libs/fdk-aac/CMakeLists.txt")
+    add_subdirectory(libs/fdk-aac)
+    set(FDK_AAC_LIB fdk-aac)
+endif()
 
-# Подключаем FTXUI для нативного TUI интерфейса (статические библиотеки)
-set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
-set(BUILD_SHARED_LIBS OFF)
-FetchContent_Declare(
-        ftxui
-        GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI.git
-        GIT_TAG        v5.0.0
-)
-FetchContent_MakeAvailable(ftxui)
-set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED})
+# 2. Подключаем безопасное хранилище QtKeychain (статически)
+find_package(qt6keychain QUIET CONFIG)
+if(NOT TARGET qt6keychain)
+    set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
+    set(BUILD_SHARED_LIBS OFF)
+    set(BUILD_TRANSLATIONS OFF CACHE BOOL "" FORCE)
+    set(BUILD_TEST_APPLICATION OFF CACHE BOOL "" FORCE)
+    include(FetchContent)
+    FetchContent_Declare(
+            qtkeychain
+            GIT_REPOSITORY https://github.com/frankosterfeld/qtkeychain.git
+            GIT_TAG        0.17.0
+    )
+    FetchContent_MakeAvailable(qtkeychain)
+    set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED})
+endif()
+
+# 3. Подключаем FTXUI для нативного TUI интерфейса (проверяем Conan или FetchContent)
+if(ENABLE_FTXUI)
+    find_package(ftxui QUIET CONFIG)
+    if(NOT TARGET ftxui::screen)
+        set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
+        set(BUILD_SHARED_LIBS OFF)
+        include(FetchContent)
+        FetchContent_Declare(
+                ftxui
+                GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI.git
+                GIT_TAG        v5.0.0
+        )
+        FetchContent_MakeAvailable(ftxui)
+        set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED})
+    endif()
+endif()
 
 # Создаем исполняемый файл
 add_executable(${PROJECT_NAME}
@@ -220,7 +271,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/libs/minimp3
 )
 
-# Линкуем модули Qt с приложением
+# Линкуем базовые модули Qt с приложением
 target_link_libraries(${PROJECT_NAME} PRIVATE
         Qt6::Core
         Qt6::Gui
@@ -231,26 +282,36 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         Qt6::WebView
         qt6keychain
         Qt6::Concurrent
+)
+
+# Подключение FTXUI к приложению (если включено)
+if(ENABLE_FTXUI)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_FTXUI)
+    target_link_libraries(${PROJECT_NAME} PRIVATE
         ftxui::screen
         ftxui::dom
         ftxui::component
-)
+    )
+endif()
 
 # --- Внешние библиотеки и FFI ---
 
-target_link_libraries(${PROJECT_NAME} PRIVATE fdk-aac)
+if(FDK_AAC_LIB)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${FDK_AAC_LIB})
+endif()
 
 if (WIN32)
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-            "${CMAKE_CURRENT_SOURCE_DIR}/shazam_ffi/target/release/shazam_ffi.dll.lib"
-    )
+    if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/shazam_ffi/target/release/shazam_ffi.dll.lib")
+        target_link_libraries(${PROJECT_NAME} PRIVATE
+                "${CMAKE_CURRENT_SOURCE_DIR}/shazam_ffi/target/release/shazam_ffi.dll.lib"
+        )
 
-    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-            # Копируем DLL Шазама
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_CURRENT_SOURCE_DIR}/shazam_ffi/target/release/shazam_ffi.dll"
-            $<TARGET_FILE_DIR:${PROJECT_NAME}>
-    )
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/shazam_ffi/target/release/shazam_ffi.dll"
+                $<TARGET_FILE_DIR:${PROJECT_NAME}>
+        )
+    endif()
 endif()
 
 # Включение аппаратного ускорения AVX2
@@ -273,4 +334,42 @@ include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
 if(ipo_supported)
     set_property(TARGET ${PROJECT_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+endif()
+
+# ==============================================================================
+# Qt CMake Deployment API (Qt 6.3+)
+# ==============================================================================
+include(GNUInstallDirs)
+
+install(TARGETS ${PROJECT_NAME}
+        BUNDLE DESTINATION .
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+qt_generate_deploy_app_script(
+        TARGET ${PROJECT_NAME}
+        OUTPUT_SCRIPT deploy_script
+        NO_TRANSLATIONS
+        NO_COMPILER_RUNTIME
+        NO_UNSUPPORTED_PLATFORM_ERROR
+)
+install(SCRIPT ${deploy_script})
+
+if(WIN32)
+    # fdk-aac DLL
+    if(TARGET fdk-aac)
+        install(FILES $<TARGET_FILE:fdk-aac> DESTINATION ${CMAKE_INSTALL_BINDIR})
+    endif()
+
+    # Shazam FFI DLL
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/shazam_ffi/target/release/shazam_ffi.dll")
+        install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/shazam_ffi/target/release/shazam_ffi.dll" DESTINATION ${CMAKE_INSTALL_BINDIR})
+    endif()
+endif()
+
+# Установка конфигурационных файлов и ресурсов
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/ftxui.cfg" DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/config.ini" DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/covers")
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/covers" DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()

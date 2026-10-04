@@ -27,7 +27,7 @@ ConsoleController::ConsoleController(
     IAudioEngine& audio, PlaylistManager& playlist, OAuthManager& authManager,
     DatabaseManager& dbManager, TrackDownloader& downloader, LyricsFetcher& lyricsFetcher,
     QNetworkAccessManager* networkManager, QObject* parent
-) : QObject(parent), m_audio(audio), m_playlist(playlist), m_authManager(authManager),
+) : IUiController(parent), m_audio(audio), m_playlist(playlist), m_authManager(authManager),
     m_dbManager(dbManager), m_downloader(downloader), m_lyricsFetcher(lyricsFetcher),
     m_currentState(ConsoleState::COMMAND_MODE), m_isRunning(false) {
 
@@ -235,6 +235,10 @@ void ConsoleController::SetStatusMessage(const std::string& msg) {
     if (m_renderer) {
         m_renderer->SetStatusMessage(msg);
     }
+}
+
+void ConsoleController::SetWaitingAuth(bool waiting) {
+    SetState(waiting ? ConsoleState::WAITING_TOKEN_URL : ConsoleState::COMMAND_MODE);
 }
 
 void ConsoleController::InputLoop(std::shared_ptr<std::atomic<bool>> isAlive) {

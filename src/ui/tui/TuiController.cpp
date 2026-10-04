@@ -79,7 +79,7 @@ TuiController::TuiController(
     QNetworkAccessManager* networkManager,
     ConfigurationService* configService,
     QObject* parent
-) : QObject(parent),
+) : IUiController(parent),
     m_audio(audio),
     m_playlist(playlist),
     m_router(router),

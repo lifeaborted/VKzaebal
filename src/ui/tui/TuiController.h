@@ -22,6 +22,8 @@
 #include "ui/tui/screens/NowPlayingScreen.h"
 #include "ui/tui/screens/SearchScreen.h"
 
+#include "ui/IUiController.h"
+
 class IAudioEngine;
 class PlaylistManager;
 class SourceRouter;
@@ -42,7 +44,7 @@ enum class ScreenType {
     SEARCH = 1
 };
 
-class TuiController : public QObject {
+class TuiController : public IUiController {
     Q_OBJECT
 public:
     TuiController(
@@ -59,21 +61,18 @@ public:
     );
     ~TuiController() override;
 
-    void Start();
-    void Stop();
+    void Start() override;
+    void Stop() override;
 
-    void SetStatusMessage(const std::string& msg);
-    void SetCurrentProvider(IAudioProvider* provider);
-    void OnTrackChanged(const Track& track);
-    void OnAudioFetched(const std::vector<Track>& tracks);
-    void OnFinishedFetching();
+    void SetStatusMessage(const std::string& msg) override;
+    void SetCurrentProvider(IAudioProvider* provider) override;
+    void OnTrackChanged(const Track& track) override;
+    void OnAudioFetched(const std::vector<Track>& tracks) override;
+    void OnFinishedFetching() override;
     void PostCustomEvent() { m_screen.PostEvent(ftxui::Event::Custom); }
 
-signals:
-    void QuitRequested();
-    void SourceChanged(const std::string& sourceName);
-    void OfflineModeRequested();
-    void LogoutRequested(const std::string& service);
+    // QuitRequested, SourceChanged, OfflineModeRequested, LogoutRequested
+    // are inherited from IUiController
 
 private slots:
     void OnSpectrumTick();

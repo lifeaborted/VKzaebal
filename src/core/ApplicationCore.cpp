@@ -17,13 +17,14 @@
 #include "services/network/NetworkStreamer.h"
 #include "services/config/ConfigurationService.h"
 #include "services/session/PlaybackSessionService.h"
-#include "ui/tui/TuiController.h"
+#include "ui/IUiController.h"
+#include "ui/UiFactory.h"
 #include "core/audio/playback/PlaybackController.h"
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
 
-ApplicationCore::ApplicationCore(const QMap<QString, QString>& envVars, QObject* parent)
-    : QObject(parent), m_envVars(envVars) {
+ApplicationCore::ApplicationCore(const QMap<QString, QString>& envVars, UiMode uiMode, QObject* parent)
+    : QObject(parent), m_envVars(envVars), m_uiMode(uiMode) {
     m_configService = std::make_unique<ConfigurationService>();
     m_sessionService = std::make_unique<PlaybackSessionService>();
 }
@@ -32,8 +33,8 @@ ApplicationCore::~ApplicationCore() {
     if (m_audioPollTimer) {
         m_audioPollTimer->stop();
     }
-    if (m_tui) {
-        m_tui->Stop();
+    if (m_ui) {
+        m_ui->Stop();
     }
     if (m_streamer) {
         m_streamer->StopDownload();
@@ -46,6 +47,19 @@ ApplicationCore::~ApplicationCore() {
     }
     QThreadPool::globalInstance()->waitForDone(2000);
 }
+
+IAudioEngine& ApplicationCore::GetAudio() const { return *m_audio; }
+PlaylistManager& ApplicationCore::GetPlaylist() const { return *m_playlist; }
+SourceRouter& ApplicationCore::GetRouter() const { return *m_router; }
+OAuthManager* ApplicationCore::GetAuthManager() const { return m_router ? m_router->GetAuthManager() : nullptr; }
+DatabaseManager& ApplicationCore::GetDbManager() const { return *m_dbManager; }
+TrackDownloader& ApplicationCore::GetDownloader() const { return *m_downloader; }
+LyricsFetcher& ApplicationCore::GetLyricsFetcher() const { return *m_lyricsFetcher; }
+PlaybackController& ApplicationCore::GetPlaybackCtrl() const { return *m_playbackCtrl; }
+ConfigurationService* ApplicationCore::GetConfigService() const { return m_configService.get(); }
+QNetworkAccessManager* ApplicationCore::GetNetworkManager() const { return m_networkManager.get(); }
+PlaybackSessionService* ApplicationCore::GetSessionService() const { return m_sessionService.get(); }
+NetworkStreamer& ApplicationCore::GetStreamer() const { return *m_streamer; }
 
 bool ApplicationCore::Initialize() {
     m_configService->EnsureDefaultConfig();
@@ -83,13 +97,17 @@ bool ApplicationCore::Initialize() {
     m_playbackCtrl = std::make_unique<PlaybackController>(*m_audio, *m_playlist, *m_streamer);
     m_router = std::make_unique<SourceRouter>(m_envVars, m_networkManager.get(), this);
 
-    m_tui = std::make_unique<tui::TuiController>(
-        *m_audio, *m_playlist, *m_router,
-        *m_dbManager, *m_downloader, *m_lyricsFetcher,
-        *m_playbackCtrl,
-        m_networkManager.get(),
-        m_configService.get(), this
-    );
+    // 4. Создание или внедрение UI через UiFactory / Dependency Injection
+    if (m_uiFactory) {
+        m_ui = m_uiFactory(*this);
+    } else if (!m_ui) {
+        m_ui = UiFactory::Create(m_uiMode, *this);
+    }
+
+    if (!m_ui) {
+        Logger::Log(LogLevel::ERROR, "ApplicationCore: Failed to create UI controller");
+        return false;
+    }
 
     m_sessionService->RestoreSessionState(*m_audio, *m_playlist, *m_playbackCtrl, *m_configService);
     WireConnections();
@@ -115,7 +133,9 @@ bool ApplicationCore::Initialize() {
 void ApplicationCore::Start() {
     m_router->EnsureAllProvidersInitialized();
     m_router->SwitchSource(m_activeSource);
-    m_tui->Start();
+    if (m_ui) {
+        m_ui->Start();
+    }
 }
 
 void ApplicationCore::WireConnections() {
@@ -134,7 +154,8 @@ void ApplicationCore::WireConnections() {
     });
     connect(m_streamer.get(), &NetworkStreamer::DownloadError, this, [this](const std::string& err) {
         m_audio->SetNetworkStreamFinished();
-        m_tui->SetStatusMessage("[Ошибка] Ошибка стриминга: " + err);
+        std::string msg = "[Ошибка] Ошибка стриминга: " + err;
+        if (m_ui) m_ui->SetStatusMessage(msg);
     });
 
     // Аудио -> Воспроизведение
@@ -147,27 +168,41 @@ void ApplicationCore::WireConnections() {
     m_audio->OnTrackNearEnd = [this]() { m_playbackCtrl->HandleTrackNearEnd(); };
     m_audio->OnPlaybackError = [this](const std::string& err) {
         Logger::Log(LogLevel::ERROR, "Playback failed: " + err + ". Skipping to next track...");
-        m_tui->SetStatusMessage("[Ошибка] Ошибка воспроизведения: " + err);
+        std::string msg = "[Ошибка] Ошибка воспроизведения: " + err;
+        if (m_ui) m_ui->SetStatusMessage(msg);
         m_playlist->Next();
     };
 
     // Плейлист -> Воспроизведение
     m_playlist->OnTrackRequested = [this](Track track) {
         m_playbackCtrl->AttemptPlay(track);
-        m_tui->OnTrackChanged(track);
+        if (m_ui) m_ui->OnTrackChanged(track);
     };
 
     // UI команды
-    connect(m_tui.get(), &tui::TuiController::QuitRequested, this, []() {
-        Logger::Log(LogLevel::INFO, ">>> ApplicationCore: QuitRequested received from TuiController! <<<");
-    });
-    connect(m_tui.get(), &tui::TuiController::QuitRequested, QCoreApplication::instance(), &QCoreApplication::quit);
-    connect(m_tui.get(), &tui::TuiController::OfflineModeRequested, this, [this]() { InitPlaylistAndStart(false); }, Qt::QueuedConnection);
-    connect(m_tui.get(), &tui::TuiController::SourceChanged, m_router.get(), [this](const std::string& source) {
-        if (source == m_activeSource && !m_activeSource.empty()) return;
-        m_router->SwitchSource(source);
-    }, Qt::QueuedConnection);
-    connect(m_tui.get(), &tui::TuiController::LogoutRequested, this, &ApplicationCore::HandleLogout, Qt::QueuedConnection);
+    if (m_ui) {
+        connect(m_ui.get(), &IUiController::QuitRequested, this, []() {
+            Logger::Log(LogLevel::INFO, ">>> ApplicationCore: QuitRequested received! <<<");
+            QCoreApplication::quit();
+        });
+
+        connect(m_ui.get(), &IUiController::OfflineModeRequested, this, [this]() {
+            InitPlaylistAndStart(false);
+        }, Qt::QueuedConnection);
+
+        connect(m_ui.get(), &IUiController::SourceChanged, m_router.get(), [this](const std::string& source) {
+            if (source == m_activeSource && !m_activeSource.empty()) return;
+            m_router->SwitchSource(source);
+        }, Qt::QueuedConnection);
+
+        connect(m_ui.get(), &IUiController::LogoutRequested, this, &ApplicationCore::HandleLogout, Qt::QueuedConnection);
+
+        m_ui->OnGaplessModeChanged = [this](bool isCrossfade) {
+            m_configService->SetCrossfadeEnabled(isCrossfade);
+            m_playbackCtrl->SetCrossfadeEnabled(isCrossfade);
+            Logger::Log(LogLevel::INFO, std::string("Crossfade transition set to ") + (isCrossfade ? "ON" : "OFF"));
+        };
+    }
 
     // Роутер событий
     connect(m_router.get(), &SourceRouter::SourceChanged, this, [this](const std::string& newSource) {
@@ -176,7 +211,7 @@ void ApplicationCore::WireConnections() {
         }
         m_activeSource = newSource;
         m_configService->SetActiveSource(newSource);
-        m_tui->SetCurrentProvider(m_router->GetCurrentProvider());
+        if (m_ui) m_ui->SetCurrentProvider(m_router->GetCurrentProvider());
         m_playbackCtrl->SetCurrentProvider(m_router->GetCurrentProvider());
 
         bool isAudioActive = m_audio->IsPlaying() || m_isPlaybackStarted;
@@ -192,6 +227,9 @@ void ApplicationCore::WireConnections() {
     connect(m_router.get(), &SourceRouter::AuthUiStateChanged, this, [this](bool isWaiting) {
         if (isWaiting) {
             m_playbackCtrl->CancelPlaybackAndRetries();
+        }
+        if (m_ui) {
+            m_ui->SetWaitingAuth(isWaiting);
         }
     });
 
@@ -209,12 +247,12 @@ void ApplicationCore::WireConnections() {
         }
     });
 
-    // TASK-19: Вывод статусов авторизации и сервисов в TUI
+    // Вывод статусов авторизации и сервисов в UI
     connect(m_router.get(), &SourceRouter::StatusMessageRequested, this, [this](const std::string& msg) {
-        m_tui->SetStatusMessage(msg);
+        if (m_ui) m_ui->SetStatusMessage(msg);
     });
 
-    // TASK-20: Provider Registry — получение обновлений треков через события роутера
+    // Provider Registry — получение обновлений треков через события роутера
     connect(m_router.get(), &SourceRouter::AudioFetched, this, &ApplicationCore::OnAudioFetched);
     connect(m_router.get(), &SourceRouter::FinishedFetching, this, &ApplicationCore::OnFinishedFetching);
 
@@ -262,8 +300,8 @@ void ApplicationCore::OnAudioFetched(const std::vector<Track>& tracks) {
         InitPlaylistAndStart(true);
     }
     m_playlist->AlignWithActiveTrack();
-    if (m_tui) {
-        m_tui->OnAudioFetched(tracks);
+    if (m_ui) {
+        m_ui->OnAudioFetched(tracks);
     }
 }
 
@@ -276,13 +314,17 @@ void ApplicationCore::OnFinishedFetching() {
         m_dbManager->SaveQueue(m_playlist->GetQueueTracks(), m_activeSource, true);
     }
     m_dbManager->ExportQueueToTxt(m_playlist->GetQueueTracks(), "playlist.txt", m_playlist->IsShuffle());
-    if (m_tui) {
-        m_tui->OnFinishedFetching();
+    if (m_ui) {
+        m_ui->OnFinishedFetching();
     }
 }
 
 void ApplicationCore::HandleLogout(const std::string& service) {
     Logger::Log(LogLevel::INFO, "ApplicationCore: Handling logout for service: " + service);
+
+    auto setStatus = [this](const std::string& msg) {
+        if (m_ui) m_ui->SetStatusMessage(msg);
+    };
 
     std::string lowerSvc = service;
     for (char& c : lowerSvc) c = std::tolower(c);
@@ -319,7 +361,7 @@ void ApplicationCore::HandleLogout(const std::string& service) {
     }
 
     if (!activeAffected) {
-        m_tui->SetStatusMessage("[Выход] Токен, кэш и треки в БД для " + canonicalSvc + " удалены.");
+        setStatus("[Выход] Токен, кэш и треки в БД для " + canonicalSvc + " удалены.");
         return;
     }
 
@@ -330,12 +372,12 @@ void ApplicationCore::HandleLogout(const std::string& service) {
 
     QFile::remove(PathManager::GetPlaylistExportPath("playlist.txt"));
 
-    m_router->FindNextAuthorizedSource(canonicalSvc, [this](const std::string& nextSource) {
+    m_router->FindNextAuthorizedSource(canonicalSvc, [this, setStatus](const std::string& nextSource) {
         if (nextSource != "Offline") {
-            m_tui->SetStatusMessage("[Выход] Переключение на авторизованный сервис: " + nextSource);
+            setStatus("[Выход] Переключение на авторизованный сервис: " + nextSource);
             m_router->SwitchSource(nextSource);
         } else {
-            m_tui->SetStatusMessage("[Выход] Авторизованных аккаунтов не найдено. Переключено в Оффлайн режим.");
+            setStatus("[Выход] Авторизованных аккаунтов не найдено. Переключено в Оффлайн режим.");
             m_router->SwitchSource("Offline");
         }
     });

@@ -11,6 +11,7 @@
 // Forward declarations
 #include "models/Track.h"
 #include "services/database/DatabaseManager.h"
+#include "ui/IUiController.h"
 
 class IAudioEngine;
 class PlaylistManager;
@@ -33,7 +34,7 @@ enum class ConsoleState {
     CREATE_PLAYLIST_NAME
 };
 
-class ConsoleController : public QObject {
+class ConsoleController : public IUiController {
     Q_OBJECT
 public:
     ConsoleController(
@@ -45,24 +46,20 @@ public:
         LyricsFetcher& lyricsFetcher,
         QNetworkAccessManager* networkManager = nullptr,
         QObject* parent = nullptr);
-    ~ConsoleController();
+    ~ConsoleController() override;
 
-    void Start();
-    void Stop();
+    void Start() override;
+    void Stop() override;
     void SetState(ConsoleState state);
     ConsoleState GetState() const { return m_currentState; }
 
-    void SetCurrentProvider(IAudioProvider* provider);
+    void SetCurrentProvider(IAudioProvider* provider) override;
     void SetSourceRouter(SourceRouter* router);
-    void SetStatusMessage(const std::string& msg);
+    void SetStatusMessage(const std::string& msg) override;
+    void SetWaitingAuth(bool waiting) override;
 
-    std::function<void(bool)> OnGaplessModeChanged;
-
-    signals:
-        void QuitRequested();
-    void OfflineModeRequested();
-    void SourceChanged(const std::string& sourceName);
-    void LogoutRequested(const std::string& service);
+    // QuitRequested, OfflineModeRequested, SourceChanged, LogoutRequested
+    // and OnGaplessModeChanged are inherited from IUiController
 
 private slots:
     void OnUiTick();
