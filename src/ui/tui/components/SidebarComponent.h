@@ -44,6 +44,8 @@ public:
     void SelectIndex(int index);
     void UpdateTheme(const ThemePalette& palette) { m_theme = palette; }
     void SetShowBottomBar(bool show) { m_showBottomBar = show; }
+    void SetVisible(bool visible) { m_isVisible = visible; }
+    bool IsVisible() const { return m_isVisible; }
 
 private:
     void RebuildItems();
@@ -68,6 +70,7 @@ private:
     ftxui::Box m_settingsBtnBox;
     ftxui::Box m_helpBtnBox;
     bool m_showBottomBar = true;
+    bool m_isVisible = true;
 };
 
 } // namespace tui

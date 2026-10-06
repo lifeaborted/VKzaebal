@@ -85,6 +85,17 @@ bool ApplicationCore::Initialize() {
     m_dbManager = std::make_unique<DatabaseManager>();
     if (!m_dbManager->Init()) return false;
 
+    if (m_activeSource.rfind("Custom:", 0) == 0) {
+        std::string plName = m_activeSource.substr(7);
+        int dummyId = -1;
+        m_dbManager->LoadPlaylistTracksByName(plName, dummyId);
+        if (dummyId == -1) {
+            Logger::Log(LogLevel::WARNING, "ApplicationCore: Saved custom playlist '" + plName + "' no longer exists, resetting source to VK");
+            m_activeSource = "VK";
+            m_configService->SetActiveSource("VK");
+        }
+    }
+
     m_audio = std::make_unique<MiniaudioEngine>();
     if (!m_audio->Init()) return false;
 

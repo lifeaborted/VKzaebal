@@ -22,9 +22,12 @@ ftxui::Element TuiBottomBar::RenderNowPlayingBar(const ThemePalette& theme) cons
         ftxui::text(" Стиль EQ  ") | ftxui::color(theme.textMuted),
         ftxui::text("[?]") | ftxui::bold | ftxui::color(theme.accentCyan),
         ftxui::text(" Справка  ") | ftxui::color(theme.textMuted),
+        ftxui::text("[[]") | ftxui::bold | ftxui::color(theme.accentOrange),
+        ftxui::text(" Панель  ") | ftxui::color(theme.textMuted),
         ftxui::text("[Shift+I]") | ftxui::bold | ftxui::color(theme.accentOrange),
         ftxui::text(" Скрыть  ") | ftxui::color(theme.textMuted),
         ftxui::filler(),
+        (!m_isOnline ? (ftxui::text("[OFFLINE]  ") | ftxui::bold | ftxui::color(theme.accentRed)) : ftxui::emptyElement()),
         ftxui::text("[Q] Выход ") | ftxui::color(theme.textMuted)
     });
 }
@@ -51,9 +54,12 @@ ftxui::Element TuiBottomBar::RenderSearchBar(const ThemePalette& theme) const {
         ftxui::text(" В очередь  ") | ftxui::color(theme.textMuted),
         ftxui::text("[?]") | ftxui::bold | ftxui::color(theme.accentCyan),
         ftxui::text(" Справка  ") | ftxui::color(theme.textMuted),
+        ftxui::text("[[]") | ftxui::bold | ftxui::color(theme.accentOrange),
+        ftxui::text(" Панель  ") | ftxui::color(theme.textMuted),
         ftxui::text("[Shift+I]") | ftxui::bold | ftxui::color(theme.accentOrange),
         ftxui::text(" Скрыть  ") | ftxui::color(theme.textMuted),
         ftxui::filler(),
+        (!m_isOnline ? (ftxui::text("[OFFLINE]  ") | ftxui::bold | ftxui::color(theme.accentRed)) : ftxui::emptyElement()),
         ftxui::text("[Q] Выход ") | ftxui::color(theme.textMuted)
     });
 }

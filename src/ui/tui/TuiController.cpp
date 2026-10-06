@@ -16,6 +16,7 @@
 #include <ftxui/dom/linear_gradient.hpp>
 #include <QCoreApplication>
 #include <QTimer>
+#include <QNetworkInformation>
 #include <iostream>
 #include <algorithm>
 #ifdef _WIN32
@@ -99,6 +100,15 @@ TuiController::TuiController(
 
     m_trackService = std::make_unique<TuiTrackService>(m_router, m_dbManager, m_downloader, m_playlist, m_configService);
 
+    QNetworkInformation::loadDefaultBackend();
+    if (auto netInfo = QNetworkInformation::instance()) {
+        m_isOnline = (netInfo->reachability() != QNetworkInformation::Reachability::Disconnected);
+        connect(netInfo, &QNetworkInformation::reachabilityChanged, this, [this](QNetworkInformation::Reachability reach) {
+            bool online = (reach != QNetworkInformation::Reachability::Disconnected);
+            SetIsOnline(online);
+        });
+    }
+
     SetupComponents();
     WireCallbacks();
 
@@ -142,6 +152,15 @@ void TuiController::SetupComponents() {
 
     // Restore saved source in Sidebar & SearchScreen
     std::string initialSource = m_configService ? m_configService->GetActiveSource() : "VK";
+    if (initialSource.rfind("Custom:", 0) == 0) {
+        std::string plName = initialSource.substr(7);
+        int dummyId = -1;
+        m_dbManager.LoadPlaylistTracksByName(plName, dummyId);
+        if (dummyId == -1) {
+            initialSource = "VK";
+            if (m_configService) m_configService->SetActiveSource("VK");
+        }
+    }
     std::string sidebarId = initialSource;
     if (sidebarId.rfind("Custom:", 0) == 0) {
         sidebarId = sidebarId.substr(7);
@@ -152,12 +171,18 @@ void TuiController::SetupComponents() {
     m_nowPlayingScreen = std::make_shared<NowPlayingScreen>(m_audio, m_playlist, *m_coverRenderer, m_sidebar);
     m_nowPlayingScreen->UpdateTheme(m_currentTheme, visCfg);
     m_nowPlayingScreen->SetShowBottomBar(m_bottomBar.IsVisible());
+    m_nowPlayingScreen->SetIsOnline(m_isOnline);
+    if (m_configService) {
+        m_nowPlayingScreen->SetAutoScroll(m_configService->GetAutoScroll());
+    }
 
     m_searchScreen = std::make_shared<SearchScreen>(m_audio, m_playlist, *m_coverRenderer, m_sidebar);
     m_searchScreen->UpdateTheme(m_currentTheme);
     m_searchScreen->SetSearchSource(sidebarId);
     m_searchScreen->SetShowBottomBar(m_bottomBar.IsVisible());
+    m_searchScreen->SetIsOnline(m_isOnline);
     m_sidebar->SetShowBottomBar(m_bottomBar.IsVisible());
+    m_bottomBar.SetIsOnline(m_isOnline);
 
     // 3. Modals & ModalManager
     m_playlistModal = std::make_shared<PlaylistModalComponent>();
@@ -165,7 +190,12 @@ void TuiController::SetupComponents() {
     if (m_configService) {
         m_settingsModal = std::make_shared<SettingsModalComponent>(*m_configService, *m_themeConfig);
         m_settingsModal->OnToggleBottomBarRequested = [this]() { ToggleBottomBar(); };
-        m_settingsModal->OnSettingsChanged = [this]() { m_screen.PostEvent(ftxui::Event::Custom); };
+        m_settingsModal->OnSettingsChanged = [this]() {
+            if (m_nowPlayingScreen && m_configService) {
+                m_nowPlayingScreen->SetAutoScroll(m_configService->GetAutoScroll());
+            }
+            m_screen.PostEvent(ftxui::Event::Custom);
+        };
     }
     m_helpModal = std::make_shared<HelpModalComponent>();
     m_helpModal->OnToggleBottomBarRequested = [this]() { ToggleBottomBar(); };
@@ -243,6 +273,9 @@ void TuiController::SetupComponents() {
     callbacks.toggleBottomBar = [this]() {
         ToggleBottomBar();
     };
+    callbacks.toggleSidebar = [this]() {
+        ToggleSidebar();
+    };
     callbacks.openPlaylistModal = [this]() {
         OpenPlaylistManagerModal();
     };
@@ -276,12 +309,17 @@ void TuiController::SetupComponents() {
         const auto& theme = m_currentTheme;
         auto bgCfg = m_themeConfig->GetBackgroundConfig();
 
-        // Screen Body: Sidebar on the left, Tab Container on the right!
-        ftxui::Element screenBody = ftxui::hbox({
-            m_sidebar->Render(),
-            ftxui::separatorLight() | ftxui::color(theme.border),
-            m_tabContainer->Render() | ftxui::flex
-        }) | ftxui::flex;
+        // Screen Body: Sidebar on the left (if visible), Tab Container on the right!
+        ftxui::Element screenBody;
+        if (m_showSidebar && m_sidebar) {
+            screenBody = ftxui::hbox({
+                m_sidebar->Render(),
+                ftxui::separatorLight() | ftxui::color(theme.border),
+                m_tabContainer->Render() | ftxui::flex
+            }) | ftxui::flex;
+        } else {
+            screenBody = m_tabContainer->Render() | ftxui::flex;
+        }
 
         bool hasBottom = (m_commandBar.IsActive() || m_bottomBar.IsVisible());
         ftxui::Element bottomElement;
@@ -388,8 +426,10 @@ void TuiController::WireCallbacks() {
                 bool ok = m_dbManager.DeletePlaylist(name);
                 m_screen.Post([this, name, ok]() {
                     if (ok) {
-                        if (m_sidebar && m_sidebar->GetSelectedId() == name) {
-                            m_sidebar->SetSelectedId("VK");
+                        std::string activeSource = m_configService ? m_configService->GetActiveSource() : "";
+                        if (activeSource == "Custom:" + name || (m_sidebar && m_sidebar->GetSelectedId() == name)) {
+                            if (m_sidebar) m_sidebar->SetSelectedId("VK");
+                            if (m_configService) m_configService->SetActiveSource("VK");
                             QMetaObject::invokeMethod(QCoreApplication::instance(), [this]() {
                                 emit SourceChanged("VK");
                             }, Qt::QueuedConnection);
@@ -412,7 +452,7 @@ void TuiController::WireCallbacks() {
     if (m_addToPlaylistModal) {
         m_addToPlaylistModal->OnAddToPlaylistSelected = [this](int playlistId, const std::string& playlistName, const Track& track) {
             QMetaObject::invokeMethod(QCoreApplication::instance(), [this, playlistId, playlistName, track]() {
-                m_dbManager.SaveTracks({track});
+                m_dbManager.SaveTracks({track}, /*isLibrary=*/false);
                 bool ok = m_dbManager.AddTrackToPlaylist(playlistId, track.id);
                 m_screen.Post([this, playlistName, track, ok]() {
                     if (ok) {
@@ -422,6 +462,9 @@ void TuiController::WireCallbacks() {
                             m_playlist.AddTrack(track);
                         }
                         ReloadPlaylists();
+                        if (m_searchScreen) {
+                            m_searchScreen->AddTrackToPlaylistMap(track.id, playlistName);
+                        }
                     } else {
                         SetStatusMessage("[Плейлист] Трек уже есть в плейлисте '" + playlistName + "'");
                     }
@@ -544,16 +587,46 @@ void TuiController::WireCallbacks() {
         if (mode == SearchMode::LOCAL) {
             QMetaObject::invokeMethod(QCoreApplication::instance(), [this, q, source]() {
                 std::vector<Track> matched = m_trackService ? m_trackService->SearchLocalTracks(source, q) : std::vector<Track>{};
-                m_screen.Post([this, matched]() {
+                std::unordered_map<std::string, std::string> plMap;
+                if (m_trackService) {
+                    plMap = m_trackService->GetTrackPlaylistMap(matched);
+                }
+                m_screen.Post([this, matched, plMap]() {
+                    m_searchScreen->SetTrackPlaylistMap(plMap);
                     m_searchScreen->SetSearchResults(matched, "");
                 });
                 m_screen.PostEvent(ftxui::Event::Custom);
             }, Qt::QueuedConnection);
         } else {
+            if (!m_isOnline) {
+                m_screen.Post([this]() {
+                    m_searchScreen->SetSearchResults({}, "Нет подключения к сети [OFFLINE]");
+                });
+                m_screen.PostEvent(ftxui::Event::Custom);
+                return;
+            }
             std::string qStd = q.toStdString();
             QMetaObject::invokeMethod(QCoreApplication::instance(), [this, qStd, source]() {
                 m_router.Search(source, qStd, 50, 0, [this](const std::vector<Track>& tracks, const std::string& error) {
-                    m_screen.Post([this, tracks, error]() {
+                    if (!error.empty()) {
+                        std::string errLower = error;
+                        for (char& c : errLower) c = std::tolower(c);
+                        if (errLower.find("offline") != std::string::npos ||
+                            errLower.find("connection refused") != std::string::npos ||
+                            errLower.find("host not found") != std::string::npos ||
+                            errLower.find("network") != std::string::npos ||
+                            errLower.find("timed out") != std::string::npos) {
+                            SetIsOnline(false);
+                        }
+                    } else if (!tracks.empty()) {
+                        SetIsOnline(true);
+                    }
+                    std::unordered_map<std::string, std::string> plMap;
+                    if (m_trackService && !tracks.empty()) {
+                        plMap = m_trackService->GetTrackPlaylistMap(tracks);
+                    }
+                    m_screen.Post([this, tracks, error, plMap]() {
+                        m_searchScreen->SetTrackPlaylistMap(plMap);
                         m_searchScreen->SetSearchResults(tracks, error);
                     });
                     m_screen.PostEvent(ftxui::Event::Custom);
@@ -563,9 +636,17 @@ void TuiController::WireCallbacks() {
     };
 
     m_searchScreen->OnLoadMoreResults = [this](const std::string& query, const std::string& source, int offset) {
+        if (!m_isOnline) return;
         QMetaObject::invokeMethod(QCoreApplication::instance(), [this, query, source, offset]() {
             m_router.Search(source, query, 50, offset, [this](const std::vector<Track>& tracks, const std::string&) {
-                m_screen.Post([this, tracks]() {
+                std::unordered_map<std::string, std::string> plMap;
+                if (m_trackService && !tracks.empty()) {
+                    plMap = m_trackService->GetTrackPlaylistMap(tracks);
+                }
+                m_screen.Post([this, tracks, plMap]() {
+                    for (const auto& kv : plMap) {
+                        m_searchScreen->AddTrackToPlaylistMap(kv.first, kv.second);
+                    }
                     m_searchScreen->AppendSearchResults(tracks);
                 });
                 m_screen.PostEvent(ftxui::Event::Custom);
@@ -575,9 +656,14 @@ void TuiController::WireCallbacks() {
 
     m_searchScreen->OnPlayTrackNow = [this](const Track& track) {
         QMetaObject::invokeMethod(QCoreApplication::instance(), [this, track]() {
-            m_playlist.PlayTrackNow(track);
-            m_playbackCtrl.AttemptPlay(track);
-            OnTrackChanged(track);
+            int existingIdx = m_playlist.FindTrackIndexById(track.id);
+            if (existingIdx >= 0) {
+                m_playlist.JumpTo(existingIdx);
+            } else {
+                m_playlist.SetActiveTrack(track);
+                m_playbackCtrl.AttemptPlay(track);
+                OnTrackChanged(track);
+            }
         }, Qt::QueuedConnection);
     };
 
@@ -587,6 +673,10 @@ void TuiController::WireCallbacks() {
             SetStatusMessage("Добавлено в очередь: " + track.title);
             m_screen.PostEvent(ftxui::Event::Custom);
         }, Qt::QueuedConnection);
+    };
+
+    m_searchScreen->OnAddToPlaylist = [this](const Track& track) {
+        OpenAddToPlaylistModal(track);
     };
 
     m_searchScreen->OnLikeTrack = [this](const Track& track) {
@@ -758,6 +848,7 @@ void TuiController::SetCurrentProvider(IAudioProvider* provider) {
 
 void TuiController::OnTrackChanged(const Track& track) {
     m_playlist.SetActiveTrack(track);
+    m_lastRequestedCoverUrl = track.coverUrl;
     if (m_coverRenderer) {
         m_coverRenderer->RequestCover(track.coverUrl);
     }
@@ -777,6 +868,7 @@ void TuiController::OnAudioFetched(const std::vector<Track>& tracks) {
         m_searchScreen->SetFavoriteTrackIds(m_favoriteTrackIds);
     }
     if (m_nowPlayingScreen) {
+        m_nowPlayingScreen->SetFavoriteTrackIds(m_favoriteTrackIds);
         Track cur = m_playlist.GetCurrentTrack();
         m_nowPlayingScreen->SetCurrentTrackLiked(m_favoriteTrackIds.count(cur.id) > 0);
     }
@@ -811,7 +903,8 @@ void TuiController::OnSpectrumTick() {
         }
 
         Track cur = m_playlist.GetCurrentTrack();
-        if (m_coverRenderer) {
+        if (m_coverRenderer && !cur.coverUrl.empty() && cur.coverUrl != m_lastRequestedCoverUrl) {
+            m_lastRequestedCoverUrl = cur.coverUrl;
             m_coverRenderer->RequestCover(cur.coverUrl);
         }
     } else {
@@ -944,6 +1037,12 @@ void TuiController::ToggleBottomBar() {
     m_screen.PostEvent(ftxui::Event::Custom);
 }
 
+void TuiController::ToggleSidebar() {
+    m_showSidebar = !m_showSidebar;
+    if (m_sidebar) m_sidebar->SetVisible(m_showSidebar);
+    m_screen.PostEvent(ftxui::Event::Custom);
+}
+
 void TuiController::OpenSettingsModal() {
     if (m_settingsModal) {
         m_settingsModal->Show();
@@ -966,6 +1065,15 @@ void TuiController::DownloadTrack(const Track& track) {
             m_screen.PostEvent(ftxui::Event::Custom);
         });
     }, Qt::QueuedConnection);
+}
+
+void TuiController::SetIsOnline(bool online) {
+    if (m_isOnline == online) return;
+    m_isOnline = online;
+    m_bottomBar.SetIsOnline(online);
+    if (m_nowPlayingScreen) m_nowPlayingScreen->SetIsOnline(online);
+    if (m_searchScreen) m_searchScreen->SetIsOnline(online);
+    m_screen.PostEvent(ftxui::Event::Custom);
 }
 
 } // namespace tui

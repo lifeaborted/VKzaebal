@@ -86,6 +86,9 @@ int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
     app.setQuitOnLastWindowClosed(false);
 
+    QCoreApplication::addLibraryPath(QCoreApplication::applicationDirPath());
+    QCoreApplication::addLibraryPath(QCoreApplication::applicationDirPath() + "/plugins");
+
     QCommandLineParser parser;
     parser.setApplicationDescription("VKAudioPlayer - High-performance audio player & aggregator");
     QCommandLineOption helpOption = parser.addHelpOption();

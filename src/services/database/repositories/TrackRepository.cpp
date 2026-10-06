@@ -11,8 +11,8 @@
 TrackRepository::TrackRepository(QSqlDatabase& db)
     : m_db(db) {}
 
-void TrackRepository::SaveTracks(const std::vector<Track>& tracks) {
-    QThreadPool::globalInstance()->start([tracks]() {
+void TrackRepository::SaveTracks(const std::vector<Track>& tracks, bool isLibrary) {
+    QThreadPool::globalInstance()->start([tracks, isLibrary]() {
         QString connectionName = QUuid::createUuid().toString();
         {
             QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connectionName);
@@ -23,15 +23,16 @@ void TrackRepository::SaveTracks(const std::vector<Track>& tracks) {
                 db.transaction();
                 QSqlQuery query(db);
                 query.prepare(
-                    "INSERT INTO Tracks (source, external_id, artist, title, duration, cover_url, lyrics_id, lyrics) "
-                    "VALUES (:source, :external_id, :artist, :title, :duration, :cover_url, :lyrics_id, :lyrics) "
+                    "INSERT INTO Tracks (source, external_id, artist, title, duration, cover_url, lyrics_id, lyrics, is_library) "
+                    "VALUES (:source, :external_id, :artist, :title, :duration, :cover_url, :lyrics_id, :lyrics, :is_library) "
                     "ON CONFLICT(source, external_id) DO UPDATE SET "
                     "artist = excluded.artist, "
                     "title = excluded.title, "
                     "duration = excluded.duration, "
                     "cover_url = excluded.cover_url, "
                     "lyrics_id = CASE WHEN excluded.lyrics_id != '' THEN excluded.lyrics_id ELSE Tracks.lyrics_id END, "
-                    "lyrics = CASE WHEN excluded.lyrics != '' THEN excluded.lyrics ELSE Tracks.lyrics END"
+                    "lyrics = CASE WHEN excluded.lyrics != '' THEN excluded.lyrics ELSE Tracks.lyrics END, "
+                    "is_library = CASE WHEN excluded.is_library = 1 THEN 1 ELSE Tracks.is_library END"
                 );
 
                 for (const auto& track : tracks) {
@@ -43,6 +44,7 @@ void TrackRepository::SaveTracks(const std::vector<Track>& tracks) {
                     query.bindValue(":cover_url", QString::fromStdString(track.coverUrl));
                     query.bindValue(":lyrics_id", QString::fromStdString(track.lyrics_id));
                     query.bindValue(":lyrics", QString::fromStdString(track.lyrics));
+                    query.bindValue(":is_library", isLibrary ? 1 : 0);
                     query.exec();
                 }
                 db.commit();
@@ -53,6 +55,17 @@ void TrackRepository::SaveTracks(const std::vector<Track>& tracks) {
         }
         QSqlDatabase::removeDatabase(connectionName);
     });
+}
+
+void TrackRepository::SetTrackIsLibrary(const std::string& trackId, bool isLibrary) {
+    if (trackId.empty()) return;
+    QSqlQuery query(m_db);
+    query.prepare("UPDATE Tracks SET is_library = :isLib WHERE external_id = :id");
+    query.bindValue(":isLib", isLibrary ? 1 : 0);
+    query.bindValue(":id", QString::fromStdString(trackId));
+    if (!query.exec()) {
+        Logger::Log(LogLevel::ERROR, "DB: Failed to set is_library for track " + trackId);
+    }
 }
 
 Track TrackRepository::TrackFromSqlRecord(const QSqlQuery& query) {
@@ -79,11 +92,13 @@ std::vector<Track> TrackRepository::LoadTracks(const std::string& source, const 
 
     if (source == "Offline") {
         query.prepare("SELECT id, external_id, artist, title, duration, cover_url, lyrics_id, lyrics, source "
-                      "FROM Tracks");
+                      "FROM Tracks "
+                      "WHERE is_library = 1 "
+                      "ORDER BY id ASC");
     } else {
         query.prepare("SELECT id, external_id, artist, title, duration, cover_url, lyrics_id, lyrics, source "
                       "FROM Tracks "
-                      "WHERE source = :source "
+                      "WHERE source = :source AND is_library = 1 "
                       "ORDER BY id ASC");
         query.bindValue(":source", QString::fromStdString(source));
     }
@@ -134,16 +149,18 @@ void TrackRepository::UpdateTrackLyrics(const std::string& trackId, const std::s
 void TrackRepository::ClearTracksForSource(const std::string& source) {
     if (source == "all" || source == "ALL") {
         QSqlQuery q1(m_db);
-        if (!q1.exec("DELETE FROM Tracks")) {
-            Logger::Log(LogLevel::ERROR, "DB: Failed to clear Tracks: " + q1.lastError().text().toStdString());
-        }
+        q1.exec("DELETE FROM Tracks WHERE external_id NOT IN (SELECT track_id FROM PlaylistTracks)");
+        q1.exec("UPDATE Tracks SET is_library = 0");
     } else {
         QSqlQuery q1(m_db);
-        q1.prepare("DELETE FROM Tracks WHERE source = :source");
+        q1.prepare("DELETE FROM Tracks WHERE source = :source AND external_id NOT IN (SELECT track_id FROM PlaylistTracks)");
         q1.bindValue(":source", QString::fromStdString(source));
-        if (!q1.exec()) {
-            Logger::Log(LogLevel::ERROR, "DB: Failed to clear Tracks for source " + source + ": " + q1.lastError().text().toStdString());
-        }
+        q1.exec();
+
+        QSqlQuery q2(m_db);
+        q2.prepare("UPDATE Tracks SET is_library = 0 WHERE source = :source");
+        q2.bindValue(":source", QString::fromStdString(source));
+        q2.exec();
     }
 
     QSqlQuery qClean(m_db);
@@ -156,6 +173,7 @@ std::vector<Track> TrackRepository::LoadAllSourcesTracks() {
     query.prepare(
         "SELECT id, external_id, artist, title, duration, cover_url, lyrics_id, lyrics, source "
         "FROM Tracks "
+        "WHERE is_library = 1 "
         "ORDER BY CASE source "
         "    WHEN 'VK' THEN 1 "
         "    WHEN 'Spotify' THEN 2 "

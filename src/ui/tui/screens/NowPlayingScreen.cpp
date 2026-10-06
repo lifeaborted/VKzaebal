@@ -166,7 +166,18 @@ ftxui::Element NowPlayingScreen::RenderTopBlock() {
     }
 #endif
 
-    int titleMaxCols = std::max(20, termWidth - 55);
+    bool hasSidebar = (m_sidebar && m_sidebar->IsVisible());
+
+    int availVisWidth;
+    int titleMaxCols;
+    if (hasSidebar) {
+        availVisWidth = std::max(20, termWidth - 53);
+        titleMaxCols = std::max(20, availVisWidth - 4);
+    } else {
+        availVisWidth = std::clamp(termWidth - 36, 20, 80);
+        titleMaxCols = std::max(20, availVisWidth - 6);
+    }
+
     std::string scrolledTitle = ScrollText(trackTitle, titleMaxCols, m_tickerTick);
 
     bool isPlaying = m_audio.IsPlaying();
@@ -186,6 +197,10 @@ ftxui::Element NowPlayingScreen::RenderTopBlock() {
     std::vector<ftxui::Element> statusElements;
     statusElements.push_back(ftxui::text(" "));
     statusElements.push_back(ftxui::text(playStatus) | ftxui::bold | ftxui::color(statusColor));
+    if (!m_isOnline) {
+        statusElements.push_back(ftxui::text("  "));
+        statusElements.push_back(ftxui::text("[OFFLINE]") | ftxui::bold | ftxui::color(theme.accentRed));
+    }
     if (!m_statusMessage.empty()) {
         statusElements.push_back(ftxui::filler());
         statusElements.push_back(ftxui::text(m_statusMessage + " ") | ftxui::bold | ftxui::color(theme.accentOrange));
@@ -193,8 +208,6 @@ ftxui::Element NowPlayingScreen::RenderTopBlock() {
         statusElements.push_back(ftxui::filler());
     }
     ftxui::Element statusRow = ftxui::hbox(std::move(statusElements));
-
-    int availVisWidth = std::max(20, termWidth - 53);
 
     const int kVisHeight = 11;
     ftxui::Element visualizerElem = RenderVisualizer(availVisWidth, kVisHeight);
@@ -208,12 +221,23 @@ ftxui::Element NowPlayingScreen::RenderTopBlock() {
         std::move(statusRow),
         ftxui::text(""),
         std::move(visualizerElem)
-    }) | ftxui::flex;
+    });
 
+    if (hasSidebar) {
+        return ftxui::hbox({
+            std::move(coverElem),
+            ftxui::text(" "),
+            std::move(rightInfo) | ftxui::flex
+        });
+    }
+
+    // When sidebar is hidden/collapsed: center the entire top block with equal left and right margins (X)
     return ftxui::hbox({
+        ftxui::filler(),
         std::move(coverElem),
-        ftxui::text(" "),
-        std::move(rightInfo)
+        ftxui::text("  "),
+        std::move(rightInfo) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, availVisWidth),
+        ftxui::filler()
     });
 }
 
@@ -656,7 +680,24 @@ ftxui::Element NowPlayingScreen::RenderQueue() {
     if (m_queueCursor >= total) m_queueCursor = std::max(0, total - 1);
 
     int maxScroll = std::max(0, total - maxDisplayRows);
-    m_scrollOffset = std::clamp(m_scrollOffset, 0, maxScroll);
+
+    // Auto-scroll logic: only when total > maxDisplayRows and active track changes
+    bool trackChanged = (currentTrack.id != m_lastActiveTrackId || currentIdx != m_lastActiveTrackIndex);
+    if (trackChanged) {
+        m_lastActiveTrackId = currentTrack.id;
+        m_lastActiveTrackIndex = currentIdx;
+        if (m_autoScroll && total > maxDisplayRows && currentIdx >= 0 && currentIdx < total) {
+            m_scrollOffset = std::clamp(currentIdx - maxDisplayRows / 2, 0, maxScroll);
+            m_queueCursor = currentIdx;
+        }
+    }
+
+    if (total <= maxDisplayRows) {
+        m_scrollOffset = 0;
+    } else {
+        m_scrollOffset = std::clamp(m_scrollOffset, 0, maxScroll);
+    }
+
     int endIndex = std::min(total, m_scrollOffset + maxDisplayRows);
     int sliceCount = std::max(0, endIndex - m_scrollOffset);
 

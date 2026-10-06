@@ -53,6 +53,34 @@ std::vector<Track> TuiTrackService::SearchLocalTracks(const std::string& source,
     return matched;
 }
 
+std::unordered_map<std::string, std::string> TuiTrackService::GetTrackPlaylistMap(const std::vector<Track>& tracks) {
+    std::unordered_map<std::string, std::string> result;
+    auto playlists = m_dbManager.GetPlaylists();
+    std::unordered_map<int, std::string> plNames;
+    for (const auto& pl : playlists) {
+        plNames[pl.id] = pl.name;
+    }
+
+    for (const auto& t : tracks) {
+        if (t.id.empty()) continue;
+        auto plIds = m_dbManager.GetPlaylistIdsContainingTrack(t.id);
+        std::string joinedNames;
+        for (int id : plIds) {
+            auto it = plNames.find(id);
+            if (it != plNames.end() && !it->second.empty()) {
+                if (!joinedNames.empty()) {
+                    joinedNames += ", ";
+                }
+                joinedNames += it->second;
+            }
+        }
+        if (!joinedNames.empty()) {
+            result[t.id] = joinedNames;
+        }
+    }
+    return result;
+}
+
 std::unordered_set<std::string> TuiTrackService::LoadFavoriteTrackIds() {
     auto allTracks = m_dbManager.LoadAllSourcesTracks();
     std::unordered_set<std::string> ids;
@@ -103,6 +131,7 @@ void TuiTrackService::ToggleLikeForTrack(const Track& track,
         m_router.RemoveTrackFromFavorites(track, [this, track, &favoriteTrackIds, onComplete](bool ok, const std::string& err) {
             if (ok) {
                 favoriteTrackIds.erase(track.id);
+                m_dbManager.SetTrackIsLibrary(track.id, false);
                 std::string activeSource = m_configService ? m_configService->GetActiveSource() : "";
                 if (activeSource == track.source || (activeSource == "VK" && (track.source.empty() || track.source == "VK"))) {
                     int idx = m_playlist.FindTrackIndexById(track.id);
@@ -119,6 +148,8 @@ void TuiTrackService::ToggleLikeForTrack(const Track& track,
         m_router.AddTrackToFavorites(track, [this, track, &favoriteTrackIds, onComplete](bool ok, const std::string& err) {
             if (ok) {
                 favoriteTrackIds.insert(track.id);
+                m_dbManager.SaveTracks({track}, true);
+                m_dbManager.SetTrackIsLibrary(track.id, true);
                 std::string activeSource = m_configService ? m_configService->GetActiveSource() : "";
                 if (activeSource == track.source || (activeSource == "VK" && (track.source.empty() || track.source == "VK"))) {
                     int idx = m_playlist.FindTrackIndexById(track.id);

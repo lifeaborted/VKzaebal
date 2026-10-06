@@ -82,7 +82,20 @@ void SearchScreen::AppendSearchResults(const std::vector<Track>& moreResults) {
     }
 }
 
+void SearchScreen::AddTrackToPlaylistMap(const std::string& trackId, const std::string& playlistName) {
+    if (trackId.empty() || playlistName.empty()) return;
+    auto it = m_trackPlaylistMap.find(trackId);
+    if (it == m_trackPlaylistMap.end() || it->second.empty()) {
+        m_trackPlaylistMap[trackId] = playlistName;
+    } else if (it->second.find(playlistName) == std::string::npos) {
+        it->second += ", " + playlistName;
+    }
+}
+
 void SearchScreen::CheckTriggerLoadMore() {
+    if (m_searchMode == SearchMode::API && !m_isOnline) {
+        return;
+    }
     if (m_searchMode == SearchMode::API && !m_isLoading && !m_isLoadingMore && m_hasMoreResults && !m_searchQuery.empty()) {
         if (m_selectedResultIndex + 6 >= static_cast<int>(m_searchResults.size())) {
             m_isLoadingMore = true;
@@ -184,6 +197,7 @@ ftxui::Element SearchScreen::RenderCenterColumn() {
     ftxui::Element statsRow = ftxui::hbox({
         statsText.empty() ? ftxui::text("") : (ftxui::text(" " + statsText) | ftxui::color(theme.textMuted)),
         ftxui::filler(),
+        (!m_isOnline ? (ftxui::text("[OFFLINE]  ") | ftxui::bold | ftxui::color(theme.accentRed)) : ftxui::emptyElement()),
         std::move(sourceElem),
         std::move(modeElem)
     });
@@ -282,8 +296,13 @@ ftxui::Element SearchScreen::RenderCenterColumn() {
                 ftxui::text(" ")
             }) : ftxui::text("");
 
-            int centerWidth = std::max(30, termWidth - 60);
-            int availTextWidth = std::max(15, centerWidth - (showSource ? 32 : 26));
+            int sidebarWidth = (m_sidebar && m_sidebar->IsVisible()) ? 22 : 0;
+            int centerWidth = std::max(40, termWidth - sidebarWidth);
+            int leftFixedW = 4 + (showSource ? 6 : 0);
+            int rightFixedW = 22;
+            int availCenterW = std::max(30, centerWidth - leftFixedW - rightFixedW);
+            int titleWidth = std::clamp(availCenterW * 48 / 100, 20, 48);
+            int plWidth = std::max(18, availCenterW - titleWidth - 4);
 
             std::string srcLower = itemSource;
             for (char& c : srcLower) c = std::tolower(c);
@@ -293,18 +312,58 @@ ftxui::Element SearchScreen::RenderCenterColumn() {
             ftxui::Element metaElem;
             if (isSoundCloud) {
                 std::string scText = t.title.empty() ? t.artist : t.title;
-                scText = ScrollText(scText, availTextWidth, tick);
-                metaElem = ftxui::text(scText) | ftxui::bold | ftxui::color(isSelected ? theme.accent : ftxui::Color::White);
+                scText = ScrollText(scText, titleWidth, tick);
+                metaElem = ftxui::vbox({
+                    ftxui::text(scText) | ftxui::bold | ftxui::color(isSelected ? theme.accent : ftxui::Color::White),
+                    ftxui::text("")
+                }) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, titleWidth);
             } else {
                 std::string titleText = t.title.empty() ? (t.artist.empty() ? "Без названия" : t.artist) : t.title;
                 std::string artistText = t.artist.empty() ? "—" : t.artist;
-                titleText = ScrollText(titleText, availTextWidth, tick);
-                artistText = ScrollText(artistText, availTextWidth, tick);
+                titleText = ScrollText(titleText, titleWidth, tick);
+                artistText = ScrollText(artistText, titleWidth, tick);
                 metaElem = ftxui::vbox({
                     ftxui::text(titleText) | ftxui::bold | ftxui::color(isSelected ? theme.accent : ftxui::Color::White),
                     ftxui::text(artistText) | ftxui::color(theme.textMuted)
-                });
+                }) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, titleWidth);
             }
+
+            // Middle column: Playlist membership ("Добавлен в: <playlists>" without brackets)
+            std::string plLine1;
+            std::string plLine2;
+            auto plIt = m_trackPlaylistMap.find(t.id);
+            if (plIt != m_trackPlaylistMap.end() && !plIt->second.empty()) {
+                QString fullPlQ = QString::fromUtf8("Добавлен в: ") + QString::fromStdString(plIt->second);
+                if (fullPlQ.length() <= plWidth) {
+                    plLine1 = fullPlQ.toStdString();
+                } else {
+                    int splitPos = fullPlQ.lastIndexOf(", ", plWidth);
+                    if (splitPos <= 12) {
+                        splitPos = fullPlQ.lastIndexOf(' ', plWidth);
+                    }
+                    if (splitPos <= 12) {
+                        splitPos = plWidth;
+                    }
+                    plLine1 = fullPlQ.left(splitPos).trimmed().toStdString();
+                    if (splitPos < fullPlQ.length() && fullPlQ[splitPos] == ',') {
+                        plLine1 += ",";
+                        splitPos++;
+                    }
+                    QString rem = fullPlQ.mid(splitPos).trimmed();
+                    if (rem.length() > plWidth) {
+                        plLine2 = (rem.left(plWidth - 2).trimmed() + "..").toStdString();
+                    } else {
+                        plLine2 = rem.toStdString();
+                    }
+                }
+            }
+
+            ftxui::Element plElem = (plLine1.empty() && plLine2.empty())
+                ? ftxui::emptyElement()
+                : ftxui::vbox({
+                    ftxui::text(plLine1) | ftxui::color(theme.accentOrange),
+                    ftxui::text(plLine2) | ftxui::color(theme.accentOrange)
+                }) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, plWidth);
 
             ftxui::Element durElem = ftxui::text(FormatTime(t.duration)) | ftxui::color(theme.textMuted);
 
@@ -338,7 +397,10 @@ ftxui::Element SearchScreen::RenderCenterColumn() {
             ftxui::Element rowElem = ftxui::hbox({
                 idxElem,
                 sourceBadge,
-                metaElem | ftxui::flex,
+                metaElem,
+                ftxui::filler(),
+                plElem,
+                ftxui::filler(),
                 durElem,
                 ftxui::text(" "),
                 likeBtn,
@@ -611,8 +673,12 @@ bool SearchScreen::OnEvent(ftxui::Event event) {
                 if (mouse.button == ftxui::Mouse::Left && mouse.motion == ftxui::Mouse::Pressed) {
                     if (r < m_visibleResultIndices.size()) {
                         int trackIdx = m_visibleResultIndices[r];
-                        if (trackIdx >= 0 && trackIdx < static_cast<int>(m_searchResults.size()) && OnEnqueueTrack) {
-                            OnEnqueueTrack(m_searchResults[trackIdx]);
+                        if (trackIdx >= 0 && trackIdx < static_cast<int>(m_searchResults.size())) {
+                            if (OnAddToPlaylist) {
+                                OnAddToPlaylist(m_searchResults[trackIdx]);
+                            } else if (OnEnqueueTrack) {
+                                OnEnqueueTrack(m_searchResults[trackIdx]);
+                            }
                         }
                     }
                     return true;
@@ -764,6 +830,10 @@ bool SearchScreen::OnEvent(ftxui::Event event) {
             m_isInputActive = false;
             m_isBrowsingResults = true;
             m_selectedResultIndex = 0;
+            if (m_searchMode == SearchMode::API && !m_isOnline) {
+                SetSearchResults({}, "Нет подключения к сети [OFFLINE]");
+                return true;
+            }
             if (OnPerformSearch) {
                 OnPerformSearch(m_searchQuery, m_searchSource, m_searchMode);
             }
@@ -844,7 +914,10 @@ bool SearchScreen::OnEvent(ftxui::Event event) {
         }
     } else if (event == ftxui::Event::Character('+') || event == ftxui::Event::Character('=')) {
         if (!m_searchResults.empty() && m_selectedResultIndex >= 0 && m_selectedResultIndex < static_cast<int>(m_searchResults.size())) {
-            if (OnEnqueueTrack) {
+            if (OnAddToPlaylist) {
+                OnAddToPlaylist(m_searchResults[m_selectedResultIndex]);
+                return true;
+            } else if (OnEnqueueTrack) {
                 OnEnqueueTrack(m_searchResults[m_selectedResultIndex]);
                 return true;
             }

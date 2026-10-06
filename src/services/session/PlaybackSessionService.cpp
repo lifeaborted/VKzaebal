@@ -69,6 +69,9 @@ bool PlaybackSessionService::PopulatePlaylistFromStorage(const std::string& acti
         std::string plName = activeSource.substr(7);
         int plId = -1;
         cachedTracks = dbManager.LoadPlaylistTracksByName(plName, plId);
+        if (plId == -1) {
+            cachedTracks = dbManager.LoadTracks("VK");
+        }
     } else {
         cachedTracks = dbManager.LoadTracks(activeSource);
     }

@@ -125,6 +125,8 @@ void SidebarComponent::SelectIndex(int index) {
 }
 
 ftxui::Element SidebarComponent::Render() {
+    if (!m_isVisible) return ftxui::emptyElement();
+
     auto theme = m_theme;
     std::vector<ftxui::Element> elements;
 
@@ -264,6 +266,8 @@ ftxui::Element SidebarComponent::Render() {
 }
 
 bool SidebarComponent::OnEvent(ftxui::Event event) {
+    if (!m_isVisible) return false;
+
     if (event.is_mouse()) {
         const auto& mouse = event.mouse();
         m_hoveredIndex = -1;

@@ -146,6 +146,25 @@ void DatabaseManager::MigrateSchemaIfNeeded() {
         QSqlQuery q(m_db);
         q.exec("ALTER TABLE SourceSessions ADD COLUMN standard_queue TEXT;");
     }
+
+    // Проверяем наличие is_library в Tracks
+    QSqlQuery checkTracksLib("PRAGMA table_info(Tracks)", m_db);
+    bool hasIsLibrary = false;
+    bool tracksTableExists = false;
+    while (checkTracksLib.next()) {
+        tracksTableExists = true;
+        if (checkTracksLib.value(1).toString() == "is_library") {
+            hasIsLibrary = true;
+        }
+    }
+    if (tracksTableExists && !hasIsLibrary) {
+        QSqlQuery q(m_db);
+        q.exec("ALTER TABLE Tracks ADD COLUMN is_library INTEGER DEFAULT 1;");
+        // Треки, которые числятся в пользовательских плейлистах, но не были зафиксированы как библиотека
+        q.exec("UPDATE Tracks SET is_library = 0 WHERE external_id IN (SELECT track_id FROM PlaylistTracks) "
+               "AND external_id NOT IN (SELECT track_id FROM SourceSessions);");
+        Logger::Log(LogLevel::INFO, "DB: Added is_library column to Tracks table.");
+    }
 }
 
 void DatabaseManager::CreateTables() {
@@ -162,6 +181,7 @@ void DatabaseManager::CreateTables() {
                "cover_url TEXT, "
                "lyrics_id TEXT, "
                "lyrics TEXT, "
+               "is_library INTEGER DEFAULT 1, "
                "UNIQUE(source, external_id))");
 
     query.exec("CREATE INDEX IF NOT EXISTS idx_tracks_source_id ON Tracks(source, id)");
@@ -220,8 +240,12 @@ void DatabaseManager::ClearSetting(const QString& key) {
     query.exec();
 }
 
-void DatabaseManager::SaveTracks(const std::vector<Track>& tracks) {
-    m_trackRepo->SaveTracks(tracks);
+void DatabaseManager::SaveTracks(const std::vector<Track>& tracks, bool isLibrary) {
+    m_trackRepo->SaveTracks(tracks, isLibrary);
+}
+
+void DatabaseManager::SetTrackIsLibrary(const std::string& trackId, bool isLibrary) {
+    m_trackRepo->SetTrackIsLibrary(trackId, isLibrary);
 }
 
 Track DatabaseManager::TrackFromSqlRecord(const QSqlQuery& query) {
@@ -292,6 +316,9 @@ bool DatabaseManager::DeletePlaylist(int playlistId) {
 }
 
 bool DatabaseManager::DeletePlaylist(const std::string& name) {
+    if (!name.empty()) {
+        m_sessionRepo->ClearSourceSession("Custom:" + name);
+    }
     return m_playlistRepo->DeletePlaylist(name);
 }
 

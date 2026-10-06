@@ -51,7 +51,7 @@ void CoverArtRenderer::CancelActiveRequest() {
 
 QString CoverArtRenderer::GetCachePathForUrl(const std::string& url) const {
     QByteArray hash = QCryptographicHash::hash(QByteArray::fromStdString(url), QCryptographicHash::Sha1).toHex();
-    return PathManager::GetCacheDir() + "/covers/" + QString::fromUtf8(hash) + ".png";
+    return PathManager::GetCacheDir() + "/covers/" + QString::fromUtf8(hash) + ".jpg";
 }
 
 void CoverArtRenderer::PutInCache(const std::string& url, const QImage& img) {
@@ -78,12 +78,12 @@ void CoverArtRenderer::RequestCover(const std::string& url, int debounceMs) {
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_currentUrl == url && m_hasImage) {
+        if (m_currentUrl == url && (m_hasImage || m_activeReply != nullptr)) {
             return;
         }
     }
 
-    if (m_pendingUrl == url && m_debounceTimer && m_debounceTimer->isActive()) {
+    if (m_pendingUrl == url && ((m_debounceTimer && m_debounceTimer->isActive()) || m_activeReply != nullptr)) {
         return;
     }
 
@@ -96,11 +96,11 @@ void CoverArtRenderer::RequestCover(const std::string& url, int debounceMs) {
 }
 
 void CoverArtRenderer::ExecuteRequestCover(const std::string& url) {
-    CancelActiveRequest();
-
     if (url.empty()) {
+        CancelActiveRequest();
         std::lock_guard<std::mutex> lock(m_mutex);
         m_currentUrl.clear();
+        m_pendingUrl.clear();
         m_hasImage = false;
         m_currentImage = QImage();
         m_elementCache.clear();
@@ -110,10 +110,18 @@ void CoverArtRenderer::ExecuteRequestCover(const std::string& url) {
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_currentUrl == url && m_hasImage) {
+        if (m_currentUrl == url && (m_hasImage || m_activeReply != nullptr)) {
             return;
         }
+    }
+
+    CancelActiveRequest();
+
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
         m_currentUrl = url;
+        m_hasImage = false;
+        m_currentImage = QImage();
         m_elementCache.clear();
 
         // Check memory cache
@@ -130,12 +138,27 @@ void CoverArtRenderer::ExecuteRequestCover(const std::string& url) {
 
     // Check disk cache
     QString diskCachePath = GetCachePathForUrl(url);
-    if (QFile::exists(diskCachePath)) {
+    QString legacyPngPath = diskCachePath;
+    legacyPngPath.chop(4);
+    legacyPngPath.append(".png");
+
+    QString pathToLoad = diskCachePath;
+    if (!QFile::exists(pathToLoad) && QFile::exists(legacyPngPath)) {
+        pathToLoad = legacyPngPath;
+    }
+
+    if (QFile::exists(pathToLoad)) {
         QImage diskImg;
-        if (diskImg.load(diskCachePath)) {
+        if (diskImg.load(pathToLoad)) {
             QImage thumb = DownscaleIfNeeded(diskImg);
-            if (diskImg.width() > 160 || diskImg.height() > 160) {
-                thumb.save(diskCachePath, "PNG");
+            // If from legacy PNG or image wasn't downscaled, re-save as compressed JPEG (quality 80)
+            if (pathToLoad != diskCachePath || diskImg.width() > 160 || diskImg.height() > 160) {
+                bool saved = thumb.save(diskCachePath, "JPG", 80);
+                if (!saved) saved = thumb.save(diskCachePath, "JPEG", 80);
+                if (!saved) saved = thumb.save(diskCachePath);
+                if (saved && pathToLoad != diskCachePath) {
+                    QFile::remove(pathToLoad);
+                }
             }
             std::lock_guard<std::mutex> lock(m_mutex);
             PutInCache(url, thumb);
@@ -174,6 +197,7 @@ void CoverArtRenderer::ExecuteRequestCover(const std::string& url) {
     if (!reqUrl.isValid()) return;
 
     QNetworkRequest request(reqUrl);
+    request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
     request.setTransferTimeout(5000);
 
@@ -186,6 +210,7 @@ void CoverArtRenderer::ExecuteRequestCover(const std::string& url) {
         }
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError) {
+            Logger::Log(LogLevel::WARNING, "CoverArtRenderer: Network error fetching cover: " + reply->errorString().toStdString() + " (" + url + ")");
             return;
         }
 
@@ -199,21 +224,35 @@ void CoverArtRenderer::ExecuteRequestCover(const std::string& url) {
 
         QByteArray data = reply->readAll();
         QImage netImg;
-        if (netImg.loadFromData(data)) {
-            // Downscale to max 160x160 before saving to disk cache and memory (~5-15 KB PNG)
-            QImage thumb = DownscaleIfNeeded(netImg);
+        if (!netImg.loadFromData(data)) {
+            Logger::Log(LogLevel::WARNING, "CoverArtRenderer: Failed to decode image from data (" + std::to_string(data.size()) + " bytes) for " + url);
+            return;
+        }
 
-            // Save the compressed thumbnail to disk cache
-            thumb.save(diskCachePath, "PNG");
+        // Downscale to max 160x160 before saving to disk cache and memory (~3-10 KB JPEG)
+        QImage thumb = DownscaleIfNeeded(netImg, 160);
 
-            std::lock_guard<std::mutex> lock(m_mutex);
-            PutInCache(url, thumb);
-            if (m_currentUrl == url) {
-                m_currentImage = thumb;
-                m_hasImage = true;
-                m_elementCache.clear();
-                emit CoverReady(url);
-            }
+        // Ensure disk cache directory exists
+        QDir().mkpath(QFileInfo(diskCachePath).path());
+
+        // Save the compressed thumbnail to disk cache (robust fallback across all Qt image plugins)
+        bool saved = thumb.save(diskCachePath, "JPG", 80);
+        if (!saved) saved = thumb.save(diskCachePath, "JPEG", 80);
+        if (!saved) saved = thumb.save(diskCachePath);
+        if (!saved) {
+            QString pngPath = diskCachePath;
+            pngPath.chop(4);
+            pngPath.append(".png");
+            thumb.save(pngPath, "PNG");
+        }
+
+        std::lock_guard<std::mutex> lock(m_mutex);
+        PutInCache(url, thumb);
+        if (m_currentUrl == url) {
+            m_currentImage = thumb;
+            m_hasImage = true;
+            m_elementCache.clear();
+            emit CoverReady(url);
         }
     });
 }

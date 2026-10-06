@@ -32,6 +32,7 @@ public:
         std::function<void(int screenIndex)> switchScreen;
         std::function<void()> toggleSearchMode;
         std::function<void()> toggleBottomBar;
+        std::function<void()> toggleSidebar;
         std::function<void()> openPlaylistModal;
         std::function<void(bool showSystemInfo)> openHelpModal;
         std::function<void()> openSettingsModal;

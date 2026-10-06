@@ -28,6 +28,7 @@ private:
     int m_repeatMode = 1;
     bool m_shuffle = false;
     bool m_gapless = true;
+    bool m_autoScroll = true;
 };
 
 } // namespace tui

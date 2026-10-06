@@ -33,7 +33,8 @@ public:
     void ClearSetting(const QString& key);
 
     // --- Треки и очередь (Фасадные методы для обратной совместимости) ---
-    void SaveTracks(const std::vector<Track>& tracks);
+    void SaveTracks(const std::vector<Track>& tracks, bool isLibrary = true);
+    void SetTrackIsLibrary(const std::string& trackId, bool isLibrary);
     void SaveQueue(const std::vector<Track>& currentQueue, const std::string& source, bool isShuffle);
     std::vector<std::string> LoadQueueIds(const std::string& source, bool isShuffle) const;
 

@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <unordered_set>
+#include <unordered_map>
 #include <functional>
 #include <QString>
 #include "models/Track.h"
@@ -24,6 +25,7 @@ public:
                     ConfigurationService* configService = nullptr);
 
     std::vector<Track> SearchLocalTracks(const std::string& source, const QString& query);
+    std::unordered_map<std::string, std::string> GetTrackPlaylistMap(const std::vector<Track>& tracks);
 
     void DownloadTrack(const Track& track,
                        std::function<void(const std::string& msg)> onStatus);

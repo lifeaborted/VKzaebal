@@ -95,6 +95,8 @@ private:
     void OpenSettingsModal();
     void OpenHelpModal(bool showSystemInfo = false);
     void ToggleBottomBar();
+    void ToggleSidebar();
+    void SetIsOnline(bool online);
     void DownloadTrack(const Track& track);
 
     std::unordered_set<std::string> m_favoriteTrackIds;
@@ -113,6 +115,7 @@ private:
     ThemePalette m_currentTheme;
 
     std::unique_ptr<CoverArtRenderer> m_coverRenderer;
+    std::string m_lastRequestedCoverUrl;
     std::shared_ptr<SidebarComponent> m_sidebar;
     std::shared_ptr<NowPlayingScreen> m_nowPlayingScreen;
     std::shared_ptr<SearchScreen> m_searchScreen;
@@ -128,6 +131,8 @@ private:
     std::unique_ptr<TuiTrackService> m_trackService;
 
     int m_activeScreenIndex = 0;
+    bool m_showSidebar = true;
+    bool m_isOnline = true;
     ftxui::Component m_tabContainer;
     ftxui::Component m_rootContainer;
     ftxui::Component m_mainComponent;

@@ -18,6 +18,7 @@ void PlaybackSettingsTab::LoadSettings() {
     m_repeatMode = m_configService.GetRepeatMode();
     m_shuffle = m_configService.GetShuffle();
     m_gapless = m_configService.GetGaplessPlayback();
+    m_autoScroll = m_configService.GetAutoScroll();
 }
 
 std::vector<SettingItem> PlaybackSettingsTab::GetItems() const {
@@ -28,7 +29,8 @@ std::vector<SettingItem> PlaybackSettingsTab::GetItems() const {
         {"Длительность кроссфейда (мс)", "audio", "crossfade_ms", SettingType::STEPPER, {}, 500, 500, 10000},
         {"Режим повтора треков (repeat)", "session", "repeat", SettingType::CHOICE, {"Без повтора", "Повторять все", "Повторять один"}, 1, 0, 2},
         {"Случайный порядок (shuffle)", "session", "shuffle", SettingType::TOGGLE, {}, 1, 0, 1},
-        {"Непрерывный переход (gapless)", "audio", "gapless", SettingType::TOGGLE, {}, 1, 0, 1}
+        {"Непрерывный переход (gapless)", "audio", "gapless", SettingType::TOGGLE, {}, 1, 0, 1},
+        {"Автоскролл к треку (autoscroll)", "playback", "autoscroll", SettingType::TOGGLE, {}, 1, 0, 1}
     };
 }
 
@@ -54,6 +56,8 @@ std::string PlaybackSettingsTab::GetCurrentValue(int optionIndex) const {
             return m_shuffle ? "true" : "false";
         case 6:
             return m_gapless ? "true" : "false";
+        case 7:
+            return m_autoScroll ? "true" : "false";
         default:
             return "";
     }
@@ -82,6 +86,9 @@ void PlaybackSettingsTab::ChangeValue(int optionIndex, int delta) {
     } else if (optionIndex == 6) {
         m_gapless = !m_gapless;
         m_configService.SetGaplessPlayback(m_gapless);
+    } else if (optionIndex == 7) {
+        m_autoScroll = !m_autoScroll;
+        m_configService.SetAutoScroll(m_autoScroll);
     }
 }
 

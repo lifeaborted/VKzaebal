@@ -33,6 +33,9 @@ void ConfigurationService::EnsureDefaultConfig() {
         if (!settings.contains("Playback/SavePosition")) {
             settings.setValue("Playback/SavePosition", 2);
         }
+        if (!settings.contains("Playback/AutoScroll")) {
+            settings.setValue("Playback/AutoScroll", true);
+        }
         if (settings.contains("Session/Position")) {
             settings.remove("Session/Position");
         }
@@ -214,6 +217,17 @@ bool ConfigurationService::GetGaplessPlayback() const {
 void ConfigurationService::SetGaplessPlayback(bool enabled) {
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
     settings.setValue("Audio/GaplessPlayback", enabled);
+    settings.sync();
+}
+
+bool ConfigurationService::GetAutoScroll() const {
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    return settings.value("Playback/AutoScroll", true).toBool();
+}
+
+void ConfigurationService::SetAutoScroll(bool enabled) {
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    settings.setValue("Playback/AutoScroll", enabled);
     settings.sync();
 }
 

@@ -125,6 +125,15 @@ bool TuiInputRouter::RouteEvent(ftxui::Event event) {
         return true;
     }
 
+    // 6b. Сворачивание / разворачивание боковой панели: [ или ] или х / Х
+    if (!isTyping && (event == ftxui::Event::Character('[') || event == ftxui::Event::Character(']') ||
+                      event.character() == "х" || event.character() == "Х")) {
+        if (m_callbacks.toggleSidebar) {
+            m_callbacks.toggleSidebar();
+        }
+        return true;
+    }
+
     // 7. P -> Модалка менеджера плейлистов
     if (!isTyping && (event == ftxui::Event::Character('p') || event == ftxui::Event::Character('P') ||
                       event.character() == "З" || event.character() == "з")) {

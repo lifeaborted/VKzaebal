@@ -9,6 +9,7 @@
 #include <vector>
 #include <string>
 #include <unordered_set>
+#include <unordered_map>
 #include <functional>
 #include <memory>
 
@@ -39,6 +40,8 @@ public:
     void UpdateTheme(const ThemePalette& palette) { m_theme = palette; }
 
     void SetSearchResults(const std::vector<Track>& results, const std::string& error = "");
+    void SetTrackPlaylistMap(const std::unordered_map<std::string, std::string>& plMap) { m_trackPlaylistMap = plMap; }
+    void AddTrackToPlaylistMap(const std::string& trackId, const std::string& playlistName);
     void AppendSearchResults(const std::vector<Track>& moreResults);
     void SetSearchLoading(bool loading);
     void FocusSearchInput();
@@ -47,6 +50,8 @@ public:
     std::string GetSearchQuery() const;
     void AdvanceTicker() { m_tickerTick++; }
     void SetShowBottomBar(bool show) { m_showBottomBar = show; }
+    void SetIsOnline(bool online) { m_isOnline = online; }
+    bool IsOnline() const { return m_isOnline; }
 
     void SetSearchSource(const std::string& src);
 
@@ -66,6 +71,7 @@ public:
     std::function<void(const Track& track)> OnPlayTrackNow;
     std::function<void(int queueIndex)> OnPlayQueueIndexRequested;
     std::function<void(const Track& track)> OnEnqueueTrack;
+    std::function<void(const Track& track)> OnAddToPlaylist;
     std::function<void(const Track& track)> OnLikeTrack;
     std::function<void(const Track& track)> OnDownloadTrack;
     std::function<void(double seconds)> OnSeekRequested;
@@ -97,9 +103,11 @@ private:
     bool m_isLoading = false;
     bool m_isLoadingMore = false;
     bool m_hasMoreResults = true;
+    bool m_isOnline = true;
     std::string m_errorMessage;
     std::vector<Track> m_searchResults;
     std::unordered_set<std::string> m_favoriteTrackIds;
+    std::unordered_map<std::string, std::string> m_trackPlaylistMap;
     ThemePalette m_theme = GetDefaultTheme();
 
     // Results navigation & hit-testing

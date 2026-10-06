@@ -48,4 +48,7 @@ public:
 
     bool GetGaplessPlayback() const;
     void SetGaplessPlayback(bool enabled);
+
+    bool GetAutoScroll() const;
+    void SetAutoScroll(bool enabled);
 };

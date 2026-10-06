@@ -42,6 +42,10 @@ public:
         else m_favoriteTrackIds.erase(trackId);
     }
     void SetShowBottomBar(bool show) { m_showBottomBar = show; }
+    void SetAutoScroll(bool enable) { m_autoScroll = enable; }
+    bool GetAutoScroll() const { return m_autoScroll; }
+    void SetIsOnline(bool online) { m_isOnline = online; }
+    bool IsOnline() const { return m_isOnline; }
 
     void UpdateTheme(const ThemePalette& palette, const VisualizerConfig& visConfig);
 
@@ -123,6 +127,10 @@ private:
     ftxui::Box m_queueListBox;
     int m_tickerTick = 0;
     bool m_showBottomBar = true;
+    bool m_autoScroll = true;
+    bool m_isOnline = true;
+    int m_lastActiveTrackIndex = -2;
+    std::string m_lastActiveTrackId;
 };
 
 } // namespace tui
