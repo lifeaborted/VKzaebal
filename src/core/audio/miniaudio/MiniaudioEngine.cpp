@@ -5,6 +5,7 @@
 
 #include <QFile>
 #include <QString>
+#include <QStringList>
 #include <algorithm>
 #include <chrono>
 #include <QSettings>
@@ -30,6 +31,7 @@ MiniaudioEngine::MiniaudioEngine() : m_demuxer([this](const uint8_t* payload, si
     m_volume = 1.0f;
     m_mainBuffer.resize(16384, 0);
     m_fadeOutBuffer.resize(16384, 0);
+    m_mixBuffer.resize(16384, 0.0f);
 
     m_fftComplexData.resize(FFT_SIZE);
     for (size_t i = 0; i < FFT_SIZE; ++i) {
@@ -56,9 +58,16 @@ MiniaudioEngine::~MiniaudioEngine() {
     }
     StopFadeOut();
     m_decoder.reset();
+    CleanupResampler();
     if (m_aacDecoder) {
         aacDecoder_Close(m_aacDecoder);
         m_aacDecoder = nullptr;
+    }
+    if (m_eqFiltersInitialized) {
+        for (size_t b = 0; b < EQ_NUM_BANDS; ++b) {
+            ma_peak2_uninit(&m_eqFilters[b], nullptr);
+        }
+        m_eqFiltersInitialized = false;
     }
     m_pcmBuffer.Clear();
 }
@@ -142,7 +151,8 @@ void MiniaudioEngine::SetPositionSeconds(double pos) {
             m_aacBuffer.clear();
             m_mp3Buffer.clear();
             m_mp3ReadOffset = 0;
-            m_demuxer.Reset();
+            m_demuxer.Reset(true);
+            m_atomicNetworkBufferSize.store(0, std::memory_order_relaxed);
             if (m_aacDecoder) {
                 aacDecoder_Close(m_aacDecoder);
                 m_aacDecoder = aacDecoder_Open(TT_MP4_ADTS, 1);
@@ -223,6 +233,7 @@ bool MiniaudioEngine::Init() {
     }
 
     m_isDeviceInitialized = true;
+    InitEqualizer();
     Logger::Log(LogLevel::INFO, "Miniaudio: Device initialized successfully.");
     return true;
 }
@@ -282,19 +293,27 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
             }
         }
 
-        int16_t* pOut = static_cast<int16_t*>(pOutput);
+        if (engine->m_mixBuffer.size() < frameCount * 2) {
+            engine->m_mixBuffer.resize(frameCount * 2, 0.0f);
+        }
+
         for (ma_uint32 i = 0; i < frameCount; ++i) {
             float mainVol = 1.0f;
             float fadeOutVol = 0.0f;
 
             if (engine->m_isCrossfading) {
-                if (engine->m_crossfadeFramesRemaining > 0) {
-                    float progress = 1.0f - (static_cast<float>(engine->m_crossfadeFramesRemaining) / engine->m_crossfadeFramesTotal);
-                    mainVol = progress;
-                    fadeOutVol = 1.0f - progress;
-                    engine->m_crossfadeFramesRemaining--;
+                if (framesRead > 0) {
+                    if (engine->m_crossfadeFramesRemaining > 0) {
+                        float progress = 1.0f - (static_cast<float>(engine->m_crossfadeFramesRemaining) / engine->m_crossfadeFramesTotal);
+                        mainVol = progress;
+                        fadeOutVol = 1.0f - progress;
+                        engine->m_crossfadeFramesRemaining--;
+                    } else {
+                        engine->StopFadeOut();
+                    }
                 } else {
-                    engine->StopFadeOut();
+                    mainVol = 0.0f;
+                    fadeOutVol = 1.0f;
                 }
             }
 
@@ -302,13 +321,23 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
                 int idx = i * 2 + c;
                 float s1 = (i < framesRead) ? engine->m_mainBuffer[idx] * mainVol : 0.0f;
                 float s2 = (i < fadeOutFramesRead) ? engine->m_fadeOutBuffer[idx] * fadeOutVol : 0.0f;
-
-                float mixed = s1 + s2;
-                if (mixed > 32767.0f) mixed = 32767.0f;
-                if (mixed < -32768.0f) mixed = -32768.0f;
-
-                pOut[idx] = static_cast<int16_t>(mixed);
+                engine->m_mixBuffer[idx] = s1 + s2;
             }
+        }
+
+        // --- ЭКВАЛАЙЗЕР (32-bit float DSP Biquad in-place) ---
+        if (engine->m_eqEnabled.load(std::memory_order_relaxed) && engine->m_eqFiltersInitialized) {
+            for (size_t b = 0; b < EQ_NUM_BANDS; ++b) {
+                ma_peak2_process_pcm_frames(&engine->m_eqFilters[b], engine->m_mixBuffer.data(), engine->m_mixBuffer.data(), frameCount);
+            }
+        }
+
+        int16_t* pOut = static_cast<int16_t*>(pOutput);
+        for (ma_uint32 i = 0; i < frameCount * 2; ++i) {
+            float val = engine->m_mixBuffer[i];
+            if (val > 32767.0f) val = 32767.0f;
+            if (val < -32768.0f) val = -32768.0f;
+            pOut[i] = static_cast<int16_t>(val);
         }
 
         {
@@ -326,8 +355,8 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
                 size_t startIdx = 256 - samplesToCopy;
                 size_t pOutStart = frameCount - samplesToCopy;
                 for (size_t i = 0; i < samplesToCopy; ++i) {
-                    float left = pOut[(pOutStart + i) * 2] / 32768.0f;
-                    float right = pOut[(pOutStart + i) * 2 + 1] / 32768.0f;
+                    float left = engine->m_mixBuffer[(pOutStart + i) * 2] / 32768.0f;
+                    float right = engine->m_mixBuffer[(pOutStart + i) * 2 + 1] / 32768.0f;
                     engine->m_recentSamples[startIdx + i] = (left + right) / 2.0f;
                 }
             }
@@ -466,17 +495,19 @@ void MiniaudioEngine::PushNetworkData(const uint8_t* data, size_t size) {
     {
         std::lock_guard<std::mutex> lock(m_networkMutex);
         m_aacBuffer.insert(m_aacBuffer.end(), data, data + size);
+        size_t mp3Remaining = (m_mp3Buffer.size() > m_mp3ReadOffset) ? (m_mp3Buffer.size() - m_mp3ReadOffset) : 0;
+        m_atomicNetworkBufferSize.store(m_aacBuffer.size() + mp3Remaining, std::memory_order_relaxed);
     }
     m_decodeCv.notify_one();
 }
 
 size_t MiniaudioEngine::GetNetworkBufferSize() const {
-    std::lock_guard<std::mutex> lock(m_networkMutex);
-    size_t mp3Remaining = (m_mp3Buffer.size() > m_mp3ReadOffset) ? (m_mp3Buffer.size() - m_mp3ReadOffset) : 0;
-    return m_aacBuffer.size() + mp3Remaining;
+    return m_atomicNetworkBufferSize.load(std::memory_order_relaxed);
 }
 
 void MiniaudioEngine::DecodeLoop() {
+    std::vector<uint8_t> localChunk;
+
     while (m_isDecoding) {
         {
             std::unique_lock<std::mutex> lock(m_networkMutex);
@@ -492,70 +523,117 @@ void MiniaudioEngine::DecodeLoop() {
             if (m_aacBuffer.empty() && (m_mp3Buffer.size() <= m_mp3ReadOffset)) {
                 if (m_isNetworkFinished) {
                     lock.unlock();
-                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
                 }
                 continue;
             }
+
+            if (!m_aacBuffer.empty()) {
+                size_t take = std::min(m_aacBuffer.size(), static_cast<size_t>(65536));
+                if (m_demuxer.IsTsStream() && m_aacBuffer.size() > take) {
+                    take -= (take % 188);
+                    if (take == 0) take = 188;
+                }
+                localChunk.assign(m_aacBuffer.begin(), m_aacBuffer.begin() + take);
+                m_aacBuffer.erase(m_aacBuffer.begin(), m_aacBuffer.begin() + take);
+                size_t mp3Remaining = (m_mp3Buffer.size() > m_mp3ReadOffset) ? (m_mp3Buffer.size() - m_mp3ReadOffset) : 0;
+                m_atomicNetworkBufferSize.store(m_aacBuffer.size() + mp3Remaining, std::memory_order_relaxed);
+            }
+        } // m_networkMutex разблокирован! Все декодирование идет без удержания мьютекса
+
+        while (m_isDecoding && m_pcmBuffer.GetAvailableWrite() < 176400) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (!m_isDecoding) break;
+
+        if (!localChunk.empty()) {
+            if (!m_demuxer.IsTsStreamDetermined()) {
+                m_demuxer.DetermineStreamType(localChunk.data(), localChunk.size());
+            }
+
+            if (m_demuxer.IsTsStreamDetermined() && !m_demuxer.IsTsStream()) {
+                m_demuxer.ProcessBytes(localChunk.data(), localChunk.size());
+                DecodeMp3Payload(nullptr, 0);
+            } else {
+                size_t bytesConsumed = 0;
+                while (localChunk.size() - bytesConsumed >= 188) {
+                    while (m_isDecoding && m_pcmBuffer.GetAvailableWrite() < 176400) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    }
+                    if (!m_isDecoding) break;
+
+                    m_demuxer.ProcessBytes(localChunk.data() + bytesConsumed, 188);
+                    bytesConsumed += 188;
+
+                    if (m_demuxer.IsTsStreamDetermined() && !m_demuxer.IsTsStream()) {
+                        break;
+                    }
+                }
+
+                if (!m_demuxer.IsTsStream() && bytesConsumed < localChunk.size()) {
+                    m_demuxer.ProcessBytes(localChunk.data() + bytesConsumed, localChunk.size() - bytesConsumed);
+                } else if (m_isNetworkFinished && bytesConsumed < localChunk.size()) {
+                    m_demuxer.ProcessBytes(localChunk.data() + bytesConsumed, localChunk.size() - bytesConsumed);
+                }
+            }
+            localChunk.clear();
         }
 
-        if (m_pcmBuffer.GetAvailableWrite() < 176400) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(30));
-            continue;
-        }
+        DecodeMp3Payload(nullptr, 0);
+    }
+}
 
-        DecodeAACFrames();
+void MiniaudioEngine::EnsureResampler(ma_uint32 inSampleRate) {
+    std::lock_guard<std::mutex> lock(m_resamplerMutex);
+    if (inSampleRate == 0 || inSampleRate == SAMPLE_RATE) {
+        if (m_isResamplerInitialized) {
+            ma_resampler_uninit(&m_resampler, NULL);
+            m_isResamplerInitialized = false;
+            m_currentInputSampleRate = 0;
+        }
+        return;
+    }
+
+    if (m_isResamplerInitialized && m_currentInputSampleRate == inSampleRate) {
+        return;
+    }
+
+    if (m_isResamplerInitialized) {
+        ma_resampler_uninit(&m_resampler, NULL);
+        m_isResamplerInitialized = false;
+        m_currentInputSampleRate = 0;
+    }
+
+    ma_resampler_config config = ma_resampler_config_init(
+        ma_format_s16,
+        2,
+        inSampleRate,
+        SAMPLE_RATE,
+        ma_resample_algorithm_linear
+    );
+
+    if (ma_resampler_init(&config, NULL, &m_resampler) == MA_SUCCESS) {
+        m_isResamplerInitialized = true;
+        m_currentInputSampleRate = inSampleRate;
+        Logger::Log(LogLevel::INFO, "Miniaudio: Initialized resampler: " +
+                    std::to_string(inSampleRate) + "Hz -> " + std::to_string(SAMPLE_RATE) + "Hz");
+    } else {
+        Logger::Log(LogLevel::ERROR, "Miniaudio: Failed to init resampler for " +
+                    std::to_string(inSampleRate) + "Hz");
+    }
+}
+
+void MiniaudioEngine::CleanupResampler() {
+    std::lock_guard<std::mutex> lock(m_resamplerMutex);
+    if (m_isResamplerInitialized) {
+        ma_resampler_uninit(&m_resampler, NULL);
+        m_isResamplerInitialized = false;
+        m_currentInputSampleRate = 0;
     }
 }
 
 void MiniaudioEngine::DecodeAACFrames() {
-    std::lock_guard<std::mutex> lock(m_networkMutex);
-
-    if (!m_aacBuffer.empty() && !m_demuxer.IsTsStreamDetermined()) {
-        m_demuxer.DetermineStreamType(m_aacBuffer.data(), m_aacBuffer.size());
-    }
-
-    if (m_demuxer.IsTsStreamDetermined() && !m_demuxer.IsTsStream()) {
-        if (!m_aacBuffer.empty()) {
-            m_demuxer.ProcessBytes(m_aacBuffer.data(), m_aacBuffer.size());
-            m_aacBuffer.clear();
-        }
-        DecodeMp3Payload(nullptr, 0);
-        return;
-    }
-
-    DecodeMp3Payload(nullptr, 0);
-
-    size_t bytesConsumed = 0;
-    while (m_aacBuffer.size() - bytesConsumed >= 188) {
-        if (m_pcmBuffer.GetAvailableWrite() < 176400) {
-            break;
-        }
-
-        m_demuxer.ProcessBytes(m_aacBuffer.data() + bytesConsumed, 188);
-        bytesConsumed += 188;
-
-        if (m_demuxer.IsTsStreamDetermined() && !m_demuxer.IsTsStream()) {
-            break;
-        }
-    }
-
-    if (!m_demuxer.IsTsStream() && bytesConsumed < m_aacBuffer.size()) {
-        m_demuxer.ProcessBytes(m_aacBuffer.data() + bytesConsumed, m_aacBuffer.size() - bytesConsumed);
-        bytesConsumed = m_aacBuffer.size();
-    } else if (m_isNetworkFinished && bytesConsumed < m_aacBuffer.size() && m_pcmBuffer.GetAvailableWrite() >= 176400) {
-        m_demuxer.ProcessBytes(m_aacBuffer.data() + bytesConsumed, m_aacBuffer.size() - bytesConsumed);
-        bytesConsumed = m_aacBuffer.size();
-    }
-
-    if (bytesConsumed >= m_aacBuffer.size()) {
-        m_aacBuffer.clear();
-    } else if (bytesConsumed > 0) {
-        m_aacBuffer.erase(m_aacBuffer.begin(), m_aacBuffer.begin() + bytesConsumed);
-    }
-
-    if (m_pcmBuffer.GetAvailableWrite() >= 176400 || m_isNetworkFinished) {
-        DecodeMp3Payload(nullptr, 0);
-    }
+    // Вся логика декодирования теперь работает в неблокирующем цикле DecodeLoop
 }
 
 void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSize) {
@@ -567,6 +645,7 @@ void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSiz
 
     int16_t pcmBuf[4096];
     int16_t stereoBuf[4096 * 2];
+    int16_t resampledBuf[8192 * 2];
 
     while (bytesValid > 0) {
         UINT prevBytesValid = bytesValid;
@@ -604,6 +683,20 @@ void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSiz
                     pcmDataPtr = stereoBuf;
                 } else {
                     pcmDataPtr = pcmBuf;
+                }
+
+                ma_uint32 aacRate = (info->sampleRate > 0) ? static_cast<ma_uint32>(info->sampleRate) : SAMPLE_RATE;
+                EnsureResampler(aacRate);
+
+                if (m_isResamplerInitialized) {
+                    std::lock_guard<std::mutex> resLock(m_resamplerMutex);
+                    ma_uint64 inFrames = framesToOutput;
+                    ma_uint64 outFrames = 8192;
+                    ma_result r = ma_resampler_process_pcm_frames(&m_resampler, pcmDataPtr, &inFrames, resampledBuf, &outFrames);
+                    if (r == MA_SUCCESS) {
+                        framesToOutput = static_cast<ma_uint32>(outFrames);
+                        pcmDataPtr = resampledBuf;
+                    }
                 }
 
                 ma_uint64 discard = m_networkDiscardFrames.load();
@@ -647,6 +740,7 @@ void MiniaudioEngine::DecodeMp3Payload(const uint8_t* payload, size_t payloadSiz
 
     int16_t pcmBuf[MINIMP3_MAX_SAMPLES_PER_FRAME];
     int16_t stereoBuf[MINIMP3_MAX_SAMPLES_PER_FRAME * 2];
+    int16_t resampledBuf[8192 * 2];
     mp3dec_frame_info_t info;
 
     while (m_mp3Buffer.size() - m_mp3ReadOffset > 0) {
@@ -689,6 +783,20 @@ void MiniaudioEngine::DecodeMp3Payload(const uint8_t* payload, size_t payloadSiz
                 pcmDataPtr = stereoBuf;
             } else {
                 pcmDataPtr = pcmBuf;
+            }
+
+            ma_uint32 mp3Rate = (info.hz > 0) ? static_cast<ma_uint32>(info.hz) : SAMPLE_RATE;
+            EnsureResampler(mp3Rate);
+
+            if (m_isResamplerInitialized) {
+                std::lock_guard<std::mutex> resLock(m_resamplerMutex);
+                ma_uint64 inFrames = framesToOutput;
+                ma_uint64 outFrames = 8192;
+                ma_result r = ma_resampler_process_pcm_frames(&m_resampler, pcmDataPtr, &inFrames, resampledBuf, &outFrames);
+                if (r == MA_SUCCESS) {
+                    framesToOutput = static_cast<ma_uint32>(outFrames);
+                    pcmDataPtr = resampledBuf;
+                }
             }
 
             ma_uint64 discard = m_networkDiscardFrames.load();
@@ -750,11 +858,13 @@ void MiniaudioEngine::ClearBuffers(bool crossfade, int nextDurationSec) {
         m_mp3Buffer.shrink_to_fit();
         m_mp3ReadOffset = 0;
         m_demuxer.Reset();
+        m_atomicNetworkBufferSize.store(0, std::memory_order_relaxed);
         if (m_aacDecoder) {
             aacDecoder_Close(m_aacDecoder);
             m_aacDecoder = aacDecoder_Open(TT_MP4_ADTS, 1);
         }
         mp3dec_init(&m_mp3Decoder);
+        CleanupResampler();
     }
     m_decodeCv.notify_all();
 }
@@ -811,5 +921,128 @@ void MiniaudioEngine::PollEvents() {
         if (OnTrackFinished) {
             OnTrackFinished();
         }
+    }
+}
+
+void MiniaudioEngine::InitEqualizer() {
+    LoadEqualizerConfig();
+
+    for (size_t b = 0; b < EQ_NUM_BANDS; ++b) {
+        ma_peak2_config config = ma_peak2_config_init(
+            ma_format_f32,
+            2,
+            SAMPLE_RATE,
+            static_cast<double>(m_eqGains[b]),
+            EQ_Q,
+            EQ_FREQUENCIES[b]
+        );
+        ma_result res = ma_peak2_init(&config, nullptr, &m_eqFilters[b]);
+        if (res != MA_SUCCESS) {
+            Logger::Log(LogLevel::ERROR, "Miniaudio: Failed to init EQ filter for band " + std::to_string(b));
+        }
+    }
+    m_eqFiltersInitialized = true;
+    Logger::Log(LogLevel::INFO, "Miniaudio: 10-band equalizer initialized (f32 DSP).");
+}
+
+void MiniaudioEngine::SetEqualizerEnabled(bool enabled) {
+    m_eqEnabled.store(enabled, std::memory_order_relaxed);
+    SaveEqualizerConfig();
+}
+
+bool MiniaudioEngine::IsEqualizerEnabled() const {
+    return m_eqEnabled.load(std::memory_order_relaxed);
+}
+
+void MiniaudioEngine::SetEqualizerBandGain(int bandIndex, float gainDb) {
+    if (bandIndex < 0 || bandIndex >= static_cast<int>(EQ_NUM_BANDS)) return;
+    gainDb = std::clamp(gainDb, -12.0f, 12.0f);
+    m_eqGains[bandIndex] = gainDb;
+
+    if (m_eqFiltersInitialized) {
+        std::lock_guard<std::mutex> lock(m_audioMutex);
+        ma_peak2_config config = ma_peak2_config_init(
+            ma_format_f32,
+            2,
+            SAMPLE_RATE,
+            static_cast<double>(gainDb),
+            EQ_Q,
+            EQ_FREQUENCIES[bandIndex]
+        );
+        ma_peak2_reinit(&config, &m_eqFilters[bandIndex]);
+    }
+    SaveEqualizerConfig();
+}
+
+float MiniaudioEngine::GetEqualizerBandGain(int bandIndex) const {
+    if (bandIndex < 0 || bandIndex >= static_cast<int>(EQ_NUM_BANDS)) return 0.0f;
+    return m_eqGains[bandIndex];
+}
+
+void MiniaudioEngine::SetEqualizerBands(const std::vector<float>& gainsDb) {
+    std::lock_guard<std::mutex> lock(m_audioMutex);
+    for (size_t b = 0; b < EQ_NUM_BANDS && b < gainsDb.size(); ++b) {
+        float gain = std::clamp(gainsDb[b], -12.0f, 12.0f);
+        m_eqGains[b] = gain;
+        if (m_eqFiltersInitialized) {
+            ma_peak2_config config = ma_peak2_config_init(
+                ma_format_f32,
+                2,
+                SAMPLE_RATE,
+                static_cast<double>(gain),
+                EQ_Q,
+                EQ_FREQUENCIES[b]
+            );
+            ma_peak2_reinit(&config, &m_eqFilters[b]);
+        }
+    }
+    SaveEqualizerConfig();
+}
+
+std::vector<float> MiniaudioEngine::GetEqualizerBands() const {
+    return std::vector<float>(m_eqGains.begin(), m_eqGains.end());
+}
+
+void MiniaudioEngine::SetEqualizerPreset(const std::string& presetName) {
+    m_eqPreset = presetName;
+    SaveEqualizerConfig();
+}
+
+std::string MiniaudioEngine::GetEqualizerPreset() const {
+    return m_eqPreset;
+}
+
+void MiniaudioEngine::SaveEqualizerConfig() {
+    QSettings settings("config.ini", QSettings::IniFormat);
+    settings.beginGroup("Equalizer");
+    settings.setValue("Enabled", m_eqEnabled.load(std::memory_order_relaxed));
+    settings.setValue("Preset", QString::fromStdString(m_eqPreset));
+    QStringList gainsList;
+    for (size_t b = 0; b < EQ_NUM_BANDS; ++b) {
+        gainsList.append(QString::number(m_eqGains[b], 'f', 1));
+    }
+    settings.setValue("Bands", gainsList.join(","));
+    settings.endGroup();
+}
+
+void MiniaudioEngine::LoadEqualizerConfig() {
+    QSettings settings("config.ini", QSettings::IniFormat);
+    settings.beginGroup("Equalizer");
+    m_eqEnabled.store(settings.value("Enabled", false).toBool(), std::memory_order_relaxed);
+    m_eqPreset = settings.value("Preset", "Flat").toString().toStdString();
+    QString bandsStr = settings.value("Bands", "").toString();
+    settings.endGroup();
+
+    if (!bandsStr.isEmpty()) {
+        QStringList parts = bandsStr.split(",");
+        for (int i = 0; i < parts.size() && i < static_cast<int>(EQ_NUM_BANDS); ++i) {
+            bool ok = false;
+            float val = parts[i].trimmed().toFloat(&ok);
+            if (ok) {
+                m_eqGains[i] = std::clamp(val, -12.0f, 12.0f);
+            }
+        }
+    } else {
+        m_eqGains.fill(0.0f);
     }
 }

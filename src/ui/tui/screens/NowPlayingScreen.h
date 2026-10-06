@@ -46,6 +46,12 @@ public:
     bool GetAutoScroll() const { return m_autoScroll; }
     void SetIsOnline(bool online) { m_isOnline = online; }
     bool IsOnline() const { return m_isOnline; }
+    void SetActiveSource(const std::string& sourceName, bool isAuthorized) {
+        m_activeSource = sourceName;
+        m_isSourceAuthorized = isAuthorized;
+    }
+    bool IsCurrentSourceAuthorized() const { return m_isSourceAuthorized; }
+    std::string GetActiveSource() const { return m_activeSource; }
 
     void UpdateTheme(const ThemePalette& palette, const VisualizerConfig& visConfig);
 
@@ -69,6 +75,8 @@ public:
     std::function<void(const Track& track)> OnToggleLike;
     std::function<void(const Track& track)> OnAddToPlaylist;
     std::function<void(const Track& track)> OnDownloadTrackRequested;
+    std::function<void(const std::string& sourceName)> OnLoginRequested;
+    std::function<void()> OnOpenEqualizerRequested;
 
 private:
     ftxui::Element RenderTopBlock();
@@ -124,6 +132,7 @@ private:
     ftxui::Box m_repeatBtnBox;
     ftxui::Box m_volMinusBox;
     ftxui::Box m_volPlusBox;
+    ftxui::Box m_eqBox;
     ftxui::Box m_queueListBox;
     int m_tickerTick = 0;
     bool m_showBottomBar = true;
@@ -131,6 +140,10 @@ private:
     bool m_isOnline = true;
     int m_lastActiveTrackIndex = -2;
     std::string m_lastActiveTrackId;
+    std::string m_activeSource = "VK";
+    bool m_isSourceAuthorized = true;
+    bool m_isLoginBtnHovered = false;
+    ftxui::Box m_loginBtnBox;
 };
 
 } // namespace tui

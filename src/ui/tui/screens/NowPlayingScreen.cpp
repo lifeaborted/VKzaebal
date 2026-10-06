@@ -174,7 +174,7 @@ ftxui::Element NowPlayingScreen::RenderTopBlock() {
         availVisWidth = std::max(20, termWidth - 53);
         titleMaxCols = std::max(20, availVisWidth - 4);
     } else {
-        availVisWidth = std::clamp(termWidth - 36, 20, 80);
+        availVisWidth = std::clamp(termWidth - 36, 20, std::max(80, termWidth - 36));
         titleMaxCols = std::max(20, availVisWidth - 6);
     }
 
@@ -225,6 +225,7 @@ ftxui::Element NowPlayingScreen::RenderTopBlock() {
 
     if (hasSidebar) {
         return ftxui::hbox({
+            ftxui::text(" "),
             std::move(coverElem),
             ftxui::text(" "),
             std::move(rightInfo) | ftxui::flex
@@ -515,8 +516,32 @@ ftxui::Element NowPlayingScreen::RenderControls() {
 
     // Progress Bar Track
     int termWidth = ftxui::Terminal::Size().dimx;
-    if (termWidth <= 0) termWidth = 80;
-    int trackWidth = std::clamp(termWidth - 44, 20, 90);
+    if (termWidth <= 0) termWidth = 100;
+#ifdef _WIN32
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi)) {
+        int winW = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+        if (winW > 20) {
+            termWidth = winW;
+        }
+    }
+#endif
+
+    bool hasSidebar = (m_sidebar && m_sidebar->IsVisible());
+
+    std::string timeStr = FormatTime(currentSec) + " / " + FormatTime(totalSec);
+    int timePartWidth = static_cast<int>(timeStr.size()) + 2;
+
+    int trackWidth;
+    if (hasSidebar) {
+        trackWidth = std::clamp(termWidth - 44, 20, 120);
+    } else {
+        // POINT 8: Total progress bar width matches top panel width (cover + 2 + vis)
+        int availVisWidth = std::clamp(termWidth - 36, 20, std::max(80, termWidth - 36));
+        int totalTopWidth = 22 + 2 + availVisWidth;
+        trackWidth = std::max(20, totalTopWidth - timePartWidth);
+    }
+
     int filledWidth = static_cast<int>(progress * trackWidth);
     std::string playedStr;
     std::string thumbStr;
@@ -532,13 +557,24 @@ ftxui::Element NowPlayingScreen::RenderControls() {
     if (!thumbStr.empty()) barParts.push_back(ftxui::text(thumbStr) | ftxui::bold | ftxui::color(theme.progressThumb));
     if (!remainStr.empty()) barParts.push_back(ftxui::text(remainStr) | ftxui::color(theme.progressRemaining));
 
-    ftxui::Element progressBarElem = ftxui::hbox({
-        ftxui::text(" "),
-        ftxui::hbox(std::move(barParts)) | ftxui::reflect(m_seekBarBox),
-        ftxui::text("  "),
-        ftxui::text(FormatTime(currentSec) + " / " + FormatTime(totalSec)) | ftxui::color(theme.textMuted),
-        ftxui::text(" ")
-    });
+    ftxui::Element progressBarElem;
+    if (hasSidebar) {
+        progressBarElem = ftxui::hbox({
+            ftxui::text(" "),
+            ftxui::hbox(std::move(barParts)) | ftxui::reflect(m_seekBarBox),
+            ftxui::text("  "),
+            ftxui::text(timeStr) | ftxui::color(theme.textMuted),
+            ftxui::text(" ")
+        });
+    } else {
+        progressBarElem = ftxui::hbox({
+            ftxui::filler(),
+            ftxui::hbox(std::move(barParts)) | ftxui::reflect(m_seekBarBox),
+            ftxui::text("  "),
+            ftxui::text(timeStr) | ftxui::color(theme.textMuted),
+            ftxui::filler()
+        });
+    }
 
     // Control Buttons
     bool isPlaying = m_audio.IsPlaying();
@@ -590,7 +626,11 @@ ftxui::Element NowPlayingScreen::RenderControls() {
         ftxui::text(" [+]") | ftxui::bold | ftxui::color(theme.textMuted) | ftxui::reflect(m_volPlusBox)
     });
 
-    ftxui::Element eqElem = ftxui::text("EQ [ Flat ]") | ftxui::color(theme.accentOrange);
+    bool eqOn = m_audio.IsEqualizerEnabled();
+    std::string eqPreset = m_audio.GetEqualizerPreset();
+    std::string eqText = eqOn ? ("EQ [ " + eqPreset + " ]") : "EQ [ OFF ]";
+    auto eqColor = eqOn ? theme.accentOrange : theme.textMuted;
+    ftxui::Element eqElem = ftxui::text(eqText) | ftxui::bold | ftxui::color(eqColor) | ftxui::reflect(m_eqBox);
 
     ftxui::Element buttonsRow = ftxui::hbox({
         ftxui::text(" "),
@@ -637,6 +677,43 @@ ftxui::Element NowPlayingScreen::RenderQueue() {
         })
     );
     rows.push_back(ftxui::text(""));
+
+    // Unauthorized source placeholder
+    if (!m_isSourceAuthorized && m_activeSource.rfind("Custom:", 0) != 0 && m_activeSource != "Offline" && m_activeSource != "All") {
+        std::string serviceTitle = m_activeSource;
+        if (serviceTitle == "VK") serviceTitle = "VKontakte";
+        else if (serviceTitle == "Spotify") serviceTitle = "Spotify";
+        else if (serviceTitle == "Yandex") serviceTitle = "Яндекс Музыка";
+        else if (serviceTitle == "SoundCloud") serviceTitle = "SoundCloud";
+        else if (serviceTitle == "YouTube") serviceTitle = "YouTube Music";
+
+        auto titleElem = ftxui::text(" СЕРВИС: " + serviceTitle + " ") | ftxui::bold | ftxui::color(theme.accentOrange) | ftxui::center;
+        auto subtitleElem = ftxui::text("Требуется вход в учетную запись") | ftxui::color(theme.textMuted) | ftxui::center;
+
+        auto loginBtnElem = ftxui::text(" [  Войти в аккаунт  ] ") | ftxui::bold;
+        if (m_isLoginBtnHovered) {
+            loginBtnElem = loginBtnElem | ftxui::color(theme.bg) | ftxui::bgcolor(theme.accent);
+        } else {
+            loginBtnElem = loginBtnElem | ftxui::color(theme.accent) | ftxui::bgcolor(theme.cardBg);
+        }
+        auto loginBtnBox = loginBtnElem | ftxui::center | ftxui::reflect(m_loginBtnBox);
+
+        auto card = ftxui::vbox({
+            ftxui::separatorEmpty(),
+            titleElem,
+            ftxui::separatorEmpty(),
+            subtitleElem,
+            ftxui::separatorEmpty(),
+            loginBtnBox,
+            ftxui::separatorEmpty()
+        }) | ftxui::borderRounded | ftxui::color(theme.border) | ftxui::bgcolor(theme.panelBg) | ftxui::size(ftxui::WIDTH, ftxui::GREATER_THAN, 50) | ftxui::center;
+
+        return ftxui::vbox({
+            ftxui::filler(),
+            card,
+            ftxui::filler()
+        }) | ftxui::flex;
+    }
 
     if (totalTracks == 0) {
         rows.push_back(
@@ -845,6 +922,17 @@ bool NowPlayingScreen::OnEvent(ftxui::Event event) {
         m_mouseX = mouse.x;
         m_mouseY = mouse.y;
 
+        // 0. Login Button in Unauthorized Card
+        if (!m_isSourceAuthorized && m_loginBtnBox.Contain(mouse.x, mouse.y)) {
+            m_isLoginBtnHovered = true;
+            if (mouse.button == ftxui::Mouse::Left && mouse.motion == ftxui::Mouse::Pressed) {
+                if (OnLoginRequested) OnLoginRequested(m_activeSource);
+                return true;
+            }
+        } else {
+            m_isLoginBtnHovered = false;
+        }
+
         // 1. Mouse click on Seek bar
         if (m_seekBarBox.Contain(mouse.x, mouse.y)) {
             if (mouse.button == ftxui::Mouse::Left && mouse.motion == ftxui::Mouse::Pressed) {
@@ -887,6 +975,8 @@ bool NowPlayingScreen::OnEvent(ftxui::Event event) {
         // 5. Shuffle Button
         if (m_shuffleBtnBox.Contain(mouse.x, mouse.y)) {
             if (mouse.button == ftxui::Mouse::Left && mouse.motion == ftxui::Mouse::Pressed) {
+                m_queueCursor = 0;
+                m_scrollOffset = 0;
                 if (OnToggleShuffleRequested) OnToggleShuffleRequested();
                 return true;
             }
@@ -912,6 +1002,14 @@ bool NowPlayingScreen::OnEvent(ftxui::Event event) {
             if (mouse.button == ftxui::Mouse::Left && mouse.motion == ftxui::Mouse::Pressed) {
                 float v = std::clamp(m_audio.GetVolume() + 0.05f, 0.0f, 1.0f);
                 if (OnVolumeChanged) OnVolumeChanged(v);
+                return true;
+            }
+        }
+
+        // 7b. Equalizer Button
+        if (m_eqBox.Contain(mouse.x, mouse.y)) {
+            if (mouse.button == ftxui::Mouse::Left && mouse.motion == ftxui::Mouse::Pressed) {
+                if (OnOpenEqualizerRequested) OnOpenEqualizerRequested();
                 return true;
             }
         }
@@ -1033,6 +1131,12 @@ bool NowPlayingScreen::OnEvent(ftxui::Event event) {
             return true;
         }
     } else if (event == ftxui::Event::Return) {
+        if (!m_isSourceAuthorized && m_activeSource.rfind("Custom:", 0) != 0 && m_activeSource != "Offline" && m_activeSource != "All") {
+            if (OnLoginRequested) {
+                OnLoginRequested(m_activeSource);
+                return true;
+            }
+        }
         if (OnPlayTrackRequested) {
             OnPlayTrackRequested(m_queueCursor);
             return true;

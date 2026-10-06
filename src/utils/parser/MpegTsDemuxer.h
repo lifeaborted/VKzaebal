@@ -12,12 +12,15 @@ public:
     explicit MpegTsDemuxer(PayloadCallback callback);
 
     void ProcessBytes(const uint8_t* data, size_t size);
-    void Reset();
+    void Reset(bool preserveFormat = false);
 
     void DetermineStreamType(const uint8_t* data, size_t size);
 
     bool IsTsStream() const { return m_isTsStream; }
     bool IsTsStreamDetermined() const { return m_isTsStreamDetermined; }
+
+    void SetAudioFormat(AudioFormat format) { m_format = format; }
+    AudioFormat GetAudioFormat() const { return m_format; }
 
 private:
     AudioFormat DetectAudioFormat(const uint8_t* data, size_t size);

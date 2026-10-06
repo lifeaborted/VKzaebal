@@ -6,13 +6,15 @@
 
 MpegTsDemuxer::MpegTsDemuxer(PayloadCallback callback) : m_callback(callback) {}
 
-void MpegTsDemuxer::Reset() {
+void MpegTsDemuxer::Reset(bool preserveFormat) {
     m_buffer.clear();
     m_audioPid = 0x1FFF;
     m_id3BytesToSkip = 0;
-    m_format = AudioFormat::Unknown;
-    m_isTsStreamDetermined = false;
-    m_isTsStream = false;
+    if (!preserveFormat) {
+        m_format = AudioFormat::Unknown;
+        m_isTsStreamDetermined = false;
+        m_isTsStream = false;
+    }
 }
 
 AudioFormat MpegTsDemuxer::DetectAudioFormat(const uint8_t* data, size_t size) {
@@ -20,13 +22,13 @@ AudioFormat MpegTsDemuxer::DetectAudioFormat(const uint8_t* data, size_t size) {
     for (size_t i = 0; i + 1 < size; ++i) {
         if (data[i] == 0xFF) {
             uint8_t b1 = data[i + 1];
-            // ADTS (AAC)
-            if ((b1 & 0xF0) == 0xF0) {
-                if (((b1 >> 1) & 0x03) == 0x00) return AudioFormat::AAC_ADTS;
+            // MP3: check standard sync words (MPEG-1 / MPEG-2 Layer III: bits 2..1 are 01)
+            if ((b1 & 0xE0) == 0xE0 && ((b1 >> 1) & 0x03) == 0x01) {
+                return AudioFormat::MP3;
             }
-            // MP3
-            if ((b1 & 0xE0) == 0xE0) {
-                if (((b1 >> 3) & 0x03) != 0x01 && ((b1 >> 1) & 0x03) != 0x00) return AudioFormat::MP3;
+            // ADTS (AAC): 12-bit sync (b1 & 0xF6) == 0xF0 (Layer == 00)
+            if ((b1 & 0xF6) == 0xF0) {
+                return AudioFormat::AAC_ADTS;
             }
         }
     }

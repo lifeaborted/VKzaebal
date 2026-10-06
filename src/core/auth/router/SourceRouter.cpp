@@ -391,19 +391,23 @@ void SourceRouter::OnVkTokenExpired() {
                 }
 
                 Logger::Log(LogLevel::WARNING, "SourceRouter: Silent refresh failed (" + err + "). Requesting manual login.");
-                safeThis->EmitStatus("[VK] Не удалось продлить сессию в фоне. Для входа введите в консоли:\n     vk <номер_телефона_или_email>");
+                safeThis->EmitStatus("[VK] Не удалось продлить сессию в фоне. Требуется повторный вход.");
                 auto* vk = safeThis->GetVkClient();
                 if (vk) vk->SetAccessToken("");
                 safeThis->m_authManager->ClearSavedToken("VK");
+                emit safeThis->SourceAuthRequired("VK");
+                emit safeThis->ProviderReady(false);
             });
             return;
         }
 
         Logger::Log(LogLevel::WARNING, "SourceRouter: No VK secret found.");
-        safeThis->EmitStatus("[VK] Для авторизации через официальный VK Android введите в консоли:\n     vk <номер_телефона_или_email>");
+        safeThis->EmitStatus("[VK] Требуется авторизация в аккаунте.");
         auto* vk = safeThis->GetVkClient();
         if (vk) vk->SetAccessToken("");
         safeThis->m_authManager->ClearSavedToken("VK");
+        emit safeThis->SourceAuthRequired("VK");
+        emit safeThis->ProviderReady(false);
     });
 }
 
@@ -412,7 +416,9 @@ void SourceRouter::StartVkService() {
     m_authManager->GetSavedToken("VK", [safeThis](const std::string& savedToken) {
         if (!safeThis) return;
         if (savedToken.empty()) {
-            safeThis->EmitStatus("[VK] Токен не найден. Для авторизации через официальный VK Android введите в консоли:\n     vk <номер_телефона_или_email>");
+            safeThis->EmitStatus("[VK] Требуется авторизация в аккаунте.");
+            emit safeThis->SourceAuthRequired("VK");
+            emit safeThis->ProviderReady(false);
         } else {
             safeThis->EmitStatus("[VK] Проверка сохраненного токена...");
             auto* vk = safeThis->GetVkClient();
@@ -427,6 +433,7 @@ void SourceRouter::StartVkService() {
                         if (isValid) {
                             Logger::Log(LogLevel::INFO, "SourceRouter: Saved VK token is valid.");
                             emit safeThis->AuthUiStateChanged(false);
+                            emit safeThis->SourceAuthSuccess("VK");
                             emit safeThis->ProviderReady(true);
                             vk->FetchAllUserAudio(0, 200);
                         } else {
@@ -443,8 +450,9 @@ void SourceRouter::StartVkService() {
 void SourceRouter::StartSoundCloudService() {
     m_authManager->GetSavedToken("SoundCloud", [this](const std::string& savedToken) {
         if (savedToken.empty()) {
-            EmitStatus("[SoundCloud] Токен не найден. Открываем окно авторизации...");
-            StartAuthFlow("SoundCloud", "https://soundcloud.com/signin");
+            EmitStatus("[SoundCloud] Требуется авторизация в аккаунте.");
+            emit SourceAuthRequired("SoundCloud");
+            emit ProviderReady(false);
         } else {
             EmitStatus("[SoundCloud] Инициализация по сохраненному токену...");
             auto* sc = GetSoundCloudClient();
@@ -452,6 +460,7 @@ void SourceRouter::StartSoundCloudService() {
                 sc->SetAccessToken(savedToken);
                 sc->InitializeWithToken();
             }
+            emit SourceAuthSuccess("SoundCloud");
             emit ProviderReady(true);
         }
     });
@@ -467,8 +476,9 @@ void SourceRouter::StartSpotifyService() {
 
         if (!spDc.isEmpty()) {
             if (savedToken.empty()) {
-                EmitStatus("[Spotify] Получение Web Access Token через sp_dc...");
-                sp->AuthWithSpDc(spDc);
+                EmitStatus("[Spotify] Требуется авторизация в аккаунте.");
+                emit SourceAuthRequired("Spotify");
+                emit ProviderReady(false);
             } else {
                 sp->SetAccessToken(savedToken);
                 EmitStatus("[Spotify] Проверка сохраненного токена (sp_dc)...");
@@ -477,20 +487,23 @@ void SourceRouter::StartSpotifyService() {
                     if (isValid) {
                         emit AuthUiStateChanged(false);
                         EmitStatus("[УСПЕХ] Синхронизация треков Spotify...");
+                        emit SourceAuthSuccess("Spotify");
                         emit ProviderReady(true);
                         sp->FetchAllUserAudio(0, 50);
                     } else {
-                        EmitStatus("[ВНИМАНИЕ] Токен Spotify устарел. Тихое обновление...");
+                        EmitStatus("[ВНИМАНИЕ] Токен Spotify устарел.");
                         m_authManager->ClearSavedToken("Spotify");
                         sp->SetAccessToken("");
-                        sp->AuthWithSpDc(spDc);
+                        emit SourceAuthRequired("Spotify");
+                        emit ProviderReady(false);
                     }
                 });
             }
         } else if (!clientId.isEmpty()) {
             if (savedToken.empty()) {
-                std::string authUrl = sp->StartAuthPkce(clientId);
-                StartAuthFlow("Spotify", QString::fromStdString(authUrl));
+                EmitStatus("[Spotify] Требуется авторизация в аккаунте.");
+                emit SourceAuthRequired("Spotify");
+                emit ProviderReady(false);
             } else {
                 sp->SetAccessToken(savedToken);
                 EmitStatus("[Spotify] Проверка сохраненного токена (PKCE)...");
@@ -499,20 +512,23 @@ void SourceRouter::StartSpotifyService() {
                     if (isValid) {
                         emit AuthUiStateChanged(false);
                         EmitStatus("[УСПЕХ] Синхронизация треков Spotify...");
+                        emit SourceAuthSuccess("Spotify");
                         emit ProviderReady(true);
                         sp->FetchAllUserAudio(0, 50);
                     } else {
-                        EmitStatus("[ВНИМАНИЕ] Токен Spotify устарел. Открытие окна авторизации...");
+                        EmitStatus("[ВНИМАНИЕ] Токен Spotify устарел.");
                         m_authManager->ClearSavedToken("Spotify");
                         sp->SetAccessToken("");
-                        std::string authUrl = sp->StartAuthPkce(clientId);
-                        StartAuthFlow("Spotify", QString::fromStdString(authUrl));
+                        emit SourceAuthRequired("Spotify");
+                        emit ProviderReady(false);
                     }
                 });
             }
         } else {
             emit AuthUiStateChanged(false);
-            EmitStatus("[ОШИБКА] В .env не задан ни SPOTIFY_SP_DC, ни SPOTIFY_CLIENT_ID!");
+            EmitStatus("[Spotify] Требуется авторизация в аккаунте.");
+            emit SourceAuthRequired("Spotify");
+            emit ProviderReady(false);
         }
     });
 }
@@ -520,8 +536,9 @@ void SourceRouter::StartSpotifyService() {
 void SourceRouter::StartYandexService() {
     m_authManager->GetSavedToken("Yandex", [this](const std::string& savedToken) {
         if (savedToken.empty()) {
-            EmitStatus("[Yandex] Токен не найден. Открываем окно авторизации...");
-            StartAuthFlow("Yandex", "https://oauth.yandex.ru/authorize?response_type=token&client_id=23cabbbdc6cd418abb4b39c32c41195d");
+            EmitStatus("[Yandex] Требуется авторизация в аккаунте.");
+            emit SourceAuthRequired("Yandex");
+            emit ProviderReady(false);
         } else {
             EmitStatus("[Yandex] Инициализация по сохраненному токену...");
             auto* ya = GetYandexClient();
@@ -534,7 +551,10 @@ void SourceRouter::StartYandexService() {
                         Logger::Log(LogLevel::INFO, "SourceRouter: Loaded cached Yandex UID: " + savedUid);
                     }
                     if (ya) ya->FetchAllUserAudio(0, 200);
-                    if (safeThis) emit safeThis->ProviderReady(true);
+                    if (safeThis) {
+                        emit safeThis->SourceAuthSuccess("Yandex");
+                        emit safeThis->ProviderReady(true);
+                    }
                 });
             }
         }
@@ -572,8 +592,9 @@ void SourceRouter::StartYouTubeService() {
             if (!effectiveToken.empty()) {
                 m_authManager->ClearSavedToken("YouTube");
             }
-            EmitStatus("[YouTube] Требуется авторизация для загрузки медиатеки...");
-            StartAuthFlow("YouTube", "https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fmusic.youtube.com%2F", /*forceVisible=*/true);
+            EmitStatus("[YouTube] Требуется авторизация в аккаунте.");
+            emit SourceAuthRequired("YouTube");
+            emit ProviderReady(false);
         } else {
             EmitStatus("[YouTube] Сессия найдена. Загрузка избранных треков...");
             if (yt) {
@@ -581,6 +602,7 @@ void SourceRouter::StartYouTubeService() {
                 yt->FetchAllUserAudio(0, 100);
             }
             emit AuthUiStateChanged(false);
+            emit SourceAuthSuccess("YouTube");
             emit ProviderReady(true);
         }
     });
@@ -977,5 +999,103 @@ void SourceRouter::RemoveTrackFromFavorites(const Track& track, std::function<vo
         m_searchAggregator->RemoveTrackFromFavorites(track, std::move(callback));
     } else if (callback) {
         callback(false, "Search aggregator unavailable");
+    }
+}
+
+void SourceRouter::AuthenticateSource(const std::string& service) {
+    if (service == "VK") {
+        emit SourceAuthRequired("VK");
+    } else if (service == "Yandex") {
+        EmitStatus("[Yandex] Открываем окно авторизации...");
+        StartAuthFlow("Yandex", "https://oauth.yandex.ru/authorize?response_type=token&client_id=23cabbbdc6cd418abb4b39c32c41195d", true);
+    } else if (service == "SoundCloud") {
+        EmitStatus("[SoundCloud] Открываем окно авторизации...");
+        StartAuthFlow("SoundCloud", "https://soundcloud.com/signin", true);
+    } else if (service == "Spotify") {
+        QString spDc = m_envVars.value("SPOTIFY_SP_DC", "");
+        QString clientId = m_envVars.value("SPOTIFY_CLIENT_ID", "");
+        auto* sp = GetSpotifyClient();
+        if (sp && !clientId.isEmpty()) {
+            std::string authUrl = sp->StartAuthPkce(clientId);
+            StartAuthFlow("Spotify", QString::fromStdString(authUrl), true);
+        } else if (sp && !spDc.isEmpty()) {
+            sp->AuthWithSpDc(spDc);
+        }
+    } else if (service == "YouTube") {
+        EmitStatus("[YouTube] Открываем окно авторизации...");
+        StartAuthFlow("YouTube", "https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fmusic.youtube.com%2F", true);
+    }
+}
+
+void SourceRouter::RevalidateCurrentSource() {
+    std::string currentSource = "";
+    for (const auto& [name, prov] : m_providers) {
+        if (prov.get() == m_currentProvider) {
+            currentSource = name;
+            break;
+        }
+    }
+    if (currentSource.empty() || currentSource == "Offline" || currentSource == "All" || currentSource.rfind("Custom:", 0) == 0) {
+        return;
+    }
+
+    Logger::Log(LogLevel::INFO, "SourceRouter: Revalidating session for current source " + currentSource);
+    EmitStatus("[Сеть] Проверка сессии для " + currentSource + "...");
+
+    if (currentSource == "VK") {
+        auto* vk = GetVkClient();
+        if (vk && !vk->GetAccessToken().empty()) {
+            QPointer<SourceRouter> safeThis(this);
+            vk->ValidateToken([safeThis, vk](bool isValid) {
+                if (!safeThis) return;
+                if (isValid) {
+                    safeThis->EmitStatus("[Сеть] Соединение с VK подтверждено.");
+                    emit safeThis->SourceAuthSuccess("VK");
+                    emit safeThis->ProviderReady(true);
+                } else {
+                    safeThis->OnVkTokenExpired();
+                }
+            });
+        } else {
+            emit SourceAuthRequired("VK");
+            emit ProviderReady(false);
+        }
+    } else if (currentSource == "Spotify") {
+        auto* sp = GetSpotifyClient();
+        if (sp && !sp->GetAccessToken().empty()) {
+            sp->ValidateToken([this](bool isValid) {
+                if (isValid) {
+                    EmitStatus("[Сеть] Соединение со Spotify подтверждено.");
+                    emit SourceAuthSuccess("Spotify");
+                    emit ProviderReady(true);
+                } else {
+                    EmitStatus("[Внимание] Сессия Spotify устарела.");
+                    m_authManager->ClearSavedToken("Spotify");
+                    emit SourceAuthRequired("Spotify");
+                    emit ProviderReady(false);
+                }
+            });
+        }
+    } else if (currentSource == "SoundCloud") {
+        auto* sc = GetSoundCloudClient();
+        if (sc && !sc->GetAccessToken().empty()) {
+            EmitStatus("[Сеть] Соединение с SoundCloud активно.");
+            emit SourceAuthSuccess("SoundCloud");
+            emit ProviderReady(true);
+        }
+    } else if (currentSource == "Yandex") {
+        auto* ya = GetYandexClient();
+        if (ya && !ya->GetAccessToken().empty()) {
+            EmitStatus("[Сеть] Соединение с Яндекс Музыкой активно.");
+            emit SourceAuthSuccess("Yandex");
+            emit ProviderReady(true);
+        }
+    } else if (currentSource == "YouTube") {
+        auto* yt = GetYouTubeClient();
+        if (yt && !yt->GetAccessToken().empty()) {
+            EmitStatus("[Сеть] Соединение с YouTube Music активно.");
+            emit SourceAuthSuccess("YouTube");
+            emit ProviderReady(true);
+        }
     }
 }

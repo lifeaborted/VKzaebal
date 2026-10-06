@@ -65,6 +65,10 @@ void PlaylistModalComponent::SetPlaylists(const std::vector<PlaylistInfo>& playl
     }
 }
 
+bool PlaylistModalComponent::IsTyping() const {
+    return m_isVisible && (m_focusSection == FocusSection::INPUT);
+}
+
 void PlaylistModalComponent::HandleCreate() {
     // Trim string
     std::string trimmed = m_newPlaylistName;

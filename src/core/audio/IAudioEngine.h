@@ -28,6 +28,16 @@ public:
     virtual size_t GetNetworkBufferSize() const { return 0; }
     virtual void PollEvents() {}
 
+    // Эквалайзер (DSP biquad)
+    virtual void SetEqualizerEnabled(bool enabled) { (void)enabled; }
+    virtual bool IsEqualizerEnabled() const { return false; }
+    virtual void SetEqualizerBandGain(int bandIndex, float gainDb) { (void)bandIndex; (void)gainDb; }
+    virtual float GetEqualizerBandGain(int bandIndex) const { (void)bandIndex; return 0.0f; }
+    virtual void SetEqualizerBands(const std::vector<float>& gainsDb) { (void)gainsDb; }
+    virtual std::vector<float> GetEqualizerBands() const { return std::vector<float>(10, 0.0f); }
+    virtual void SetEqualizerPreset(const std::string& presetName) { (void)presetName; }
+    virtual std::string GetEqualizerPreset() const { return "Flat"; }
+
     std::function<void()> OnTrackNearEnd;
     std::function<void()> OnTrackFinished;
     std::function<void(double)> OnNetworkSeekRequested;

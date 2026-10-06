@@ -36,6 +36,7 @@ public:
         std::function<void()> openPlaylistModal;
         std::function<void(bool showSystemInfo)> openHelpModal;
         std::function<void()> openSettingsModal;
+        std::function<void()> openEqualizerModal;
         std::function<void()> cycleVisualizerMode;
         std::function<void()> toggleLike;
         std::function<void()> quitRequested;

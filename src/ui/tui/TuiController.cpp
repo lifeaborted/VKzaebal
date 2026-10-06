@@ -11,6 +11,9 @@
 #include "ui/console/commands/CommandDispatcher.h"
 #include "services/config/ConfigurationService.h"
 #include "ui/tui/services/TuiTrackService.h"
+#include "core/api/vk/VkAuthService.h"
+#include "core/api/vk/VkClient.h"
+#include "core/auth/oauth/OAuthManager.h"
 #include "utils/logger/Logger.h"
 
 #include <ftxui/dom/linear_gradient.hpp>
@@ -172,9 +175,16 @@ void TuiController::SetupComponents() {
     m_nowPlayingScreen->UpdateTheme(m_currentTheme, visCfg);
     m_nowPlayingScreen->SetShowBottomBar(m_bottomBar.IsVisible());
     m_nowPlayingScreen->SetIsOnline(m_isOnline);
+    m_nowPlayingScreen->SetActiveSource(sidebarId, true);
     if (m_configService) {
         m_nowPlayingScreen->SetAutoScroll(m_configService->GetAutoScroll());
     }
+    m_router.CheckSourceAuthorized(sidebarId, [this, sidebarId](bool isAuth) {
+        if (m_nowPlayingScreen) {
+            m_nowPlayingScreen->SetActiveSource(sidebarId, isAuth);
+            m_screen.PostEvent(ftxui::Event::Custom);
+        }
+    });
 
     m_searchScreen = std::make_shared<SearchScreen>(m_audio, m_playlist, *m_coverRenderer, m_sidebar);
     m_searchScreen->UpdateTheme(m_currentTheme);
@@ -199,11 +209,89 @@ void TuiController::SetupComponents() {
     }
     m_helpModal = std::make_shared<HelpModalComponent>();
     m_helpModal->OnToggleBottomBarRequested = [this]() { ToggleBottomBar(); };
+    m_equalizerModal = std::make_shared<EqualizerModalComponent>(m_audio);
+    m_vkLoginModal = std::make_shared<VkLoginModalComponent>();
+
+    m_vkLoginModal->OnSubmitCredentials = [this](const std::string& login, const std::string& password) {
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [this, login, password]() {
+            auto* vkAuth = m_router.GetVkAuthService();
+            if (vkAuth) {
+                vkAuth->StartLogin(QString::fromStdString(login), QString::fromStdString(password));
+            }
+        }, Qt::QueuedConnection);
+    };
+
+    m_vkLoginModal->OnSubmitCode = [this](const std::string& code) {
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [this, code]() {
+            auto* vkAuth = m_router.GetVkAuthService();
+            if (vkAuth) {
+                vkAuth->SubmitCode(QString::fromStdString(code));
+            }
+        }, Qt::QueuedConnection);
+    };
+
+    auto* vkAuth = m_router.GetVkAuthService();
+    if (vkAuth) {
+        connect(vkAuth, &VkAuthService::CodeRequired, this, [this](const QString& method, const QString& sid, const QString& phoneMask) {
+            (void)sid;
+            if (m_vkLoginModal) {
+                m_vkLoginModal->SetCodeRequired(method.toStdString(), phoneMask.toStdString());
+                m_screen.PostEvent(ftxui::Event::Custom);
+            }
+        });
+        connect(vkAuth, &VkAuthService::AuthSuccess, this, [this](const std::string& token, const std::string& secret, int userId) {
+            (void)userId;
+            if (m_vkLoginModal) {
+                m_vkLoginModal->Hide();
+            }
+            m_router.GetAuthManager()->SaveToken(token, "VK");
+            m_router.GetAuthManager()->SaveSecret(secret, "VK");
+            SetStatusMessage("[УСПЕХ] Авторизация в VK успешно завершена!");
+            auto* vk = m_router.GetVkClient();
+            if (vk) {
+                vk->SetAccessToken(token);
+                vk->SetSecret(secret);
+                vk->FetchAllUserAudio(0, 200);
+            }
+            if (m_nowPlayingScreen) {
+                m_nowPlayingScreen->SetActiveSource("VK", true);
+            }
+            m_screen.PostEvent(ftxui::Event::Custom);
+        });
+        connect(vkAuth, &VkAuthService::AuthError, this, [this](const QString& err) {
+            if (m_vkLoginModal) {
+                m_vkLoginModal->SetError(err.toStdString());
+                m_screen.PostEvent(ftxui::Event::Custom);
+            }
+        });
+        connect(vkAuth, &VkAuthService::StatusChanged, this, [this](const QString& st) {
+            if (m_vkLoginModal) {
+                m_vkLoginModal->SetStatus(st.toStdString());
+                m_screen.PostEvent(ftxui::Event::Custom);
+            }
+        });
+    }
+
+    connect(&m_router, &SourceRouter::SourceAuthRequired, this, [this](const std::string& source) {
+        if (m_nowPlayingScreen) {
+            m_nowPlayingScreen->SetActiveSource(source, false);
+            m_screen.PostEvent(ftxui::Event::Custom);
+        }
+    });
+
+    connect(&m_router, &SourceRouter::SourceAuthSuccess, this, [this](const std::string& source) {
+        if (m_nowPlayingScreen) {
+            m_nowPlayingScreen->SetActiveSource(source, true);
+            m_screen.PostEvent(ftxui::Event::Custom);
+        }
+    });
 
     m_modalManager.RegisterModal(m_playlistModal);
     m_modalManager.RegisterModal(m_addToPlaylistModal);
     if (m_settingsModal) m_modalManager.RegisterModal(m_settingsModal);
     m_modalManager.RegisterModal(m_helpModal);
+    m_modalManager.RegisterModal(m_equalizerModal);
+    m_modalManager.RegisterModal(m_vkLoginModal);
     m_modalManager.UpdateTheme(m_currentTheme);
     m_modalManager.SetShowBottomBar(m_bottomBar.IsVisible());
 
@@ -284,6 +372,9 @@ void TuiController::SetupComponents() {
     };
     callbacks.openSettingsModal = [this]() {
         OpenSettingsModal();
+    };
+    callbacks.openEqualizerModal = [this]() {
+        OpenEqualizerModal();
     };
     callbacks.cycleVisualizerMode = [this]() {
         if (m_nowPlayingScreen) m_nowPlayingScreen->CycleVisualizerMode();
@@ -540,6 +631,14 @@ void TuiController::WireCallbacks() {
     m_nowPlayingScreen->OnToggleShuffleRequested = [this]() {
         QMetaObject::invokeMethod(QCoreApplication::instance(), [this]() {
             m_playlist.ToggleShuffle();
+            bool autoPlay = m_configService ? m_configService->GetAutoPlay() : false;
+            if (autoPlay && m_playlist.GetQueueSize() > 0) {
+                auto firstTrack = m_playlist.GetCurrentTrack();
+                if (!firstTrack.id.empty() && m_playlist.OnTrackRequested) {
+                    m_playlist.OnTrackRequested(firstTrack);
+                }
+            }
+            m_screen.PostEvent(ftxui::Event::Custom);
         }, Qt::QueuedConnection);
     };
 
@@ -559,6 +658,20 @@ void TuiController::WireCallbacks() {
 
     m_nowPlayingScreen->OnDownloadTrackRequested = [this](const Track& track) {
         DownloadTrack(track);
+    };
+
+    m_nowPlayingScreen->OnLoginRequested = [this](const std::string& source) {
+        if (source == "VK") {
+            OpenVkLoginModal();
+        } else {
+            QMetaObject::invokeMethod(QCoreApplication::instance(), [this, source]() {
+                m_router.AuthenticateSource(source);
+            }, Qt::QueuedConnection);
+        }
+    };
+
+    m_nowPlayingScreen->OnOpenEqualizerRequested = [this]() {
+        OpenEqualizerModal();
     };
 
     // 3. SearchScreen Callbacks
@@ -1057,6 +1170,20 @@ void TuiController::OpenHelpModal(bool showSystemInfo) {
     }
 }
 
+void TuiController::OpenEqualizerModal() {
+    if (m_equalizerModal) {
+        m_equalizerModal->Show();
+        m_screen.PostEvent(ftxui::Event::Custom);
+    }
+}
+
+void TuiController::OpenVkLoginModal() {
+    if (m_vkLoginModal) {
+        m_vkLoginModal->Show();
+        m_screen.PostEvent(ftxui::Event::Custom);
+    }
+}
+
 void TuiController::DownloadTrack(const Track& track) {
     if (track.id.empty() || !m_trackService) return;
     QMetaObject::invokeMethod(QCoreApplication::instance(), [this, track]() {
@@ -1074,6 +1201,12 @@ void TuiController::SetIsOnline(bool online) {
     if (m_nowPlayingScreen) m_nowPlayingScreen->SetIsOnline(online);
     if (m_searchScreen) m_searchScreen->SetIsOnline(online);
     m_screen.PostEvent(ftxui::Event::Custom);
+
+    if (online) {
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [this]() {
+            m_router.RevalidateCurrentSource();
+        }, Qt::QueuedConnection);
+    }
 }
 
 } // namespace tui

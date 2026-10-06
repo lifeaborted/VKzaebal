@@ -38,6 +38,7 @@ public:
 
     void SetShowBottomBar(bool show) override { m_showBottomBar = show; }
     bool GetShowBottomBar() const { return m_showBottomBar; }
+    bool IsTyping() const override { return m_isEditing; }
 
 private:
     void ChangeOptionValue(int delta);

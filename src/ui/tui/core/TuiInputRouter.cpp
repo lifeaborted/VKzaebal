@@ -33,8 +33,30 @@ bool TuiInputRouter::RouteEvent(ftxui::Event event) {
         return false;
     }
 
+    // Нормализация Escape: при одновременном движении мыши в терминале
+    // символ '\x1B' от клавиши Esc склеивается со следующим '\x1B' от mouse sequence (\x1B[<...),
+    // образуя последовательность, начинающуюся с "\x1B\x1B".
+    if (event == ftxui::Event::Escape ||
+        (event.input().size() >= 2 && event.input()[0] == '\x1B' && event.input()[1] == '\x1B') ||
+        event.input() == "\x1B") {
+        event = ftxui::Event::Escape;
+    }
+
+    // Проверка глобального хоткея переключения нижней строки подсказок (Shift+I, i, ш, Ш)
+    bool isBottomBarToggle = (event == ftxui::Event::Character('I') || event == ftxui::Event::Character('i') ||
+                              event.character() == "Ш" || event.character() == "ш");
+
     // 1. Модальное окно перехватывает весь ввод, если активно
     if (m_modalManager.HasActiveModal()) {
+        auto active = m_modalManager.GetActiveModal();
+        if (isBottomBarToggle && active && !active->IsTyping()) {
+            if (m_callbacks.toggleBottomBar) {
+                m_callbacks.toggleBottomBar();
+            }
+            m_screen.PostEvent(ftxui::Event::Custom);
+            return true;
+        }
+
         bool handled = m_modalManager.HandleEvent(event);
         m_screen.PostEvent(ftxui::Event::Custom);
         return true;
@@ -117,8 +139,7 @@ bool TuiInputRouter::RouteEvent(ftxui::Event event) {
     }
 
     // 6. Подсказки горячих клавиш: Shift+I, i, ш, Ш
-    if (!isTyping && (event == ftxui::Event::Character('I') || event == ftxui::Event::Character('i') ||
-                      event.character() == "Ш" || event.character() == "ш")) {
+    if (!isTyping && isBottomBarToggle) {
         if (m_callbacks.toggleBottomBar) {
             m_callbacks.toggleBottomBar();
         }
@@ -156,6 +177,15 @@ bool TuiInputRouter::RouteEvent(ftxui::Event event) {
                       event.character() == "Щ" || event.character() == "щ")) {
         if (m_callbacks.openSettingsModal) {
             m_callbacks.openSettingsModal();
+        }
+        return true;
+    }
+
+    // 9b. E или У -> Эквалайзер
+    if (!isTyping && (event == ftxui::Event::Character('e') || event == ftxui::Event::Character('E') ||
+                      event.character() == "у" || event.character() == "У")) {
+        if (m_callbacks.openEqualizerModal) {
+            m_callbacks.openEqualizerModal();
         }
         return true;
     }

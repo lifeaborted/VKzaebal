@@ -19,6 +19,8 @@
 #include "ui/tui/components/AddToPlaylistModalComponent.h"
 #include "ui/tui/components/SettingsModalComponent.h"
 #include "ui/tui/components/HelpModalComponent.h"
+#include "ui/tui/components/EqualizerModalComponent.h"
+#include "ui/tui/components/VkLoginModalComponent.h"
 #include "ui/tui/screens/NowPlayingScreen.h"
 #include "ui/tui/screens/SearchScreen.h"
 
@@ -94,6 +96,8 @@ private:
     void OpenAddToPlaylistModal(const Track& track);
     void OpenSettingsModal();
     void OpenHelpModal(bool showSystemInfo = false);
+    void OpenEqualizerModal();
+    void OpenVkLoginModal();
     void ToggleBottomBar();
     void ToggleSidebar();
     void SetIsOnline(bool online);
@@ -123,6 +127,8 @@ private:
     std::shared_ptr<AddToPlaylistModalComponent> m_addToPlaylistModal;
     std::shared_ptr<SettingsModalComponent> m_settingsModal;
     std::shared_ptr<HelpModalComponent> m_helpModal;
+    std::shared_ptr<EqualizerModalComponent> m_equalizerModal;
+    std::shared_ptr<VkLoginModalComponent> m_vkLoginModal;
 
     TuiModalManager m_modalManager;
     TuiCommandBar m_commandBar;

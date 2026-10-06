@@ -50,6 +50,15 @@ public:
         m_decodeCv.notify_all();
     }
 
+    void SetEqualizerEnabled(bool enabled) override;
+    bool IsEqualizerEnabled() const override;
+    void SetEqualizerBandGain(int bandIndex, float gainDb) override;
+    float GetEqualizerBandGain(int bandIndex) const override;
+    void SetEqualizerBands(const std::vector<float>& gainsDb) override;
+    std::vector<float> GetEqualizerBands() const override;
+    void SetEqualizerPreset(const std::string& presetName) override;
+    std::string GetEqualizerPreset() const override;
+
     static constexpr int SAMPLE_RATE = 44100;
 
 private:
@@ -75,6 +84,7 @@ private:
     std::condition_variable m_decodeCv;
     std::vector<int16_t> m_mainBuffer;
     std::vector<int16_t> m_fadeOutBuffer;
+    std::vector<float> m_mixBuffer;                                 // Буфер для микширования и 32-bit float DSP эквалайзера
     bool m_isDeviceInitialized = false;
     float m_volume = 1.0f;
     std::atomic<bool> m_isPlaying = false;
@@ -85,6 +95,7 @@ private:
     RingBuffer m_pcmBuffer;                                         // Потокобезопасный буфер для PCM
     std::vector<uint8_t> m_aacBuffer;                               // Временный буфер для сырых скачанных данных
     mutable std::mutex m_networkMutex;                              // Защита буфера скачивания
+    std::atomic<size_t> m_atomicNetworkBufferSize{0};               // Неблокирующий размер сетевого буфера
     std::atomic<ma_uint64> m_playbackFrameCount{0};
 
     // --- ПЕРЕМЕННЫЕ КРОССФЕЙДА И ТАЙМИНГОВ ---
@@ -110,6 +121,14 @@ private:
     void DecodeAacPayload(const uint8_t* payload, size_t payloadSize);
     void DecodeMp3Payload(const uint8_t* payload, size_t payloadSize);
 
+    // --- РЕСЕМПЛЕР СЕТЕВОГО ПОТОКА ---
+    void EnsureResampler(ma_uint32 inSampleRate);
+    void CleanupResampler();
+    ma_resampler m_resampler;
+    bool m_isResamplerInitialized = false;
+    ma_uint32 m_currentInputSampleRate = 0;
+    std::mutex m_resamplerMutex;
+
     mp3dec_t m_mp3Decoder;
     std::vector<uint8_t> m_mp3Buffer;
     size_t m_mp3ReadOffset = 0;
@@ -128,4 +147,21 @@ private:
     std::atomic<bool> m_isNetworkFinished{false};
 
     FastFourierTransform m_fft{FFT_SIZE};
+    
+    // --- ПЕРЕМЕННЫЕ ЭКВАЛАЙЗЕРА ---
+    static constexpr size_t EQ_NUM_BANDS = 10;
+    static constexpr double EQ_FREQUENCIES[EQ_NUM_BANDS] = {
+        31.0, 62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0
+    };
+    static constexpr double EQ_Q = 1.414;
+
+    void InitEqualizer();
+    void SaveEqualizerConfig();
+    void LoadEqualizerConfig();
+
+    std::atomic<bool> m_eqEnabled{false};
+    std::string m_eqPreset = "Flat";
+    std::array<float, EQ_NUM_BANDS> m_eqGains{};
+    std::array<ma_peak2, EQ_NUM_BANDS> m_eqFilters{};
+    bool m_eqFiltersInitialized = false;
 };

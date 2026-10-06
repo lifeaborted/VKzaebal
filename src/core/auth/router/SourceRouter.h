@@ -61,6 +61,9 @@ public:
     void AddTrackToFavorites(const Track& track, std::function<void(bool success, const std::string& error)> callback);
     void RemoveTrackFromFavorites(const Track& track, std::function<void(bool success, const std::string& error)> callback);
 
+    void AuthenticateSource(const std::string& service);
+    void RevalidateCurrentSource();
+
 signals:
     void SourceChanged(const std::string& newSource);
     void ProviderReady(bool isOnline);
@@ -68,6 +71,8 @@ signals:
     void StatusMessageRequested(const std::string& msg);
     void AudioFetched(const std::vector<Track>& tracks);
     void FinishedFetching();
+    void SourceAuthRequired(const std::string& source);
+    void SourceAuthSuccess(const std::string& source);
 
 public slots:
     void Logout(const std::string& service);

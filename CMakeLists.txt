@@ -216,6 +216,10 @@ if(ENABLE_FTXUI)
         src/ui/tui/components/PlaylistModalComponent.cpp
         src/ui/tui/components/AddToPlaylistModalComponent.h
         src/ui/tui/components/AddToPlaylistModalComponent.cpp
+        src/ui/tui/components/EqualizerModalComponent.h
+        src/ui/tui/components/EqualizerModalComponent.cpp
+        src/ui/tui/components/VkLoginModalComponent.h
+        src/ui/tui/components/VkLoginModalComponent.cpp
         src/ui/tui/modals/settings/ISettingsTab.h
         src/ui/tui/modals/settings/GeneralSettingsTab.h
         src/ui/tui/modals/settings/GeneralSettingsTab.cpp

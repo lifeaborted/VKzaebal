@@ -21,6 +21,7 @@ public:
     virtual void Hide() = 0;
     virtual void UpdateTheme(const ThemePalette& palette) = 0;
     virtual void SetShowBottomBar(bool show) { (void)show; }
+    virtual bool IsTyping() const { return false; }
 };
 
 } // namespace tui

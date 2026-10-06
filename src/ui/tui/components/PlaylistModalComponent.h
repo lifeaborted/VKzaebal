@@ -30,6 +30,7 @@ public:
     bool IsVisible() const override { return m_isVisible; }
 
     void SetPlaylists(const std::vector<PlaylistInfo>& playlists);
+    bool IsTyping() const override;
 
     // Callbacks
     std::function<void(const std::string& name)> OnCreatePlaylistRequested;
