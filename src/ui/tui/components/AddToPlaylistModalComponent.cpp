@@ -1,4 +1,5 @@
 #include "AddToPlaylistModalComponent.h"
+#include "ui/tui/utils/TuiStringUtils.h"
 #include <algorithm>
 
 namespace tui {
@@ -9,15 +10,6 @@ AddToPlaylistModalComponent::AddToPlaylistModalComponent()
 
 void AddToPlaylistModalComponent::UpdateTheme(const ThemePalette& palette) {
     m_theme = palette;
-}
-
-std::string AddToPlaylistModalComponent::PluralizeTracks(int count) const {
-    int rem100 = count % 100;
-    int rem10 = count % 10;
-    if (rem100 >= 11 && rem100 <= 19) return "треков";
-    if (rem10 == 1) return "трек";
-    if (rem10 >= 2 && rem10 <= 4) return "трека";
-    return "треков";
 }
 
 void AddToPlaylistModalComponent::Show(const Track& track, const std::vector<PlaylistSelectionItem>& items) {
@@ -152,8 +144,6 @@ ftxui::Element AddToPlaylistModalComponent::Render() {
 
         m_rowBoxes.clear();
         m_rowBoxes.resize(total);
-        m_addBtnBoxes.clear();
-        m_addBtnBoxes.resize(total);
 
         for (int i = m_scrollOffset; i < endIndex; ++i) {
             const auto& pl = m_items[i];
@@ -162,7 +152,7 @@ ftxui::Element AddToPlaylistModalComponent::Render() {
             bool isHovered = (i == m_hoveredRow && !isAlreadyIn);
 
             std::string num = std::to_string(i + 1) + ". ";
-            std::string countStr = "(" + std::to_string(pl.trackCount) + " " + PluralizeTracks(pl.trackCount) + ")";
+            std::string countStr = "(" + std::to_string(pl.trackCount) + " " + utils::PluralizeTracks(pl.trackCount) + ")";
 
             if (isAlreadyIn) {
                 ftxui::Element rowElem = ftxui::hbox({
@@ -188,8 +178,7 @@ ftxui::Element AddToPlaylistModalComponent::Render() {
                 ftxui::Element addBtn = ftxui::text(" [ Добавить ] ")
                     | ftxui::bold
                     | (isHovered ? ftxui::color(ftxui::Color::White) | ftxui::bgcolor(theme.accent)
-                                 : ftxui::color(theme.accent))
-                    | ftxui::reflect(m_addBtnBoxes[i]);
+                                 : ftxui::color(theme.accent));
 
                 ftxui::Element rowElem = ftxui::hbox({
                     ftxui::text("  " + cursor + num)

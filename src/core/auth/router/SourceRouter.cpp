@@ -6,6 +6,7 @@
 #include "core/api/soundcloud/SoundCloudClient.h"
 #include "core/api/yandex/YandexClient.h"
 #include "core/api/youtube/YouTubeClient.h"
+#include "UnifiedSearchAggregator.h"
 #include "utils/logger/Logger.h"
 
 #include <QQmlApplicationEngine>
@@ -28,6 +29,9 @@ SourceRouter::SourceRouter(const QMap<QString, QString>& envVars,
     : QObject(parent), m_networkManager(networkManager), m_envVars(envVars) {
     m_authManager = std::make_unique<OAuthManager>(this, m_networkManager);
     m_vkAuthService = std::make_unique<VkAuthService>(this, m_networkManager);
+    m_searchAggregator = std::make_unique<UnifiedSearchAggregator>([this](const std::string& src) {
+        return GetOrCreateProvider(src);
+    });
 
     connect(m_vkAuthService.get(), &VkAuthService::AuthSuccess, this, [this](const std::string& token, const std::string& secret, int userId) {
         m_authManager->SaveToken(token, "VK");
@@ -953,91 +957,25 @@ void SourceRouter::EnsureAllProvidersInitialized() {
 
 void SourceRouter::Search(const std::string& source, const std::string& query, int count, int offset,
                           std::function<void(const std::vector<Track>& tracks, const std::string& error)> callback) {
-    if (query.empty()) {
-        if (callback) callback({}, "");
-        return;
-    }
-
-    std::string s = source;
-    std::string lowerS = s;
-    for (char& ch : lowerS) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-
-    bool isAll = (lowerS == "all" || lowerS == "все" || lowerS.empty() ||
-                  lowerS == "offline" || s.rfind("Custom:", 0) == 0 ||
-                  (lowerS != "vk" && lowerS != "yandex" && lowerS != "youtube" && lowerS != "soundcloud" && lowerS != "spotify"));
-
-    if (isAll) {
-        std::vector<std::string> activeSources = {"VK", "Yandex", "YouTube", "SoundCloud"};
-        const size_t numSources = activeSources.size();
-        auto resultsPerSource = std::make_shared<std::vector<std::vector<Track>>>(numSources);
-        auto remaining = std::make_shared<int>(static_cast<int>(numSources));
-
-        for (size_t srcIdx = 0; srcIdx < numSources; ++srcIdx) {
-            const auto& src = activeSources[srcIdx];
-            IAudioProvider* prov = GetOrCreateProvider(src);
-            if (!prov) {
-                (*remaining)--;
-                if (*remaining == 0 && callback) {
-                    callback({}, "");
-                }
-                continue;
-            }
-
-            prov->SearchAudio(query, count, offset, [resultsPerSource, remaining, callback, srcIdx, numSources](const std::vector<Track>& res, const std::string&) {
-                if (!res.empty()) {
-                    (*resultsPerSource)[srcIdx] = res;
-                }
-                (*remaining)--;
-                if (*remaining == 0) {
-                    // Interleave results round-robin from each source for balanced relevance
-                    size_t maxLen = 0;
-                    for (const auto& list : *resultsPerSource) {
-                        if (list.size() > maxLen) maxLen = list.size();
-                    }
-                    std::vector<Track> merged;
-                    std::unordered_set<std::string> seenIds;
-                    for (size_t i = 0; i < maxLen; ++i) {
-                        for (size_t sIdx = 0; sIdx < numSources; ++sIdx) {
-                            if (i < (*resultsPerSource)[sIdx].size()) {
-                                const auto& tr = (*resultsPerSource)[sIdx][i];
-                                if (!tr.id.empty()) {
-                                    if (seenIds.insert(tr.id).second) {
-                                        merged.push_back(tr);
-                                    }
-                                } else {
-                                    merged.push_back(tr);
-                                }
-                            }
-                        }
-                    }
-                    if (callback) callback(merged, "");
-                }
-            });
-        }
-    } else {
-        IAudioProvider* prov = GetOrCreateProvider(s);
-        if (!prov) {
-            if (callback) callback({}, "Unknown provider: " + s);
-            return;
-        }
-        prov->SearchAudio(query, count, offset, callback);
+    if (m_searchAggregator) {
+        m_searchAggregator->Search(source, query, count, offset, std::move(callback));
+    } else if (callback) {
+        callback({}, "Search aggregator unavailable");
     }
 }
 
 void SourceRouter::AddTrackToFavorites(const Track& track, std::function<void(bool success, const std::string& error)> callback) {
-    IAudioProvider* prov = GetOrCreateProvider(track.source);
-    if (!prov) {
-        if (callback) callback(false, "Unknown provider for track: " + track.source);
-        return;
+    if (m_searchAggregator) {
+        m_searchAggregator->AddTrackToFavorites(track, std::move(callback));
+    } else if (callback) {
+        callback(false, "Search aggregator unavailable");
     }
-    prov->AddTrackToFavorites(track.id, track.ownerId, callback);
 }
 
 void SourceRouter::RemoveTrackFromFavorites(const Track& track, std::function<void(bool success, const std::string& error)> callback) {
-    IAudioProvider* prov = GetOrCreateProvider(track.source);
-    if (!prov) {
-        if (callback) callback(false, "Unknown provider for track: " + track.source);
-        return;
+    if (m_searchAggregator) {
+        m_searchAggregator->RemoveTrackFromFavorites(track, std::move(callback));
+    } else if (callback) {
+        callback(false, "Search aggregator unavailable");
     }
-    prov->RemoveTrackFromFavorites(track.id, track.ownerId, callback);
 }

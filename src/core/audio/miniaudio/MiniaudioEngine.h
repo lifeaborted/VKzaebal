@@ -10,6 +10,7 @@
 #include <string>
 #include <atomic>
 #include <vector>
+#include <array>
 #include <mutex>
 #include <memory>
 #include <thread>
@@ -115,13 +116,16 @@ private:
     MpegTsDemuxer m_demuxer;
 
     // --- ПЕРЕМЕННЫЕ ВИЗУАЛИЗАТОРА ---
+    static constexpr size_t FFT_SIZE = 256;
     mutable std::mutex m_spectrumMutex;
-    std::vector<float> m_recentSamples = std::vector<float>(256, 0.0f);
+    std::vector<float> m_recentSamples = std::vector<float>(FFT_SIZE, 0.0f);
+    std::array<double, FFT_SIZE> m_hannWindow{};
+    std::vector<Complex> m_fftComplexData;
 
     std::string m_currentTrackId;
     std::atomic<ma_uint64> m_networkDiscardFrames{0};
 
     std::atomic<bool> m_isNetworkFinished{false};
 
-    FastFourierTransform m_fft{256};
+    FastFourierTransform m_fft{FFT_SIZE};
 };

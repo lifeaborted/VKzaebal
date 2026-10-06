@@ -22,6 +22,10 @@
 #include "ui/tui/screens/NowPlayingScreen.h"
 #include "ui/tui/screens/SearchScreen.h"
 
+#include "ui/tui/core/TuiModalManager.h"
+#include "ui/tui/core/TuiCommandBar.h"
+#include "ui/tui/core/TuiBottomBar.h"
+#include "ui/tui/core/TuiInputRouter.h"
 #include "ui/IUiController.h"
 
 class IAudioEngine;
@@ -38,6 +42,8 @@ class CommandDispatcher;
 class ConfigurationService;
 
 namespace tui {
+
+class TuiTrackService;
 
 enum class ScreenType {
     NOW_PLAYING = 0,
@@ -69,15 +75,15 @@ public:
     void OnTrackChanged(const Track& track) override;
     void OnAudioFetched(const std::vector<Track>& tracks) override;
     void OnFinishedFetching() override;
-    void PostCustomEvent() { m_screen.PostEvent(ftxui::Event::Custom); }
-
-    // QuitRequested, SourceChanged, OfflineModeRequested, LogoutRequested
-    // are inherited from IUiController
 
 private slots:
     void OnSpectrumTick();
 
 private:
+    static bool IsUserPlaylist(const std::string& name) {
+        return name != "Избранное" && name != "Моя музыка";
+    }
+
     void SetupComponents();
     void WireCallbacks();
     void SwitchScreen(ScreenType type);
@@ -88,10 +94,8 @@ private:
     void OpenAddToPlaylistModal(const Track& track);
     void OpenSettingsModal();
     void OpenHelpModal(bool showSystemInfo = false);
-    void RebuildBottomBars(const ThemePalette& theme);
     void ToggleBottomBar();
     void DownloadTrack(const Track& track);
-    void AddTrackToPlaylist(const Track& track);
 
     std::unordered_set<std::string> m_favoriteTrackIds;
 
@@ -117,28 +121,24 @@ private:
     std::shared_ptr<SettingsModalComponent> m_settingsModal;
     std::shared_ptr<HelpModalComponent> m_helpModal;
 
+    TuiModalManager m_modalManager;
+    TuiCommandBar m_commandBar;
+    TuiBottomBar m_bottomBar;
+    std::unique_ptr<TuiInputRouter> m_inputRouter;
+    std::unique_ptr<TuiTrackService> m_trackService;
+
     int m_activeScreenIndex = 0;
     ftxui::Component m_tabContainer;
     ftxui::Component m_rootContainer;
     ftxui::Component m_mainComponent;
-    ftxui::Element m_nowPlayingBottomBar;
-    ftxui::Element m_searchBottomBar;
 
     std::unique_ptr<CommandDispatcher> m_dispatcher;
-    bool m_isCommandMode = false;
-    bool m_showBottomBar = true;
-    std::string m_commandInputText;
-    ftxui::Component m_commandInputComponent;
 
     std::atomic<bool> m_isRunning{false};
     ftxui::ScreenInteractive m_screen;
     std::thread m_tuiThread;
     QTimer* m_spectrumTimer = nullptr;
     QTimer* m_statusTimer = nullptr;
-
-    std::string m_lastTrackCoverUrl;
-    QTimer* m_coverDebounceTimer = nullptr;
-    std::string m_pendingCoverUrl;
     int m_searchThrottleCounter = 0;
 };
 

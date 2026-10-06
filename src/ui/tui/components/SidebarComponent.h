@@ -40,11 +40,7 @@ public:
 
     void SetPlaylists(const std::vector<std::string>& playlistNames);
     void SetShowPlaylists(bool show);
-    bool IsShowingPlaylists() const { return m_showPlaylists; }
     void SetItemDisabled(const std::string& id, bool disabled);
-    bool IsItemDisabled(const std::string& id) const;
-    void CycleNextSource();
-    void CyclePrevSource();
     void SelectIndex(int index);
     void UpdateTheme(const ThemePalette& palette) { m_theme = palette; }
     void SetShowBottomBar(bool show) { m_showBottomBar = show; }

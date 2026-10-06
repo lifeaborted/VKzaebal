@@ -31,6 +31,11 @@ MiniaudioEngine::MiniaudioEngine() : m_demuxer([this](const uint8_t* payload, si
     m_mainBuffer.resize(16384, 0);
     m_fadeOutBuffer.resize(16384, 0);
 
+    m_fftComplexData.resize(FFT_SIZE);
+    for (size_t i = 0; i < FFT_SIZE; ++i) {
+        m_hannWindow[i] = 0.5 * (1.0 - std::cos(2.0 * std::numbers::pi * i / (FFT_SIZE - 1)));
+    }
+
     m_isDecoding = true;
     m_decodeThread = std::thread(&MiniaudioEngine::DecodeLoop, this);
 }
@@ -169,27 +174,23 @@ std::vector<float> MiniaudioEngine::GetSpectrumData() {
     
     if (!m_isPlaying) return result;
 
-    const size_t FFT_SIZE = 256;
-    std::vector<Complex> complexData(FFT_SIZE);
-
     {
-        // 1. Блокируем доступ и копируем последние 256 сэмплов из кэша
+        // 1. Блокируем доступ и копируем последние 256 сэмплов из кэша с применением предрассчитанного окна Хеннинга
         std::unique_lock<std::mutex> specLock(m_spectrumMutex, std::try_to_lock);
         if (!specLock.owns_lock()) return result; // Если занято, отдаем нули
 
-        // 2. Копирование с Окном Хеннинга
+        // 2. Копирование с Окном Хеннинга (O(1) LUT без повторных вызовов std::cos)
         for (size_t i = 0; i < FFT_SIZE; ++i) {
-            double multiplier = 0.5 * (1.0 - std::cos(2.0 * std::numbers::pi * i / (FFT_SIZE - 1)));
-            complexData[i] = Complex(m_recentSamples[i] * multiplier, 0.0);
+            m_fftComplexData[i] = Complex(m_recentSamples[i] * m_hannWindow[i], 0.0);
         }
     }
 
     // 3. Вызов алгоритма Кули-Тьюки
-    m_fft.compute(complexData);
+    m_fft.compute(m_fftComplexData);
 
     // 4. Расчет итоговых амплитуд
     for (size_t i = 0; i < 128; ++i) {
-        float mag = static_cast<float>(std::abs(complexData[i]) / 128.0) * 2.5f;
+        float mag = static_cast<float>(std::abs(m_fftComplexData[i]) / 128.0) * 2.5f;
         result[i] = mag;
     }
 
@@ -200,7 +201,7 @@ bool MiniaudioEngine::Init() {
     QSettings settings("config.ini", QSettings::IniFormat);
     m_crossfadeDurationMs = settings.value("Audio/CrossfadeDurationMs", 3000).toInt();
 
-    m_pcmBuffer.Init(SAMPLE_RATE * 2 * sizeof(int16_t) * 5);
+    m_pcmBuffer.Init(SAMPLE_RATE * 2 * sizeof(int16_t) * 12);
     ma_device_config deviceConfig = ma_device_config_init(ma_device_type_playback);
     deviceConfig.playback.format   = ma_format_s16;
     deviceConfig.playback.channels = 2;
@@ -509,6 +510,10 @@ void MiniaudioEngine::DecodeLoop() {
 void MiniaudioEngine::DecodeAACFrames() {
     std::lock_guard<std::mutex> lock(m_networkMutex);
 
+    if (!m_aacBuffer.empty() && !m_demuxer.IsTsStreamDetermined()) {
+        m_demuxer.DetermineStreamType(m_aacBuffer.data(), m_aacBuffer.size());
+    }
+
     if (m_demuxer.IsTsStreamDetermined() && !m_demuxer.IsTsStream()) {
         if (!m_aacBuffer.empty()) {
             m_demuxer.ProcessBytes(m_aacBuffer.data(), m_aacBuffer.size());
@@ -554,55 +559,74 @@ void MiniaudioEngine::DecodeAACFrames() {
 }
 
 void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSize) {
+    if (!payload || payloadSize == 0 || !m_aacDecoder) return;
+
     UCHAR* pBuffer = const_cast<UCHAR*>(payload);
     UINT bufferSize = static_cast<UINT>(payloadSize);
     UINT bytesValid = bufferSize;
 
-    aacDecoder_Fill(m_aacDecoder, &pBuffer, &bufferSize, &bytesValid);
-
     int16_t pcmBuf[4096];
     int16_t stereoBuf[4096 * 2];
 
-    while (true) {
-        AAC_DECODER_ERROR err = aacDecoder_DecodeFrame(m_aacDecoder, pcmBuf, 4096, 0);
-
-        if (err == AAC_DEC_NOT_ENOUGH_BITS) break;
-        if (err != AAC_DEC_OK) {
-            static int s_errCount = 0;
-            if (++s_errCount <= 10) {
-                Logger::Log(LogLevel::ERROR, "aacDecoder_DecodeFrame error: 0x" + QString::number(err, 16).toStdString());
-            }
+    while (bytesValid > 0) {
+        UINT prevBytesValid = bytesValid;
+        AAC_DECODER_ERROR fillErr = aacDecoder_Fill(m_aacDecoder, &pBuffer, &bufferSize, &bytesValid);
+        if (fillErr != AAC_DEC_OK) {
+            Logger::Log(LogLevel::ERROR, "aacDecoder_Fill error: 0x" + QString::number(fillErr, 16).toStdString());
             break;
         }
 
-        CStreamInfo* info = aacDecoder_GetStreamInfo(m_aacDecoder);
-        if (info && info->numChannels > 0) {
-            ma_uint32 framesToOutput = info->frameSize;
-            int16_t* pcmDataPtr = nullptr;
+        bool decodedAny = false;
+        while (true) {
+            AAC_DECODER_ERROR err = aacDecoder_DecodeFrame(m_aacDecoder, pcmBuf, 4096, 0);
 
-            if (info->numChannels == 1) {
-                int count = std::min<int>(info->frameSize, 4096);
-                for (int i = 0; i < count; ++i) {
-                    stereoBuf[i * 2]     = pcmBuf[i];
-                    stereoBuf[i * 2 + 1] = pcmBuf[i];
+            if (err == AAC_DEC_NOT_ENOUGH_BITS) break;
+            if (err != AAC_DEC_OK) {
+                static int s_errCount = 0;
+                if (++s_errCount <= 10) {
+                    Logger::Log(LogLevel::ERROR, "aacDecoder_DecodeFrame error: 0x" + QString::number(err, 16).toStdString());
                 }
-                pcmDataPtr = stereoBuf;
-            } else {
-                pcmDataPtr = pcmBuf;
+                break;
             }
 
-            ma_uint64 discard = m_networkDiscardFrames.load();
-            if (discard > 0) {
-                ma_uint64 framesToDrop = std::min<ma_uint64>(discard, framesToOutput);
-                m_networkDiscardFrames -= framesToDrop;
-                framesToOutput -= framesToDrop;
-                pcmDataPtr += (framesToDrop * 2);
-            }
+            decodedAny = true;
+            CStreamInfo* info = aacDecoder_GetStreamInfo(m_aacDecoder);
+            if (info && info->numChannels > 0) {
+                ma_uint32 framesToOutput = info->frameSize;
+                int16_t* pcmDataPtr = nullptr;
 
-            if (framesToOutput > 0) {
-                size_t bytesToOutput = framesToOutput * 2 * sizeof(int16_t);
-                m_pcmBuffer.Write(reinterpret_cast<uint8_t*>(pcmDataPtr), bytesToOutput);
+                if (info->numChannels == 1) {
+                    int count = std::min<int>(info->frameSize, 4096);
+                    for (int i = 0; i < count; ++i) {
+                        stereoBuf[i * 2]     = pcmBuf[i];
+                        stereoBuf[i * 2 + 1] = pcmBuf[i];
+                    }
+                    pcmDataPtr = stereoBuf;
+                } else {
+                    pcmDataPtr = pcmBuf;
+                }
+
+                ma_uint64 discard = m_networkDiscardFrames.load();
+                if (discard > 0) {
+                    ma_uint64 framesToDrop = std::min<ma_uint64>(discard, framesToOutput);
+                    m_networkDiscardFrames -= framesToDrop;
+                    framesToOutput -= framesToDrop;
+                    pcmDataPtr += (framesToDrop * 2);
+                }
+
+                if (framesToOutput > 0) {
+                    size_t bytesToOutput = framesToOutput * 2 * sizeof(int16_t);
+                    while (m_isDecoding && m_pcmBuffer.GetAvailableWrite() < bytesToOutput) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    }
+                    if (!m_isDecoding) break;
+                    m_pcmBuffer.Write(reinterpret_cast<uint8_t*>(pcmDataPtr), bytesToOutput);
+                }
             }
+        }
+
+        if (bytesValid == prevBytesValid && !decodedAny) {
+            break;
         }
     }
 }

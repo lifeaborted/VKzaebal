@@ -11,9 +11,11 @@
 #include <vector>
 #include <functional>
 
+#include "ui/tui/modals/IModalDialog.h"
+
 namespace tui {
 
-class PlaylistModalComponent : public ftxui::ComponentBase {
+class PlaylistModalComponent : public IModalDialog {
 public:
     PlaylistModalComponent();
     ~PlaylistModalComponent() override = default;
@@ -22,10 +24,10 @@ public:
     bool OnEvent(ftxui::Event event) override;
     bool Focusable() const override { return true; }
 
-    void UpdateTheme(const ThemePalette& palette);
+    void UpdateTheme(const ThemePalette& palette) override;
     void Show(const std::vector<PlaylistInfo>& playlists);
-    void Hide();
-    bool IsVisible() const { return m_isVisible; }
+    void Hide() override;
+    bool IsVisible() const override { return m_isVisible; }
 
     void SetPlaylists(const std::vector<PlaylistInfo>& playlists);
 
@@ -43,7 +45,6 @@ private:
 
     void AutoSuggestName();
     void HandleCreate();
-    std::string PluralizeTracks(int count) const;
 
     bool m_isVisible = false;
     ThemePalette m_theme;

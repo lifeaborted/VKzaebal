@@ -36,7 +36,6 @@ public:
     bool HasActiveSpectrum() const;
     void SetStatusMessage(const std::string& msg);
     void SetCurrentTrackLiked(bool liked) { m_isCurrentTrackLiked = liked; }
-    bool IsCurrentTrackLiked() const { return m_isCurrentTrackLiked; }
     void SetFavoriteTrackIds(const std::unordered_set<std::string>& ids) { m_favoriteTrackIds = ids; }
     void SetTrackLiked(const std::string& trackId, bool liked) {
         if (liked) m_favoriteTrackIds.insert(trackId);
@@ -52,8 +51,6 @@ public:
         SILK_WAVE = 2         // Smooth continuous contour wave
     };
     void CycleVisualizerMode();
-    void SetVisualizerMode(VisualizerMode mode) { m_visMode = mode; }
-    VisualizerMode GetVisualizerMode() const { return m_visMode; }
     void AdvanceTicker() { m_tickerTick++; }
 
     // Callbacks to external controller
@@ -63,7 +60,6 @@ public:
     std::function<void()> OnNextTrackRequested;
     std::function<void()> OnPrevTrackRequested;
     std::function<void(float volume)> OnVolumeChanged;
-    std::function<void()> OnToggleLikeRequested;
     std::function<void()> OnToggleShuffleRequested;
     std::function<void()> OnCycleRepeatRequested;
     std::function<void(const Track& track)> OnToggleLike;

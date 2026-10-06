@@ -63,9 +63,6 @@ public:
     static ftxui::Color ParseColor(const std::string& str, const ftxui::Color& fallback);
     static RGB ParseRgbStruct(const std::string& str, const RGB& fallback = {0, 0, 0});
     static std::vector<RGB> ParseColorList(const std::string& str, const std::vector<RGB>& fallback);
-    void SaveVisualizerConfig(const VisualizerConfig& cfg);
-    void SaveBackgroundMode(BackgroundMode mode);
-    void SaveAccentColor(const std::string& rgbStr);
 
     std::string GetRawValue(const std::string& section, const std::string& key, const std::string& fallback = "") const;
     void SetRawValue(const std::string& section, const std::string& key, const std::string& value);

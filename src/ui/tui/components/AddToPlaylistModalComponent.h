@@ -11,6 +11,8 @@
 #include <vector>
 #include <functional>
 
+#include "ui/tui/modals/IModalDialog.h"
+
 namespace tui {
 
 struct PlaylistSelectionItem {
@@ -20,7 +22,7 @@ struct PlaylistSelectionItem {
     bool alreadyContains = false;
 };
 
-class AddToPlaylistModalComponent : public ftxui::ComponentBase {
+class AddToPlaylistModalComponent : public IModalDialog {
 public:
     AddToPlaylistModalComponent();
     ~AddToPlaylistModalComponent() override = default;
@@ -29,17 +31,16 @@ public:
     bool OnEvent(ftxui::Event event) override;
     bool Focusable() const override { return true; }
 
-    void UpdateTheme(const ThemePalette& palette);
+    void UpdateTheme(const ThemePalette& palette) override;
     void Show(const Track& track, const std::vector<PlaylistSelectionItem>& items);
-    void Hide();
-    bool IsVisible() const { return m_isVisible; }
+    void Hide() override;
+    bool IsVisible() const override { return m_isVisible; }
 
     // Callbacks
     std::function<void(int playlistId, const std::string& playlistName, const Track& track)> OnAddToPlaylistSelected;
     std::function<void()> OnCloseRequested;
 
 private:
-    std::string PluralizeTracks(int count) const;
     void SelectNextAvailable();
     void SelectPrevAvailable();
     void ConfirmSelection();
@@ -60,7 +61,6 @@ private:
     ftxui::Box m_modalBox;
     ftxui::Box m_closeBtnBox;
     std::vector<ftxui::Box> m_rowBoxes;
-    std::vector<ftxui::Box> m_addBtnBoxes;
 };
 
 } // namespace tui

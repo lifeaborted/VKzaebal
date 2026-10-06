@@ -7,16 +7,36 @@
 #include <QFile>
 #include <QUrl>
 #include <QCoreApplication>
+#include <QTimer>
 #include <ftxui/dom/elements.hpp>
 
 namespace tui {
 
+QImage CoverArtRenderer::DownscaleIfNeeded(const QImage& img, int maxDim) {
+    if (img.width() > maxDim || img.height() > maxDim) {
+        return img.scaled(maxDim, maxDim, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+    return img;
+}
+
 CoverArtRenderer::CoverArtRenderer(QNetworkAccessManager* netManager, QObject* parent)
     : QObject(parent), m_netManager(netManager) {
     QDir().mkpath(PathManager::GetCacheDir() + "/covers");
+    m_customDefaultCover = LoadCustomDefaultCover();
+
+    m_debounceTimer = new QTimer(this);
+    m_debounceTimer->setSingleShot(true);
+    connect(m_debounceTimer, &QTimer::timeout, this, [this]() {
+        if (!m_pendingUrl.empty()) {
+            ExecuteRequestCover(m_pendingUrl);
+        }
+    });
 }
 
 CoverArtRenderer::~CoverArtRenderer() {
+    if (m_debounceTimer) {
+        m_debounceTimer->stop();
+    }
     CancelActiveRequest();
 }
 
@@ -48,7 +68,34 @@ void CoverArtRenderer::PutInCache(const std::string& url, const QImage& img) {
     m_imageCache[url] = m_lruList.begin();
 }
 
-void CoverArtRenderer::RequestCover(const std::string& url) {
+void CoverArtRenderer::RequestCover(const std::string& url, int debounceMs) {
+    if (url.empty()) {
+        if (m_debounceTimer) m_debounceTimer->stop();
+        m_pendingUrl.clear();
+        ExecuteRequestCover("");
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_currentUrl == url && m_hasImage) {
+            return;
+        }
+    }
+
+    if (m_pendingUrl == url && m_debounceTimer && m_debounceTimer->isActive()) {
+        return;
+    }
+
+    m_pendingUrl = url;
+    if (debounceMs <= 0 || !m_debounceTimer) {
+        ExecuteRequestCover(url);
+    } else {
+        m_debounceTimer->start(debounceMs);
+    }
+}
+
+void CoverArtRenderer::ExecuteRequestCover(const std::string& url) {
     CancelActiveRequest();
 
     if (url.empty()) {
@@ -86,9 +133,7 @@ void CoverArtRenderer::RequestCover(const std::string& url) {
     if (QFile::exists(diskCachePath)) {
         QImage diskImg;
         if (diskImg.load(diskCachePath)) {
-            QImage thumb = (diskImg.width() > 160 || diskImg.height() > 160)
-                               ? diskImg.scaled(160, 160, Qt::KeepAspectRatio, Qt::SmoothTransformation)
-                               : diskImg;
+            QImage thumb = DownscaleIfNeeded(diskImg);
             if (diskImg.width() > 160 || diskImg.height() > 160) {
                 thumb.save(diskCachePath, "PNG");
             }
@@ -109,9 +154,7 @@ void CoverArtRenderer::RequestCover(const std::string& url) {
     if (QFile::exists(localFile)) {
         QImage localImg;
         if (localImg.load(localFile)) {
-            QImage thumb = (localImg.width() > 160 || localImg.height() > 160)
-                               ? localImg.scaled(160, 160, Qt::KeepAspectRatio, Qt::SmoothTransformation)
-                               : localImg;
+            QImage thumb = DownscaleIfNeeded(localImg);
             std::lock_guard<std::mutex> lock(m_mutex);
             PutInCache(url, thumb);
             if (m_currentUrl == url) {
@@ -158,9 +201,7 @@ void CoverArtRenderer::RequestCover(const std::string& url) {
         QImage netImg;
         if (netImg.loadFromData(data)) {
             // Downscale to max 160x160 before saving to disk cache and memory (~5-15 KB PNG)
-            QImage thumb = (netImg.width() > 160 || netImg.height() > 160)
-                               ? netImg.scaled(160, 160, Qt::KeepAspectRatio, Qt::SmoothTransformation)
-                               : netImg;
+            QImage thumb = DownscaleIfNeeded(netImg);
 
             // Save the compressed thumbnail to disk cache
             thumb.save(diskCachePath, "PNG");
@@ -201,9 +242,7 @@ QImage CoverArtRenderer::LoadCustomDefaultCover() {
             if (QFile::exists(filePath)) {
                 QImage img;
                 if (img.load(filePath)) {
-                    m_customDefaultCover = (img.width() > 160 || img.height() > 160)
-                        ? img.scaled(160, 160, Qt::KeepAspectRatio, Qt::SmoothTransformation)
-                        : img;
+                    m_customDefaultCover = DownscaleIfNeeded(img);
                     Logger::Log(LogLevel::INFO, "CoverArtRenderer: Loaded custom default cover from " + filePath.toStdString());
                     return m_customDefaultCover;
                 }
@@ -225,7 +264,7 @@ ftxui::Element CoverArtRenderer::Render(int charWidth, int charHeight) {
 
     QImage activeImage = m_currentImage;
     if (!m_hasImage || activeImage.isNull()) {
-        activeImage = LoadCustomDefaultCover();
+        activeImage = m_customDefaultCover;
     }
 
     if (activeImage.isNull() || charWidth <= 0 || charHeight <= 0) {

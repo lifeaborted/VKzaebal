@@ -1,4 +1,5 @@
 #include "SearchScreen.h"
+#include "ui/tui/utils/TuiStringUtils.h"
 #include "ui/tui/TuiTheme.h"
 #include "ui/tui/CoverArtRenderer.h"
 #include "ui/tui/components/SidebarComponent.h"
@@ -27,37 +28,8 @@
 
 namespace tui {
 
-static std::string FormatTime(double seconds) {
-    if (seconds < 0.0) seconds = 0.0;
-    int totalSec = static_cast<int>(seconds);
-    int m = totalSec / 60;
-    int s = totalSec % 60;
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%02d:%02d", m, s);
-    return buf;
-}
-
-static std::string ScrollText(const std::string& text, int maxCols, int tick) {
-    if (text.empty() || maxCols <= 0) return "";
-    auto glyphs = ftxui::Utf8ToGlyphs(text);
-    if (static_cast<int>(glyphs.size()) <= maxCols) {
-        return text;
-    }
-    const int kGap = 4;
-    int totalLen = static_cast<int>(glyphs.size()) + kGap;
-    int startIdx = (tick > 0) ? (tick % totalLen) : 0;
-    std::string result;
-    result.reserve(maxCols * 4);
-    for (int i = 0; i < maxCols; ++i) {
-        int idx = (startIdx + i) % totalLen;
-        if (idx < static_cast<int>(glyphs.size())) {
-            result += glyphs[idx];
-        } else {
-            result += ' ';
-        }
-    }
-    return result;
-}
+using utils::FormatTime;
+using utils::ScrollText;
 
 SearchScreen::SearchScreen(IAudioEngine& audio,
                            PlaylistManager& playlist,
@@ -148,24 +120,8 @@ void SearchScreen::ToggleSearchMode() {
     }
 }
 
-void SearchScreen::SetSearchMode(SearchMode mode) {
-    if (m_searchMode != mode) {
-        m_searchMode = mode;
-        if (OnSearchModeChanged) {
-            OnSearchModeChanged(m_searchMode);
-        }
-        if (OnPerformSearch) {
-            OnPerformSearch(m_searchQuery, m_searchSource, m_searchMode);
-        }
-    }
-}
-
 void SearchScreen::SetSearchSource(const std::string& src) {
     m_searchSource = src.empty() ? "All" : src;
-}
-
-std::string SearchScreen::GetSearchSource() const {
-    return m_searchSource;
 }
 
 std::string SearchScreen::GetSearchQuery() const {

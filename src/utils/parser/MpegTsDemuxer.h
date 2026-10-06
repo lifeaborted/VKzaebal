@@ -14,6 +14,8 @@ public:
     void ProcessBytes(const uint8_t* data, size_t size);
     void Reset();
 
+    void DetermineStreamType(const uint8_t* data, size_t size);
+
     bool IsTsStream() const { return m_isTsStream; }
     bool IsTsStreamDetermined() const { return m_isTsStreamDetermined; }
 

@@ -97,6 +97,8 @@ set(COMMON_SOURCES
 
         src/core/auth/router/SourceRouter.h
         src/core/auth/router/SourceRouter.cpp
+        src/core/auth/router/UnifiedSearchAggregator.h
+        src/core/auth/router/UnifiedSearchAggregator.cpp
 
         src/resources.qrc
 
@@ -114,6 +116,12 @@ set(COMMON_SOURCES
 
         src/services/database/DatabaseManager.h
         src/services/database/DatabaseManager.cpp
+        src/services/database/repositories/TrackRepository.h
+        src/services/database/repositories/TrackRepository.cpp
+        src/services/database/repositories/PlaylistRepository.h
+        src/services/database/repositories/PlaylistRepository.cpp
+        src/services/database/repositories/SessionRepository.h
+        src/services/database/repositories/SessionRepository.cpp
 
         src/services/downloader/TrackDownloader.h
         src/services/downloader/TrackDownloader.cpp
@@ -183,6 +191,20 @@ set(COMMON_SOURCES
 # --- TUI (FTXUI) Источники (опционально) ---
 if(ENABLE_FTXUI)
     set(FTXUI_SOURCES
+        src/ui/tui/core/TuiModalManager.h
+        src/ui/tui/core/TuiModalManager.cpp
+        src/ui/tui/core/TuiCommandBar.h
+        src/ui/tui/core/TuiCommandBar.cpp
+        src/ui/tui/core/TuiBottomBar.h
+        src/ui/tui/core/TuiBottomBar.cpp
+        src/ui/tui/core/TuiInputRouter.h
+        src/ui/tui/core/TuiInputRouter.cpp
+        src/ui/tui/modals/IModalDialog.h
+        src/ui/tui/utils/TuiStringUtils.h
+        src/ui/tui/utils/TuiStringUtils.cpp
+        src/ui/tui/services/TuiTrackService.h
+        src/ui/tui/services/TuiTrackService.cpp
+
         src/ui/tui/TuiTheme.h
         src/ui/tui/TuiThemeConfig.h
         src/ui/tui/TuiThemeConfig.cpp
@@ -194,6 +216,17 @@ if(ENABLE_FTXUI)
         src/ui/tui/components/PlaylistModalComponent.cpp
         src/ui/tui/components/AddToPlaylistModalComponent.h
         src/ui/tui/components/AddToPlaylistModalComponent.cpp
+        src/ui/tui/modals/settings/ISettingsTab.h
+        src/ui/tui/modals/settings/GeneralSettingsTab.h
+        src/ui/tui/modals/settings/GeneralSettingsTab.cpp
+        src/ui/tui/modals/settings/PlaybackSettingsTab.h
+        src/ui/tui/modals/settings/PlaybackSettingsTab.cpp
+        src/ui/tui/modals/settings/VisualizerSettingsTab.h
+        src/ui/tui/modals/settings/VisualizerSettingsTab.cpp
+        src/ui/tui/modals/settings/ThemeSettingsTab.h
+        src/ui/tui/modals/settings/ThemeSettingsTab.cpp
+        src/ui/tui/modals/settings/ServiceColorsSettingsTab.h
+        src/ui/tui/modals/settings/ServiceColorsSettingsTab.cpp
         src/ui/tui/components/SettingsModalComponent.h
         src/ui/tui/components/SettingsModalComponent.cpp
         src/ui/tui/components/HelpModalComponent.h
@@ -231,6 +264,7 @@ if(NOT TARGET qt6keychain)
     set(BUILD_SHARED_LIBS OFF)
     set(BUILD_TRANSLATIONS OFF CACHE BOOL "" FORCE)
     set(BUILD_TEST_APPLICATION OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
     include(FetchContent)
     FetchContent_Declare(
             qtkeychain
@@ -339,6 +373,9 @@ endif()
 # ==============================================================================
 # Qt CMake Deployment API (Qt 6.3+)
 # ==============================================================================
+if(WIN32 AND NOT DEFINED CMAKE_INSTALL_BINDIR)
+    set(CMAKE_INSTALL_BINDIR ".")
+endif()
 include(GNUInstallDirs)
 
 install(TARGETS ${PROJECT_NAME}
@@ -358,7 +395,18 @@ install(SCRIPT ${deploy_script})
 if(WIN32)
     # fdk-aac DLL
     if(TARGET fdk-aac)
-        install(FILES $<TARGET_FILE:fdk-aac> DESTINATION ${CMAKE_INSTALL_BINDIR})
+        get_target_property(fdkaac_type fdk-aac TYPE)
+        if(fdkaac_type STREQUAL "SHARED_LIBRARY")
+            install(FILES $<TARGET_FILE:fdk-aac> DESTINATION ${CMAKE_INSTALL_BINDIR})
+        endif()
+    endif()
+
+    # qt6keychain DLL (если собран динамически)
+    if(TARGET qt6keychain)
+        get_target_property(qt6keychain_type qt6keychain TYPE)
+        if(qt6keychain_type STREQUAL "SHARED_LIBRARY")
+            install(FILES $<TARGET_FILE:qt6keychain> DESTINATION ${CMAKE_INSTALL_BINDIR})
+        endif()
     endif()
 
     # Shazam FFI DLL
@@ -370,6 +418,7 @@ endif()
 # Установка конфигурационных файлов и ресурсов
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/ftxui.cfg" DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/config.ini" DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/.env" DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/covers")
     install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/covers" DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()

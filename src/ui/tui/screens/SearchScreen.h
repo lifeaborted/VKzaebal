@@ -41,9 +41,6 @@ public:
     void SetSearchResults(const std::vector<Track>& results, const std::string& error = "");
     void AppendSearchResults(const std::vector<Track>& moreResults);
     void SetSearchLoading(bool loading);
-    void SetSearchLoadingMore(bool loadingMore) { m_isLoadingMore = loadingMore; }
-    bool HasMoreResults() const { return m_hasMoreResults; }
-    bool IsLoadingMore() const { return m_isLoadingMore; }
     void FocusSearchInput();
     void DeactivateSearchInput() { m_isInputActive = false; }
     bool IsInputActive() const { return m_isInputActive; }
@@ -52,19 +49,14 @@ public:
     void SetShowBottomBar(bool show) { m_showBottomBar = show; }
 
     void SetSearchSource(const std::string& src);
-    std::string GetSearchSource() const;
 
     void ToggleSearchMode();
-    void SetSearchMode(SearchMode mode);
     SearchMode GetSearchMode() const { return m_searchMode; }
 
     void SetFavoriteTrackIds(const std::unordered_set<std::string>& favIds) { m_favoriteTrackIds = favIds; }
     void SetTrackLiked(const std::string& trackId, bool liked) {
         if (liked) m_favoriteTrackIds.insert(trackId);
         else m_favoriteTrackIds.erase(trackId);
-    }
-    bool IsTrackLiked(const std::string& trackId) const {
-        return m_favoriteTrackIds.count(trackId) > 0;
     }
 
     // Callbacks to external controller
@@ -115,7 +107,6 @@ private:
     int m_selectedResultIndex = 0;
     int m_scrollOffset = 0;
     int m_tickerTick = 0;
-    int m_hoveredDlRow = -1;
     std::vector<ftxui::Box> m_resultRowBoxes;
     std::vector<ftxui::Box> m_likeBtnBoxes;
     std::vector<ftxui::Box> m_addBtnBoxes;

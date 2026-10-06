@@ -535,57 +535,6 @@ void TuiThemeConfig::SaveCfgValue(const QString& filePath, const std::string& se
     }
 }
 
-void TuiThemeConfig::SaveVisualizerConfig(const VisualizerConfig& cfg) {
-    m_visConfig = cfg;
-    QString rootConfig = "C:/others/Codes/audio player/ftxui.cfg";
-    for (const QString& path : {m_configPath, rootConfig}) {
-        if (!path.isEmpty() && QFile::exists(path)) {
-            SaveCfgValue(path, "Visualizer", "mode", std::to_string(cfg.mode));
-            SaveCfgValue(path, "Visualizer", "bar_width", std::to_string(cfg.barWidth));
-            SaveCfgValue(path, "Visualizer", "bar_spacing", std::to_string(cfg.barSpacing));
-            SaveCfgValue(path, "Visualizer", "show_peaks", cfg.showPeaks ? "true" : "false");
-
-            std::ostringstream ssSens;
-            ssSens << std::fixed << std::setprecision(2) << cfg.sensitivity;
-            SaveCfgValue(path, "Visualizer", "sensitivity", ssSens.str());
-
-            std::ostringstream ssSmooth;
-            ssSmooth << std::fixed << std::setprecision(2) << cfg.smoothing;
-            SaveCfgValue(path, "Visualizer", "smoothing", ssSmooth.str());
-        }
-    }
-    if (OnConfigChanged) {
-        OnConfigChanged();
-    }
-}
-
-void TuiThemeConfig::SaveBackgroundMode(BackgroundMode mode) {
-    m_bgConfig.mode = mode;
-    std::string modeStr = (mode == BackgroundMode::GRADIENT) ? "gradient" : "mono";
-    QString rootConfig = "C:/others/Codes/audio player/ftxui.cfg";
-    for (const QString& path : {m_configPath, rootConfig}) {
-        if (!path.isEmpty() && QFile::exists(path)) {
-            SaveCfgValue(path, "Background", "mode", modeStr);
-        }
-    }
-    if (OnConfigChanged) {
-        OnConfigChanged();
-    }
-}
-
-void TuiThemeConfig::SaveAccentColor(const std::string& rgbStr) {
-    m_theme.accent = ParseColor(rgbStr, m_theme.accent);
-    QString rootConfig = "C:/others/Codes/audio player/ftxui.cfg";
-    for (const QString& path : {m_configPath, rootConfig}) {
-        if (!path.isEmpty() && QFile::exists(path)) {
-            SaveCfgValue(path, "Theme", "accent", rgbStr);
-        }
-    }
-    if (OnConfigChanged) {
-        OnConfigChanged();
-    }
-}
-
 std::string TuiThemeConfig::GetRawValue(const std::string& section, const std::string& key, const std::string& fallback) const {
     std::string s = section;
     for (char& c : s) c = std::tolower(c);

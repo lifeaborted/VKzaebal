@@ -33,15 +33,21 @@ AudioFormat MpegTsDemuxer::DetectAudioFormat(const uint8_t* data, size_t size) {
     return AudioFormat::Unknown;
 }
 
-void MpegTsDemuxer::ProcessBytes(const uint8_t* data, size_t size) {
-    if (!data || size == 0) return;
-
-    if (!m_isTsStreamDetermined) {
+void MpegTsDemuxer::DetermineStreamType(const uint8_t* data, size_t size) {
+    if (!m_isTsStreamDetermined && data && size > 0) {
         size_t id3Size = Id3Utils::ParseHeaderTotalSize(data, size);
         const uint8_t* checkPtr = data + id3Size;
         size_t checkSize = (size > id3Size) ? (size - id3Size) : 0;
         m_isTsStream = (checkSize > 0 && checkPtr[0] == 0x47);
         m_isTsStreamDetermined = true;
+    }
+}
+
+void MpegTsDemuxer::ProcessBytes(const uint8_t* data, size_t size) {
+    if (!data || size == 0) return;
+
+    if (!m_isTsStreamDetermined) {
+        DetermineStreamType(data, size);
     }
 
     if (!m_isTsStream) {

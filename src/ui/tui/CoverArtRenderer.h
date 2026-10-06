@@ -20,8 +20,8 @@ public:
     explicit CoverArtRenderer(QNetworkAccessManager* netManager, QObject* parent = nullptr);
     ~CoverArtRenderer() override;
 
-    // Requests asynchronous cover loading if not already in memory/disk cache
-    void RequestCover(const std::string& url);
+    // Requests asynchronous cover loading if not already in memory/disk cache with internal debouncing
+    void RequestCover(const std::string& url, int debounceMs = 180);
 
     // Cancel any active network reply
     void CancelActiveRequest();
@@ -33,12 +33,16 @@ signals:
     void CoverReady(const std::string& url);
 
 private:
+    static QImage DownscaleIfNeeded(const QImage& img, int maxDim = 160);
     void PutInCache(const std::string& url, const QImage& image);
     QString GetCachePathForUrl(const std::string& url) const;
     QImage LoadCustomDefaultCover();
+    void ExecuteRequestCover(const std::string& url);
 
     QNetworkAccessManager* m_netManager = nullptr;
     QPointer<QNetworkReply> m_activeReply = nullptr;
+    QTimer* m_debounceTimer = nullptr;
+    std::string m_pendingUrl;
     std::string m_currentUrl;
     QImage m_currentImage;
     bool m_hasImage = false;

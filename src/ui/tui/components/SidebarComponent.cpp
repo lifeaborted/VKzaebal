@@ -103,13 +103,6 @@ void SidebarComponent::SetItemDisabled(const std::string& id, bool disabled) {
     }
 }
 
-bool SidebarComponent::IsItemDisabled(const std::string& id) const {
-    for (const auto& item : m_items) {
-        if (item.id == id) return item.disabled;
-    }
-    return false;
-}
-
 void SidebarComponent::SelectIndex(int index) {
     if (index >= 0 && index < static_cast<int>(m_items.size())) {
         if (m_items[index].disabled) {
@@ -129,28 +122,6 @@ void SidebarComponent::SelectIndex(int index) {
             m_onSelect(m_items[m_selectedIndex].id, m_items[m_selectedIndex].isPlaylist);
         }
     }
-}
-
-void SidebarComponent::CycleNextSource() {
-    if (m_items.empty()) return;
-    int nextIdx = (m_selectedIndex + 1) % m_items.size();
-    int count = 0;
-    while ((m_items[nextIdx].isPlaylist || m_items[nextIdx].disabled) && count < static_cast<int>(m_items.size())) {
-        nextIdx = (nextIdx + 1) % m_items.size();
-        count++;
-    }
-    SelectIndex(nextIdx);
-}
-
-void SidebarComponent::CyclePrevSource() {
-    if (m_items.empty()) return;
-    int prevIdx = (m_selectedIndex - 1 + static_cast<int>(m_items.size())) % m_items.size();
-    int count = 0;
-    while ((m_items[prevIdx].isPlaylist || m_items[prevIdx].disabled) && count < static_cast<int>(m_items.size())) {
-        prevIdx = (prevIdx - 1 + static_cast<int>(m_items.size())) % m_items.size();
-        count++;
-    }
-    SelectIndex(prevIdx);
 }
 
 ftxui::Element SidebarComponent::Render() {

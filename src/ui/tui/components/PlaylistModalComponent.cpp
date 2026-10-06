@@ -1,4 +1,5 @@
 #include "PlaylistModalComponent.h"
+#include "ui/tui/utils/TuiStringUtils.h"
 #include <algorithm>
 #include <unordered_set>
 
@@ -30,21 +31,6 @@ void PlaylistModalComponent::AutoSuggestName() {
         }
         n++;
     }
-}
-
-std::string PlaylistModalComponent::PluralizeTracks(int count) const {
-    int rem100 = count % 100;
-    int rem10 = count % 10;
-    if (rem100 >= 11 && rem100 <= 19) {
-        return "треков";
-    }
-    if (rem10 == 1) {
-        return "трек";
-    }
-    if (rem10 >= 2 && rem10 <= 4) {
-        return "трека";
-    }
-    return "треков";
 }
 
 void PlaylistModalComponent::Show(const std::vector<PlaylistInfo>& playlists) {
@@ -235,7 +221,7 @@ ftxui::Element PlaylistModalComponent::Render() {
                 std::string cursor = isSelected ? "► " : "  ";
                 std::string num = std::to_string(i + 1) + ". ";
                 std::string nameStr = pl.name;
-                std::string countStr = "(" + std::to_string(pl.trackCount) + " " + PluralizeTracks(pl.trackCount) + ")";
+                std::string countStr = "(" + std::to_string(pl.trackCount) + " " + utils::PluralizeTracks(pl.trackCount) + ")";
 
                 ftxui::Element delBtn = ftxui::text(" [ Удалить ] ")
                     | ftxui::bold

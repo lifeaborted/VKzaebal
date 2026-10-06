@@ -21,6 +21,7 @@ class QNetworkAccessManager;
 class VkAuthService;
 class OAuthManager;
 class IAudioProvider;
+class UnifiedSearchAggregator;
 class QQmlApplicationEngine;
 class QTimer;
 
@@ -96,6 +97,7 @@ private:
 
     std::unique_ptr<OAuthManager> m_authManager;
     std::unique_ptr<VkAuthService> m_vkAuthService;
+    std::unique_ptr<UnifiedSearchAggregator> m_searchAggregator;
 
     QQmlApplicationEngine* m_authEngine = nullptr;
     QTimer* m_silentAuthTimer = nullptr;

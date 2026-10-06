@@ -9,6 +9,8 @@
 #include <vector>
 #include <functional>
 
+#include "ui/tui/modals/IModalDialog.h"
+
 namespace tui {
 
 struct HelpItem {
@@ -26,7 +28,7 @@ struct SystemPathInfo {
     std::string path;
 };
 
-class HelpModalComponent : public ftxui::ComponentBase {
+class HelpModalComponent : public IModalDialog {
 public:
     HelpModalComponent();
     ~HelpModalComponent() override = default;
@@ -35,15 +37,15 @@ public:
     bool OnEvent(ftxui::Event event) override;
     bool Focusable() const override { return true; }
 
-    void UpdateTheme(const ThemePalette& palette);
+    void UpdateTheme(const ThemePalette& palette) override;
     void Show(bool showSystemInfo = false);
-    void Hide();
-    bool IsVisible() const { return m_isVisible; }
+    void Hide() override;
+    bool IsVisible() const override { return m_isVisible; }
 
     std::function<void()> OnCloseRequested;
     std::function<void()> OnToggleBottomBarRequested;
 
-    void SetShowBottomBar(bool show) { m_showBottomBar = show; }
+    void SetShowBottomBar(bool show) override { m_showBottomBar = show; }
     bool GetShowBottomBar() const { return m_showBottomBar; }
 
     // Dynamic data getters (never hardcoded in UI layout)

@@ -1,4 +1,5 @@
 #include "HelpModalComponent.h"
+#include "ui/tui/utils/TuiStringUtils.h"
 #include "utils/path/PathManager.h"
 #include <algorithm>
 #include <cmath>
@@ -14,28 +15,6 @@
 #endif
 
 namespace tui {
-
-static std::string ScrollText(const std::string& text, int maxCols, int tick) {
-    if (text.empty() || maxCols <= 0) return "";
-    auto glyphs = ftxui::Utf8ToGlyphs(text);
-    if (static_cast<int>(glyphs.size()) <= maxCols) {
-        return text;
-    }
-    const int kGap = 4;
-    int totalLen = static_cast<int>(glyphs.size()) + kGap;
-    int startIdx = (tick > 0) ? (tick % totalLen) : 0;
-    std::string result;
-    result.reserve(maxCols * 4);
-    for (int i = 0; i < maxCols; ++i) {
-        int idx = (startIdx + i) % totalLen;
-        if (idx < static_cast<int>(glyphs.size())) {
-            result += glyphs[idx];
-        } else {
-            result += ' ';
-        }
-    }
-    return result;
-}
 
 HelpModalComponent::HelpModalComponent()
     : m_theme(GetDefaultTheme()) {
@@ -78,6 +57,7 @@ std::vector<HelpSection> HelpModalComponent::GetHelpSections() {
                 {"+", "Добавить трек в конец очереди"},
                 {"L", "Лайк / Избранное"},
                 {"P", "Менеджер плейлистов"},
+                {"O / F2", "Настройки плеера"},
                 {"V", "Стиль эквалайзера"}
             }
         },
@@ -277,7 +257,7 @@ ftxui::Element HelpModalComponent::RenderSystemInfoView() {
         );
 
         // Line 2: Path value with larger indent (6 spaces) + dynamic marquee scrolling
-        std::string scrolledPath = ScrollText(pi.path, availPathWidth, m_animTick);
+        std::string scrolledPath = utils::ScrollText(pi.path, availPathWidth, m_animTick);
         allPathRows.push_back(
             ftxui::text("      " + scrolledPath) | ftxui::color(theme.text)
         );

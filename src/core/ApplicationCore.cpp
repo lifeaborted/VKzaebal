@@ -174,7 +174,7 @@ void ApplicationCore::WireConnections() {
     };
 
     // Плейлист -> Воспроизведение
-    m_playlist->OnTrackRequested = [this](Track track) {
+    m_playlist->OnTrackRequested = [this](const Track& track) {
         m_playbackCtrl->AttemptPlay(track);
         if (m_ui) m_ui->OnTrackChanged(track);
     };

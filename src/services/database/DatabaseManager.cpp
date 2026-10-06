@@ -4,15 +4,7 @@
 
 #include <QSqlError>
 #include <QVariant>
-#include <QFile>
-#include <QTextStream>
 #include <QStringList>
-#include <QtConcurrent>
-#include <QUuid>
-#include <QJsonDocument>
-#include <QJsonArray>
-#include <QJsonObject>
-#include <unordered_map>
 
 namespace {
 int ParseDurationSeconds(const QString& durationStr) {
@@ -32,6 +24,10 @@ DatabaseManager::DatabaseManager() {
     m_db = QSqlDatabase::addDatabase("QSQLITE");
     m_db.setConnectOptions("QSQLITE_BUSY_TIMEOUT=5000");
     m_db.setDatabaseName(PathManager::GetDbPath());
+
+    m_trackRepo = std::make_unique<TrackRepository>(m_db);
+    m_playlistRepo = std::make_unique<PlaylistRepository>(m_db);
+    m_sessionRepo = std::make_unique<SessionRepository>(m_db);
 }
 
 DatabaseManager::~DatabaseManager() {
@@ -224,301 +220,59 @@ void DatabaseManager::ClearSetting(const QString& key) {
     query.exec();
 }
 
-void DatabaseManager::SaveQueue(const std::vector<Track>& currentQueue, const std::string& source, bool isShuffle) {
-    if (source.empty()) return;
-
-    QThreadPool::globalInstance()->start([currentQueue, source, isShuffle]() {
-        QString connectionName = QUuid::createUuid().toString();
-        {
-            QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connectionName);
-            db.setConnectOptions("QSQLITE_BUSY_TIMEOUT=5000");
-            db.setDatabaseName(PathManager::GetDbPath());
-
-            if (db.open()) {
-                QSqlQuery query(db);
-                QJsonArray arr;
-                for (const auto& track : currentQueue) {
-                    arr.append(QString::fromStdString(track.id));
-                }
-                QString jsonQueue = QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
-
-                if (isShuffle) {
-                    query.prepare(
-                        "INSERT INTO SourceSessions (source, shuffle_queue, updated_at) "
-                        "VALUES (:source, :queue, CURRENT_TIMESTAMP) "
-                        "ON CONFLICT(source) DO UPDATE SET "
-                        "shuffle_queue = excluded.shuffle_queue, "
-                        "updated_at = CURRENT_TIMESTAMP"
-                    );
-                } else {
-                    query.prepare(
-                        "INSERT INTO SourceSessions (source, standard_queue, updated_at) "
-                        "VALUES (:source, :queue, CURRENT_TIMESTAMP) "
-                        "ON CONFLICT(source) DO UPDATE SET "
-                        "standard_queue = excluded.standard_queue, "
-                        "updated_at = CURRENT_TIMESTAMP"
-                    );
-                }
-                query.bindValue(":source", QString::fromStdString(source));
-                query.bindValue(":queue", jsonQueue);
-                query.exec();
-                db.close();
-            } else {
-                Logger::Log(LogLevel::ERROR, "DB: Failed to open threaded connection for SaveQueue.");
-            }
-        }
-        QSqlDatabase::removeDatabase(connectionName);
-    });
-}
-
-void DatabaseManager::ExportQueueToTxt(const std::vector<Track>& queue, const QString& filename, bool isShuffle) const {
-    QThreadPool::globalInstance()->start([queue, filename, isShuffle]() {
-        QString exportPath = PathManager::GetPlaylistExportPath(filename);
-        QFile file(exportPath);
-        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            QTextStream out(&file);
-            out << "=== ТЕКУЩИЙ ПЛЕЙЛИСТ ===\n";
-            out << "Режим: " << (isShuffle ? "SHUFFLE" : "СТАНДАРТНЫЙ") << "\n";
-            out << "-------------------------\n\n";
-
-            for (size_t i = 0; i < queue.size(); ++i) {
-                out << "[" << (i + 1) << "]. " << QString::fromStdString(queue[i].artist)
-                    << " - " << QString::fromStdString(queue[i].title)
-                    << " [" << QString::fromStdString(queue[i].GetFormattedDuration()) << "]\n";
-            }
-            file.close();
-        } else {
-            Logger::Log(LogLevel::ERROR, "DB: Failed to generate playlist export.");
-        }
-    });
-}
-
 void DatabaseManager::SaveTracks(const std::vector<Track>& tracks) {
-    QThreadPool::globalInstance()->start([tracks]() {
-        QString connectionName = QUuid::createUuid().toString();
-        {
-            QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connectionName);
-            db.setConnectOptions("QSQLITE_BUSY_TIMEOUT=5000");
-            db.setDatabaseName(PathManager::GetDbPath());
+    m_trackRepo->SaveTracks(tracks);
+}
 
-            if (db.open()) {
-                db.transaction();
-                QSqlQuery query(db);
-                query.prepare(
-                    "INSERT INTO Tracks (source, external_id, artist, title, duration, cover_url, lyrics_id, lyrics) "
-                    "VALUES (:source, :external_id, :artist, :title, :duration, :cover_url, :lyrics_id, :lyrics) "
-                    "ON CONFLICT(source, external_id) DO UPDATE SET "
-                    "artist = excluded.artist, "
-                    "title = excluded.title, "
-                    "duration = excluded.duration, "
-                    "cover_url = excluded.cover_url, "
-                    "lyrics_id = CASE WHEN excluded.lyrics_id != '' THEN excluded.lyrics_id ELSE Tracks.lyrics_id END, "
-                    "lyrics = CASE WHEN excluded.lyrics != '' THEN excluded.lyrics ELSE Tracks.lyrics END"
-                );
-
-                for (const auto& track : tracks) {
-                    query.bindValue(":source", QString::fromStdString(track.source));
-                    query.bindValue(":external_id", QString::fromStdString(track.id));
-                    query.bindValue(":artist", QString::fromStdString(track.artist));
-                    query.bindValue(":title", QString::fromStdString(track.title));
-                    query.bindValue(":duration", track.duration);
-                    query.bindValue(":cover_url", QString::fromStdString(track.coverUrl));
-                    query.bindValue(":lyrics_id", QString::fromStdString(track.lyrics_id));
-                    query.bindValue(":lyrics", QString::fromStdString(track.lyrics));
-                    query.exec();
-                }
-                db.commit();
-                db.close();
-            } else {
-                Logger::Log(LogLevel::ERROR, "DB: Failed to open threaded connection.");
-            }
-        }
-        QSqlDatabase::removeDatabase(connectionName);
-    });
+Track DatabaseManager::TrackFromSqlRecord(const QSqlQuery& query) {
+    return TrackRepository::TrackFromSqlRecord(query);
 }
 
 std::vector<Track> DatabaseManager::LoadTracks(const std::string& source) {
-    std::vector<Track> tracks;
-    QSqlQuery query(m_db);
-
-    if (source == "Offline") {
-        query.prepare("SELECT id, external_id, artist, title, duration, cover_url, lyrics_id, lyrics, source "
-                      "FROM Tracks");
-    } else {
-        query.prepare("SELECT id, external_id, artist, title, duration, cover_url, lyrics_id, lyrics, source "
-                      "FROM Tracks "
-                      "WHERE source = :source "
-                      "ORDER BY id ASC");
-        query.bindValue(":source", QString::fromStdString(source));
-    }
-
-    if (query.exec()) {
-        tracks.reserve(512);
-        while (query.next()) {
-            Track t;
-            t.dbId = query.value(0).toLongLong();
-            t.id = query.value(1).toString().toStdString();
-            t.artist = query.value(2).toString().toStdString();
-            t.title = query.value(3).toString().toStdString();
-            t.duration = query.value(4).toInt();
-            t.coverUrl = query.value(5).toString().toStdString();
-            t.lyrics_id = query.value(6).toString().toStdString();
-            t.lyrics = query.value(7).toString().toStdString();
-            t.source = query.value(8).toString().toStdString();
-            auto usPos = t.id.find('_');
-            if (usPos != std::string::npos) {
-                t.ownerId = t.id.substr(0, usPos);
-            }
-
-            tracks.push_back(std::move(t));
-        }
-    }
-
+    std::vector<std::string> standardOrder;
     if (source != "Offline") {
-        std::vector<std::string> standardOrder = LoadQueueIds(source, false);
-        if (!standardOrder.empty()) {
-            std::unordered_map<std::string, Track> trackMap;
-            trackMap.reserve(tracks.size());
-            for (auto& t : tracks) {
-                trackMap.emplace(t.id, std::move(t));
-            }
-
-            std::vector<Track> ordered;
-            ordered.reserve(tracks.size());
-            for (const auto& id : standardOrder) {
-                auto it = trackMap.find(id);
-                if (it != trackMap.end()) {
-                    ordered.push_back(std::move(it->second));
-                    trackMap.erase(it);
-                }
-            }
-            for (auto& pair : trackMap) {
-                ordered.push_back(std::move(pair.second));
-            }
-            tracks = std::move(ordered);
-        }
+        standardOrder = m_sessionRepo->LoadQueueIds(source, false);
     }
-
-    Logger::Log(LogLevel::INFO, "DB: Loaded " + std::to_string(tracks.size()) + " tracks for source " + source);
-    return tracks;
+    return m_trackRepo->LoadTracks(source, standardOrder);
 }
 
 void DatabaseManager::UpdateTrackLyrics(const std::string& trackId, const std::string& lyrics) {
-    QSqlQuery query(m_db);
-    query.prepare("UPDATE Tracks SET lyrics = :lyrics WHERE external_id = :id");
-    query.bindValue(":lyrics", QString::fromStdString(lyrics));
-    query.bindValue(":id", QString::fromStdString(trackId));
-    if (!query.exec()) {
-        Logger::Log(LogLevel::ERROR, "DB: Failed to update lyrics for track " + trackId);
-    }
-}
-
-std::vector<std::string> DatabaseManager::LoadQueueIds(const std::string& source, bool isShuffle) const {
-    std::vector<std::string> ids;
-    if (source.empty()) return ids;
-
-    QSqlQuery query(m_db);
-    if (isShuffle) {
-        query.prepare("SELECT shuffle_queue FROM SourceSessions WHERE source = :source");
-    } else {
-        query.prepare("SELECT standard_queue FROM SourceSessions WHERE source = :source");
-    }
-    query.bindValue(":source", QString::fromStdString(source));
-    if (query.exec() && query.next()) {
-        QString jsonStr = query.value(0).toString();
-        if (!jsonStr.isEmpty()) {
-            QJsonDocument doc = QJsonDocument::fromJson(jsonStr.toUtf8());
-            if (doc.isArray()) {
-                QJsonArray arr = doc.array();
-                ids.reserve(arr.size());
-                for (const auto& val : arr) {
-                    ids.push_back(val.toString().toStdString());
-                }
-            }
-        }
-    }
-    return ids;
+    m_trackRepo->UpdateTrackLyrics(trackId, lyrics);
 }
 
 void DatabaseManager::ClearTracksForSource(const std::string& source) {
+    m_trackRepo->ClearTracksForSource(source);
     if (source == "all" || source == "ALL") {
-        QSqlQuery q1(m_db);
-        if (!q1.exec("DELETE FROM Tracks")) {
-            Logger::Log(LogLevel::ERROR, "DB: Failed to clear Tracks: " + q1.lastError().text().toStdString());
-        }
         QSqlQuery q2(m_db);
         q2.exec("UPDATE SourceSessions SET shuffle_queue = '', standard_queue = ''");
         Logger::Log(LogLevel::INFO, "DB: Cleared all tracks and queues from database.");
     } else {
-        QSqlQuery q1(m_db);
-        q1.prepare("DELETE FROM Tracks WHERE source = :source");
-        q1.bindValue(":source", QString::fromStdString(source));
-        if (!q1.exec()) {
-            Logger::Log(LogLevel::ERROR, "DB: Failed to clear Tracks for source " + source + ": " + q1.lastError().text().toStdString());
-        }
-
         QSqlQuery q2(m_db);
         q2.prepare("UPDATE SourceSessions SET shuffle_queue = '', standard_queue = '' WHERE source = :source");
         q2.bindValue(":source", QString::fromStdString(source));
         q2.exec();
-
         Logger::Log(LogLevel::INFO, "DB: Cleared tracks and queue for source: " + source);
     }
-
-    QSqlQuery qClean(m_db);
-    qClean.exec("DELETE FROM PlaylistTracks WHERE track_id NOT IN (SELECT external_id FROM Tracks)");
 }
 
 std::vector<Track> DatabaseManager::LoadAllSourcesTracks() {
-    std::vector<Track> tracks;
-    QSqlQuery query(m_db);
-    // Порядок согласно списку source: 1 - VK, 2 - Spotify, 3 - SoundCloud, 4 - Yandex, 5 - YouTube
-    query.prepare(
-        "SELECT id, external_id, artist, title, duration, cover_url, lyrics_id, lyrics, source "
-        "FROM Tracks "
-        "ORDER BY CASE source "
-        "    WHEN 'VK' THEN 1 "
-        "    WHEN 'Spotify' THEN 2 "
-        "    WHEN 'SoundCloud' THEN 3 "
-        "    WHEN 'Yandex' THEN 4 "
-        "    WHEN 'YouTube' THEN 5 "
-        "    ELSE 6 END, id ASC"
-    );
+    return m_trackRepo->LoadAllSourcesTracks();
+}
 
-    if (query.exec()) {
-        tracks.reserve(1024);
-        while (query.next()) {
-            Track t;
-            t.dbId = query.value(0).toLongLong();
-            t.id = query.value(1).toString().toStdString();
-            t.artist = query.value(2).toString().toStdString();
-            t.title = query.value(3).toString().toStdString();
-            t.duration = query.value(4).toInt();
-            t.coverUrl = query.value(5).toString().toStdString();
-            t.lyrics_id = query.value(6).toString().toStdString();
-            t.lyrics = query.value(7).toString().toStdString();
-            t.source = query.value(8).toString().toStdString();
-            auto usPos = t.id.find('_');
-            if (usPos != std::string::npos) {
-                t.ownerId = t.id.substr(0, usPos);
-            }
-            tracks.push_back(std::move(t));
-        }
-    }
-    return tracks;
+void DatabaseManager::SaveQueue(const std::vector<Track>& currentQueue, const std::string& source, bool isShuffle) {
+    m_sessionRepo->SaveQueue(currentQueue, source, isShuffle);
+}
+
+std::vector<std::string> DatabaseManager::LoadQueueIds(const std::string& source, bool isShuffle) const {
+    return m_sessionRepo->LoadQueueIds(source, isShuffle);
+}
+
+void DatabaseManager::ExportQueueToTxt(const std::vector<Track>& queue, const QString& filename, bool isShuffle) const {
+    m_sessionRepo->ExportQueueToTxt(queue, filename, isShuffle);
 }
 
 bool DatabaseManager::CreatePlaylist(const std::string& name) {
-    if (name.empty()) return false;
-    QSqlQuery query(m_db);
-    query.prepare("INSERT INTO Playlists (name) VALUES (:name)");
-    query.bindValue(":name", QString::fromStdString(name));
-    if (!query.exec()) {
-        Logger::Log(LogLevel::WARNING, "DB: Failed to create playlist '" + name + "': " + query.lastError().text().toStdString());
-        return false;
-    }
-    Logger::Log(LogLevel::INFO, "DB: Created playlist '" + name + "'");
-    return true;
+    return m_playlistRepo->CreatePlaylist(name);
 }
 
 bool DatabaseManager::DeletePlaylist(int playlistId) {
@@ -532,196 +286,51 @@ bool DatabaseManager::DeletePlaylist(int playlistId) {
         }
     }
     if (!plName.empty()) {
-        ClearSourceSession("Custom:" + plName);
+        m_sessionRepo->ClearSourceSession("Custom:" + plName);
     }
-
-    QSqlQuery q1(m_db);
-    q1.prepare("DELETE FROM PlaylistTracks WHERE playlist_id = :id");
-    q1.bindValue(":id", playlistId);
-    q1.exec();
-
-    QSqlQuery q2(m_db);
-    q2.prepare("DELETE FROM Playlists WHERE id = :id");
-    q2.bindValue(":id", playlistId);
-    return q2.exec();
+    return m_playlistRepo->DeletePlaylist(playlistId);
 }
 
 bool DatabaseManager::DeletePlaylist(const std::string& name) {
-    QSqlQuery query(m_db);
-    query.prepare("SELECT id FROM Playlists WHERE name = :name COLLATE NOCASE");
-    query.bindValue(":name", QString::fromStdString(name));
-    if (query.exec() && query.next()) {
-        int id = query.value(0).toInt();
-        return DeletePlaylist(id);
-    }
-    return false;
+    return m_playlistRepo->DeletePlaylist(name);
 }
 
 std::vector<PlaylistInfo> DatabaseManager::GetPlaylists() {
-    std::vector<PlaylistInfo> list;
-    QSqlQuery query(m_db);
-    query.prepare("SELECT p.id, p.name, COUNT(pt.track_id) "
-                  "FROM Playlists p "
-                  "LEFT JOIN PlaylistTracks pt ON p.id = pt.playlist_id "
-                  "GROUP BY p.id, p.name "
-                  "ORDER BY p.id ASC");
-    if (query.exec()) {
-        while (query.next()) {
-            PlaylistInfo info;
-            info.id = query.value(0).toInt();
-            info.name = query.value(1).toString().toStdString();
-            info.trackCount = query.value(2).toInt();
-            list.push_back(info);
-        }
-    }
-    return list;
+    return m_playlistRepo->GetPlaylists();
 }
 
 bool DatabaseManager::AddTrackToPlaylist(int playlistId, const std::string& trackId) {
-    if (trackId.empty() || playlistId <= 0) return false;
-
-    if (IsTrackInPlaylist(playlistId, trackId)) {
-        return false;
-    }
-
-    QSqlQuery posQuery(m_db);
-    posQuery.prepare("SELECT COALESCE(MAX(position), -1) + 1 FROM PlaylistTracks WHERE playlist_id = :pid");
-    posQuery.bindValue(":pid", playlistId);
-    int nextPos = 0;
-    if (posQuery.exec() && posQuery.next()) {
-        nextPos = posQuery.value(0).toInt();
-    }
-
-    QSqlQuery insQuery(m_db);
-    insQuery.prepare("INSERT OR REPLACE INTO PlaylistTracks (playlist_id, position, track_id) VALUES (:pid, :pos, :tid)");
-    insQuery.bindValue(":pid", playlistId);
-    insQuery.bindValue(":pos", nextPos);
-    insQuery.bindValue(":tid", QString::fromStdString(trackId));
-    return insQuery.exec();
+    return m_playlistRepo->AddTrackToPlaylist(playlistId, trackId);
 }
 
 bool DatabaseManager::IsTrackInPlaylist(int playlistId, const std::string& trackId) {
-    if (trackId.empty() || playlistId <= 0) return false;
-    QSqlQuery q(m_db);
-    q.prepare("SELECT 1 FROM PlaylistTracks WHERE playlist_id = :pid AND track_id = :tid LIMIT 1;");
-    q.bindValue(":pid", playlistId);
-    q.bindValue(":tid", QString::fromStdString(trackId));
-    return q.exec() && q.next();
+    return m_playlistRepo->IsTrackInPlaylist(playlistId, trackId);
 }
 
 std::vector<int> DatabaseManager::GetPlaylistIdsContainingTrack(const std::string& trackId) {
-    std::vector<int> ids;
-    if (trackId.empty()) return ids;
-    QSqlQuery q(m_db);
-    q.prepare("SELECT DISTINCT playlist_id FROM PlaylistTracks WHERE track_id = :tid;");
-    q.bindValue(":tid", QString::fromStdString(trackId));
-    if (q.exec()) {
-        while (q.next()) {
-            ids.push_back(q.value(0).toInt());
-        }
-    }
-    return ids;
+    return m_playlistRepo->GetPlaylistIdsContainingTrack(trackId);
 }
 
 bool DatabaseManager::RemoveTrackFromPlaylist(int playlistId, int position) {
-    QSqlQuery delQuery(m_db);
-    delQuery.prepare("DELETE FROM PlaylistTracks WHERE playlist_id = :pid AND position = :pos");
-    delQuery.bindValue(":pid", playlistId);
-    delQuery.bindValue(":pos", position);
-    if (!delQuery.exec()) return false;
-
-    QSqlQuery shiftQuery(m_db);
-    shiftQuery.prepare("UPDATE PlaylistTracks SET position = position - 1 WHERE playlist_id = :pid AND position > :pos");
-    shiftQuery.bindValue(":pid", playlistId);
-    shiftQuery.bindValue(":pos", position);
-    return shiftQuery.exec();
+    return m_playlistRepo->RemoveTrackFromPlaylist(playlistId, position);
 }
 
 std::vector<Track> DatabaseManager::LoadPlaylistTracks(int playlistId) {
-    std::vector<Track> tracks;
-    QSqlQuery query(m_db);
-    query.prepare("SELECT t.id, t.external_id, t.artist, t.title, t.duration, t.cover_url, t.lyrics_id, t.lyrics, t.source "
-                  "FROM PlaylistTracks pt "
-                  "JOIN Tracks t ON pt.track_id = t.external_id "
-                  "WHERE pt.playlist_id = :pid "
-                  "ORDER BY pt.position ASC");
-    query.bindValue(":pid", playlistId);
-    if (query.exec()) {
-        tracks.reserve(128);
-        while (query.next()) {
-            Track t;
-            t.dbId = query.value(0).toLongLong();
-            t.id = query.value(1).toString().toStdString();
-            t.artist = query.value(2).toString().toStdString();
-            t.title = query.value(3).toString().toStdString();
-            t.duration = query.value(4).toInt();
-            t.coverUrl = query.value(5).toString().toStdString();
-            t.lyrics_id = query.value(6).toString().toStdString();
-            t.lyrics = query.value(7).toString().toStdString();
-            t.source = query.value(8).toString().toStdString();
-            auto usPos = t.id.find('_');
-            if (usPos != std::string::npos) {
-                t.ownerId = t.id.substr(0, usPos);
-            }
-            tracks.push_back(std::move(t));
-        }
-    }
-    return tracks;
+    return m_playlistRepo->LoadPlaylistTracks(playlistId);
 }
 
 std::vector<Track> DatabaseManager::LoadPlaylistTracksByName(const std::string& name, int& outId) {
-    outId = -1;
-    QSqlQuery query(m_db);
-    query.prepare("SELECT id FROM Playlists WHERE name = :name COLLATE NOCASE");
-    query.bindValue(":name", QString::fromStdString(name));
-    if (query.exec() && query.next()) {
-        outId = query.value(0).toInt();
-        return LoadPlaylistTracks(outId);
-    }
-    return {};
+    return m_playlistRepo->LoadPlaylistTracksByName(name, outId);
 }
 
 void DatabaseManager::SaveSourceSession(const std::string& source, const std::string& trackId, int trackIndex, double positionSeconds) {
-    if (source.empty()) return;
-    QSqlQuery query(m_db);
-    query.prepare("INSERT INTO SourceSessions (source, track_id, track_index, position_seconds, updated_at) "
-                  "VALUES (:source, :track_id, :track_index, :position_seconds, CURRENT_TIMESTAMP) "
-                  "ON CONFLICT(source) DO UPDATE SET "
-                  "track_id = excluded.track_id, "
-                  "track_index = excluded.track_index, "
-                  "position_seconds = excluded.position_seconds, "
-                  "updated_at = CURRENT_TIMESTAMP");
-    query.bindValue(":source", QString::fromStdString(source));
-    query.bindValue(":track_id", QString::fromStdString(trackId));
-    query.bindValue(":track_index", trackIndex);
-    query.bindValue(":position_seconds", positionSeconds > 0.0 ? positionSeconds : 0.0);
-    if (!query.exec()) {
-        Logger::Log(LogLevel::WARNING, "DB: Failed to save source session for '" + source + "': " + query.lastError().text().toStdString());
-    }
+    m_sessionRepo->SaveSourceSession(source, trackId, trackIndex, positionSeconds);
 }
 
 std::optional<SourceSession> DatabaseManager::LoadSourceSession(const std::string& source) const {
-    if (source.empty()) return std::nullopt;
-    QSqlQuery query(m_db);
-    query.prepare("SELECT source, track_id, track_index, position_seconds, shuffle_queue, standard_queue FROM SourceSessions WHERE source = :source");
-    query.bindValue(":source", QString::fromStdString(source));
-    if (query.exec() && query.next()) {
-        SourceSession session;
-        session.source = query.value(0).toString().toStdString();
-        session.trackId = query.value(1).toString().toStdString();
-        session.trackIndex = query.value(2).toInt();
-        session.positionSeconds = query.value(3).toDouble();
-        session.shuffleQueue = query.value(4).toString().toStdString();
-        session.standardQueue = query.value(5).toString().toStdString();
-        return session;
-    }
-    return std::nullopt;
+    return m_sessionRepo->LoadSourceSession(source);
 }
 
 void DatabaseManager::ClearSourceSession(const std::string& source) {
-    if (source.empty()) return;
-    QSqlQuery query(m_db);
-    query.prepare("DELETE FROM SourceSessions WHERE source = :source");
-    query.bindValue(":source", QString::fromStdString(source));
-    query.exec();
+    m_sessionRepo->ClearSourceSession(source);
 }
