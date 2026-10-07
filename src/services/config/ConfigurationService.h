@@ -51,4 +51,7 @@ public:
 
     bool GetAutoScroll() const;
     void SetAutoScroll(bool enabled);
+
+    bool GetJumpToSourceTrack() const;
+    void SetJumpToSourceTrack(bool enabled);
 };

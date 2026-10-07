@@ -1110,10 +1110,12 @@ bool NowPlayingScreen::OnEvent(ftxui::Event event) {
     }
 
     // Keyboard events
-    if (event == ftxui::Event::Character('v') || event == ftxui::Event::Character('V')) {
+    if (event == ftxui::Event::Character('v') || event == ftxui::Event::Character('V') ||
+        event.character() == "м" || event.character() == "М") {
         CycleVisualizerMode();
         return true;
-    } else if (event == ftxui::Event::Character('j') || event == ftxui::Event::Character('J') || event == ftxui::Event::ArrowDown) {
+    } else if (event == ftxui::Event::Character('j') || event == ftxui::Event::Character('J') ||
+               event.character() == "о" || event.character() == "О" || event == ftxui::Event::ArrowDown) {
         int total = static_cast<int>(m_playlist.GetQueueSize());
         if (m_queueCursor < total - 1) {
             m_queueCursor++;
@@ -1122,13 +1124,44 @@ bool NowPlayingScreen::OnEvent(ftxui::Event event) {
             }
             return true;
         }
-    } else if (event == ftxui::Event::Character('k') || event == ftxui::Event::Character('K') || event == ftxui::Event::ArrowUp) {
+    } else if (event == ftxui::Event::Character('k') || event == ftxui::Event::Character('K') ||
+               event.character() == "л" || event.character() == "Л" || event == ftxui::Event::ArrowUp) {
         if (m_queueCursor > 0) {
             m_queueCursor--;
             if (m_queueCursor < m_scrollOffset) {
                 m_scrollOffset = m_queueCursor;
             }
             return true;
+        }
+    } else if (event == ftxui::Event::Character('a') || event == ftxui::Event::Character('A') ||
+               event.character() == "ф" || event.character() == "Ф") {
+        int total = static_cast<int>(m_playlist.GetQueueSize());
+        if (m_queueCursor >= 0 && m_queueCursor < total) {
+            auto slice = m_playlist.GetQueueSlice(m_queueCursor, 1);
+            if (!slice.empty() && OnAddToPlaylist) {
+                OnAddToPlaylist(slice[0]);
+                return true;
+            }
+        }
+    } else if (event == ftxui::Event::Character('l') || event == ftxui::Event::Character('L') ||
+               event.character() == "д" || event.character() == "Д") {
+        int total = static_cast<int>(m_playlist.GetQueueSize());
+        if (m_queueCursor >= 0 && m_queueCursor < total) {
+            auto slice = m_playlist.GetQueueSlice(m_queueCursor, 1);
+            if (!slice.empty() && OnToggleLike) {
+                OnToggleLike(slice[0]);
+                return true;
+            }
+        }
+    } else if (event == ftxui::Event::Character('d') || event == ftxui::Event::Character('D') ||
+               event.character() == "в" || event.character() == "В") {
+        int total = static_cast<int>(m_playlist.GetQueueSize());
+        if (m_queueCursor >= 0 && m_queueCursor < total) {
+            auto slice = m_playlist.GetQueueSlice(m_queueCursor, 1);
+            if (!slice.empty() && OnDownloadTrackRequested) {
+                OnDownloadTrackRequested(slice[0]);
+                return true;
+            }
         }
     } else if (event == ftxui::Event::Return) {
         if (!m_isSourceAuthorized && m_activeSource.rfind("Custom:", 0) != 0 && m_activeSource != "Offline" && m_activeSource != "All") {

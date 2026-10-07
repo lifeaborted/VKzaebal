@@ -469,13 +469,13 @@ bool EqualizerModalComponent::OnEvent(ftxui::Event event) {
         return true;
     }
 
-    // Preset navigation: [ and ]
-    if (event == ftxui::Event::Character('[')) {
+    // Preset navigation: [ and ] (х and ъ)
+    if (event == ftxui::Event::Character('[') || event.character() == "х" || event.character() == "Х") {
         int nextPreset = (m_currentPresetIndex + static_cast<int>(S_PRESETS.size()) - 1) % static_cast<int>(S_PRESETS.size());
         ApplyPreset(nextPreset);
         return true;
     }
-    if (event == ftxui::Event::Character(']')) {
+    if (event == ftxui::Event::Character(']') || event.character() == "ъ" || event.character() == "Ъ") {
         int nextPreset = (m_currentPresetIndex + 1) % static_cast<int>(S_PRESETS.size());
         ApplyPreset(nextPreset);
         return true;

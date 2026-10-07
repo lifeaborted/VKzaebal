@@ -289,12 +289,14 @@ bool AddToPlaylistModalComponent::OnEvent(ftxui::Event event) {
         return true;
     }
 
-    if (event == ftxui::Event::ArrowDown) {
+    if (event == ftxui::Event::ArrowDown || event == ftxui::Event::Character('j') || event == ftxui::Event::Character('J') ||
+        event.character() == "о" || event.character() == "О") {
         SelectNextAvailable();
         return true;
     }
 
-    if (event == ftxui::Event::ArrowUp) {
+    if (event == ftxui::Event::ArrowUp || event == ftxui::Event::Character('k') || event == ftxui::Event::Character('K') ||
+        event.character() == "л" || event.character() == "Л") {
         SelectPrevAvailable();
         return true;
     }

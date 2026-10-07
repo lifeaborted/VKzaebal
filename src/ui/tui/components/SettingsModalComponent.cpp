@@ -666,7 +666,8 @@ bool SettingsModalComponent::OnEvent(ftxui::Event event) {
     }
 
     // Navigation inside options list
-    if (event == ftxui::Event::ArrowUp || event == ftxui::Event::Character('k') || event == ftxui::Event::Character('K')) {
+    if (event == ftxui::Event::ArrowUp || event == ftxui::Event::Character('k') || event == ftxui::Event::Character('K') ||
+        event.character() == "л" || event.character() == "Л") {
         if (m_selectedOption > 0) {
             m_selectedOption--;
             while (m_selectedOption > 0 && currentTab->IsOptionDisabled(m_selectedOption)) {
@@ -679,7 +680,8 @@ bool SettingsModalComponent::OnEvent(ftxui::Event event) {
         return true;
     }
 
-    if (event == ftxui::Event::ArrowDown || event == ftxui::Event::Character('j') || event == ftxui::Event::Character('J')) {
+    if (event == ftxui::Event::ArrowDown || event == ftxui::Event::Character('j') || event == ftxui::Event::Character('J') ||
+        event.character() == "о" || event.character() == "О") {
         if (m_selectedOption < maxOpts - 1) {
             m_selectedOption++;
             while (m_selectedOption < maxOpts - 1 && currentTab->IsOptionDisabled(m_selectedOption)) {

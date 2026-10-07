@@ -19,6 +19,7 @@ void PlaybackSettingsTab::LoadSettings() {
     m_shuffle = m_configService.GetShuffle();
     m_gapless = m_configService.GetGaplessPlayback();
     m_autoScroll = m_configService.GetAutoScroll();
+    m_jumpToSourceTrack = m_configService.GetJumpToSourceTrack();
 }
 
 std::vector<SettingItem> PlaybackSettingsTab::GetItems() const {
@@ -30,7 +31,8 @@ std::vector<SettingItem> PlaybackSettingsTab::GetItems() const {
         {"Режим повтора треков (repeat)", "session", "repeat", SettingType::CHOICE, {"Без повтора", "Повторять все", "Повторять один"}, 1, 0, 2},
         {"Случайный порядок (shuffle)", "session", "shuffle", SettingType::TOGGLE, {}, 1, 0, 1},
         {"Непрерывный переход (gapless)", "audio", "gapless", SettingType::TOGGLE, {}, 1, 0, 1},
-        {"Автоскролл к треку (autoscroll)", "playback", "autoscroll", SettingType::TOGGLE, {}, 1, 0, 1}
+        {"Автоскролл к треку (autoscroll)", "playback", "autoscroll", SettingType::TOGGLE, {}, 1, 0, 1},
+        {"Переход к позиции трека (jump_pos)", "playback", "jump_pos", SettingType::TOGGLE, {}, 1, 0, 1}
     };
 }
 
@@ -58,6 +60,8 @@ std::string PlaybackSettingsTab::GetCurrentValue(int optionIndex) const {
             return m_gapless ? "true" : "false";
         case 7:
             return m_autoScroll ? "true" : "false";
+        case 8:
+            return m_jumpToSourceTrack ? "true" : "false";
         default:
             return "";
     }
@@ -89,6 +93,9 @@ void PlaybackSettingsTab::ChangeValue(int optionIndex, int delta) {
     } else if (optionIndex == 7) {
         m_autoScroll = !m_autoScroll;
         m_configService.SetAutoScroll(m_autoScroll);
+    } else if (optionIndex == 8) {
+        m_jumpToSourceTrack = !m_jumpToSourceTrack;
+        m_configService.SetJumpToSourceTrack(m_jumpToSourceTrack);
     }
 }
 

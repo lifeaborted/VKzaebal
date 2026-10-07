@@ -40,7 +40,7 @@ ftxui::Element TuiBottomBar::RenderSearchBar(const ThemePalette& theme) const {
         ftxui::text(" Назад  ") | ftxui::color(theme.textMuted),
         ftxui::text("[L]") | ftxui::bold | ftxui::color(theme.accentRed),
         ftxui::text(" Лайк  ") | ftxui::color(theme.textMuted),
-        ftxui::text("[+]") | ftxui::bold | ftxui::color(theme.accentCyan),
+        ftxui::text("[A]") | ftxui::bold | ftxui::color(theme.accentCyan),
         ftxui::text(" В очередь  ") | ftxui::color(theme.textMuted),
         ftxui::text("[Shift+I]") | ftxui::bold | ftxui::color(theme.accentOrange),
         ftxui::text(" Скрыть  ") | ftxui::color(theme.textMuted),

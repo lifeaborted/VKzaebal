@@ -181,7 +181,7 @@ namespace {
             } else if (!arg.empty()) {
                 filePath = arg;
             } else {
-                if (ctx.print) ctx.print("\n=== Выбор источника ===\n1 - ВКонтакте\n2 - Spotify\n3 - SoundCloud\n4 - Yandex\n5 - YouTube Music\n6 - Оффлайн режим\n\nВведите номер: ");
+                if (ctx.print) ctx.print("Выберите источник аудио");
                 return;
             }
 

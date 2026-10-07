@@ -41,37 +41,39 @@ std::vector<HelpSection> HelpModalComponent::GetHelpSections() {
         {
             "ОСНОВНАЯ НАВИГАЦИЯ",
             {
-                {"Space", "Пауза / Старт воспроизведения"},
-                {"N / B", "Следующий / Предыдущий трек"},
-                {"↑ / ↓", "Громкость (+5% / -5%)"},
-                {"← / →", "Перемотка назад / вперед"},
-                {"F / Esc", "Переход в Поиск / Главный экран"},
+
+                {"F", "Открыть экран поиска"},
                 {"Shift+I", "Скрыть / показать нижние подсказки"},
-                {"[", "Скрыть / показать меню слева"}
+                {"[", "Скрыть / показать меню слева"},
+                {"Esc", "Главный экран"},
+                {"P", "Менеджер плейлистов"},
+                {"O / F2", "Настройки плеера"},
+                {"E", "Эквалайзер"},
+                {"V", "Стиль визуализатора"}
             }
         },
         {
             "ВОСПРОИЗВЕДЕНИЕ И ОЧЕРЕДЬ",
             {
+                {"Space", "Пауза / Старт воспроизведения"},
+                {"N / B", "Следующий / Предыдущий трек"},
+                {"↑ (+) / ↓ (-)", "Увеличение / уменьшение громкости"},
+                {"← / →", "Перемотка назад / вперед"},
                 {"Tab", "Режим поиска (Локально / Сеть)"},
                 {"Enter", "Включить выбранный трек"},
-                {"+", "Добавить трек в конец очереди"},
-                {"L", "Добавить в избранное"},
-                {"P", "Менеджер плейлистов"},
-                {"O / F2", "Настройки плеера"},
-                {"E", "Эквалайзер"},
-                {"V", "Стиль эквалайзера"}
+                {"A", "Добавить трек в конец очереди"},
+                {"L", "Добавить в избранное"}
             }
         },
         {
             "КОМАНДНАЯ СТРОКА (нажмите /)",
             {
                 {"/v <0-100>", "Установить громкость (в %)"},
-                {"/seek <сек>", "Перемотка на указанную секунду"},
-                {"/next, /prev", "Следующий / предыдущий трек"},
-                {"/pl <имя>", "Включить плейлист"},
                 {"/settings", "Открыть окно настроек"},
-                {"/logout <сервис>", "Сбросить авторизацию (all - для всех)"}
+                {"/logout <сервис>", "Сбросить авторизацию (all - для всех)"},
+                {"/tl", "Текущая очередь в .txt файле"},
+                {"/ly", "Текст текущего трека"},
+                {"/shazam <file/mic>", "Использовать Shazam для определения аудио"},
             }
         }
     };
@@ -380,11 +382,13 @@ bool HelpModalComponent::OnEvent(ftxui::Event event) {
             m_showSystemInfo = false;
             return true;
         }
-        if (event == ftxui::Event::ArrowUp || event == ftxui::Event::Character('k')) {
+        if (event == ftxui::Event::ArrowUp || event == ftxui::Event::Character('k') || event == ftxui::Event::Character('K') ||
+            event.character() == "л" || event.character() == "Л") {
             if (m_sysInfoVScroll > 0) m_sysInfoVScroll--;
             return true;
         }
-        if (event == ftxui::Event::ArrowDown || event == ftxui::Event::Character('j')) {
+        if (event == ftxui::Event::ArrowDown || event == ftxui::Event::Character('j') || event == ftxui::Event::Character('J') ||
+            event.character() == "о" || event.character() == "О") {
             m_sysInfoVScroll++;
             return true;
         }
@@ -392,11 +396,13 @@ bool HelpModalComponent::OnEvent(ftxui::Event event) {
     }
 
     // Help view keyboard navigation
-    if (event == ftxui::Event::ArrowUp || event == ftxui::Event::Character('k')) {
+    if (event == ftxui::Event::ArrowUp || event == ftxui::Event::Character('k') || event == ftxui::Event::Character('K') ||
+        event.character() == "л" || event.character() == "Л") {
         if (m_helpScrollOffset > 0) m_helpScrollOffset--;
         return true;
     }
-    if (event == ftxui::Event::ArrowDown || event == ftxui::Event::Character('j')) {
+    if (event == ftxui::Event::ArrowDown || event == ftxui::Event::Character('j') || event == ftxui::Event::Character('J') ||
+        event.character() == "о" || event.character() == "О") {
         m_helpScrollOffset++;
         return true;
     }

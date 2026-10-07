@@ -769,9 +769,23 @@ void TuiController::WireCallbacks() {
 
     m_searchScreen->OnPlayTrackNow = [this](const Track& track) {
         QMetaObject::invokeMethod(QCoreApplication::instance(), [this, track]() {
-            int existingIdx = m_playlist.FindTrackIndexById(track.id);
-            if (existingIdx >= 0) {
-                m_playlist.JumpTo(existingIdx);
+            bool jumpToPos = m_configService ? m_configService->GetJumpToSourceTrack() : true;
+            if (jumpToPos) {
+                std::string curSource = m_sidebar ? m_sidebar->GetSelectedId() : "";
+                if (!track.source.empty() && track.source != "All" && track.source != "Offline" &&
+                    track.source != "Custom" && track.source.rfind("Custom:", 0) != 0 &&
+                    !curSource.empty() && curSource != track.source) {
+                    if (m_sidebar) m_sidebar->SetSelectedId(track.source);
+                    emit SourceChanged(track.source);
+                }
+                int existingIdx = m_playlist.FindTrackIndexById(track.id);
+                if (existingIdx >= 0) {
+                    m_playlist.JumpTo(existingIdx);
+                } else {
+                    m_playlist.SetActiveTrack(track);
+                    m_playbackCtrl.AttemptPlay(track);
+                    OnTrackChanged(track);
+                }
             } else {
                 m_playlist.SetActiveTrack(track);
                 m_playbackCtrl.AttemptPlay(track);

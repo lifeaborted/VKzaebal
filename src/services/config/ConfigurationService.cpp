@@ -36,6 +36,9 @@ void ConfigurationService::EnsureDefaultConfig() {
         if (!settings.contains("Playback/AutoScroll")) {
             settings.setValue("Playback/AutoScroll", true);
         }
+        if (!settings.contains("Playback/JumpToSourceTrack")) {
+            settings.setValue("Playback/JumpToSourceTrack", true);
+        }
         if (settings.contains("Session/Position")) {
             settings.remove("Session/Position");
         }
@@ -228,6 +231,17 @@ bool ConfigurationService::GetAutoScroll() const {
 void ConfigurationService::SetAutoScroll(bool enabled) {
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
     settings.setValue("Playback/AutoScroll", enabled);
+    settings.sync();
+}
+
+bool ConfigurationService::GetJumpToSourceTrack() const {
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    return settings.value("Playback/JumpToSourceTrack", true).toBool();
+}
+
+void ConfigurationService::SetJumpToSourceTrack(bool enabled) {
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    settings.setValue("Playback/JumpToSourceTrack", enabled);
     settings.sync();
 }
 

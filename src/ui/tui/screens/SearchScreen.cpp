@@ -864,7 +864,8 @@ bool SearchScreen::OnEvent(ftxui::Event event) {
         return true;
     }
 
-    if (event == ftxui::Event::Character('j') || event == ftxui::Event::Character('J')) {
+    if (event == ftxui::Event::Character('j') || event == ftxui::Event::Character('J') ||
+        event.character() == "о" || event.character() == "О") {
         if (!m_searchResults.empty()) {
             m_isBrowsingResults = true;
             if (m_selectedResultIndex < static_cast<int>(m_searchResults.size()) - 1) {
@@ -880,7 +881,8 @@ bool SearchScreen::OnEvent(ftxui::Event event) {
             CheckTriggerLoadMore();
             return true;
         }
-    } else if (event == ftxui::Event::Character('k') || event == ftxui::Event::Character('K')) {
+    } else if (event == ftxui::Event::Character('k') || event == ftxui::Event::Character('K') ||
+               event.character() == "л" || event.character() == "Л") {
         if (!m_searchResults.empty()) {
             m_isBrowsingResults = true;
             if (m_selectedResultIndex > 0) {
@@ -905,14 +907,17 @@ bool SearchScreen::OnEvent(ftxui::Event event) {
             OnTogglePlayPauseRequested();
             return true;
         }
-    } else if (event == ftxui::Event::Character('l') || event == ftxui::Event::Character('L')) {
+    } else if (event == ftxui::Event::Character('l') || event == ftxui::Event::Character('L') ||
+               event.character() == "д" || event.character() == "Д") {
         if (!m_searchResults.empty() && m_selectedResultIndex >= 0 && m_selectedResultIndex < static_cast<int>(m_searchResults.size())) {
             if (OnLikeTrack) {
                 OnLikeTrack(m_searchResults[m_selectedResultIndex]);
                 return true;
             }
         }
-    } else if (event == ftxui::Event::Character('+') || event == ftxui::Event::Character('=')) {
+    } else if (event == ftxui::Event::Character('a') || event == ftxui::Event::Character('A') ||
+               event.character() == "ф" || event.character() == "Ф") {
+        // A / Ф adds track to playlist / queue!
         if (!m_searchResults.empty() && m_selectedResultIndex >= 0 && m_selectedResultIndex < static_cast<int>(m_searchResults.size())) {
             if (OnAddToPlaylist) {
                 OnAddToPlaylist(m_searchResults[m_selectedResultIndex]);
@@ -922,7 +927,16 @@ bool SearchScreen::OnEvent(ftxui::Event event) {
                 return true;
             }
         }
-    } else if (event == ftxui::Event::Character('f') || event == ftxui::Event::Character('F')) {
+    } else if (event == ftxui::Event::Character('d') || event == ftxui::Event::Character('D') ||
+               event.character() == "в" || event.character() == "В") {
+        if (!m_searchResults.empty() && m_selectedResultIndex >= 0 && m_selectedResultIndex < static_cast<int>(m_searchResults.size())) {
+            if (OnDownloadTrack) {
+                OnDownloadTrack(m_searchResults[m_selectedResultIndex]);
+                return true;
+            }
+        }
+    } else if (event == ftxui::Event::Character('f') || event == ftxui::Event::Character('F') ||
+               event.character() == "а" || event.character() == "А") {
         FocusSearchInput();
         return true;
     }

@@ -74,13 +74,13 @@ bool TuiInputRouter::RouteEvent(ftxui::Event event) {
 
     // 3. Глобальные клавиши мультимедиа (когда не идет набор текста в поиске)
     if (!isTyping) {
-        if (event == ftxui::Event::ArrowUp) {
+        if (event == ftxui::Event::ArrowUp || event == ftxui::Event::Character('+') || event == ftxui::Event::Character('=')) {
             QMetaObject::invokeMethod(QCoreApplication::instance(), [this]() {
                 m_audio.SetVolume(std::clamp(m_audio.GetVolume() + 0.05f, 0.0f, 1.0f));
             }, Qt::QueuedConnection);
             return true;
         }
-        if (event == ftxui::Event::ArrowDown) {
+        if (event == ftxui::Event::ArrowDown || event == ftxui::Event::Character('-') || event == ftxui::Event::Character('_')) {
             QMetaObject::invokeMethod(QCoreApplication::instance(), [this]() {
                 m_audio.SetVolume(std::clamp(m_audio.GetVolume() - 0.05f, 0.0f, 1.0f));
             }, Qt::QueuedConnection);
@@ -146,9 +146,10 @@ bool TuiInputRouter::RouteEvent(ftxui::Event event) {
         return true;
     }
 
-    // 6b. Сворачивание / разворачивание боковой панели: [ или ] или х / Х
+    // 6b. Сворачивание / разворачивание боковой панели: [ или ] или х / Х / ъ / Ъ
     if (!isTyping && (event == ftxui::Event::Character('[') || event == ftxui::Event::Character(']') ||
-                      event.character() == "х" || event.character() == "Х")) {
+                      event.character() == "х" || event.character() == "Х" ||
+                      event.character() == "ъ" || event.character() == "Ъ")) {
         if (m_callbacks.toggleSidebar) {
             m_callbacks.toggleSidebar();
         }
@@ -164,8 +165,10 @@ bool TuiInputRouter::RouteEvent(ftxui::Event event) {
         return true;
     }
 
-    // 8. ? или F1 -> Справка
-    if (!isTyping && (event == ftxui::Event::Character('?') || event == ftxui::Event::F1)) {
+    // 8. ? или F1 / H / h / р / Р -> Справка
+    if (!isTyping && (event == ftxui::Event::Character('?') || event == ftxui::Event::F1 ||
+                      event == ftxui::Event::Character('h') || event == ftxui::Event::Character('H') ||
+                      event.character() == "р" || event.character() == "Р")) {
         if (m_callbacks.openHelpModal) {
             m_callbacks.openHelpModal(false);
         }
@@ -191,7 +194,8 @@ bool TuiInputRouter::RouteEvent(ftxui::Event event) {
     }
 
     // 9. Навигация по экранам: F -> Поиск, Esc -> Now Playing
-    if (event == ftxui::Event::Character('f') || event == ftxui::Event::Character('F')) {
+    if (event == ftxui::Event::Character('f') || event == ftxui::Event::Character('F') ||
+        event.character() == "а" || event.character() == "А") {
         if (activeScreen == 0 && m_callbacks.switchScreen) {
             m_callbacks.switchScreen(1);
             return true;
@@ -208,7 +212,8 @@ bool TuiInputRouter::RouteEvent(ftxui::Event event) {
     // 10. Хоткеи экрана Now Playing (экран 0)
     if (activeScreen == 0) {
         // N -> Следующий трек
-        if (event == ftxui::Event::Character('n') || event == ftxui::Event::Character('N')) {
+        if (event == ftxui::Event::Character('n') || event == ftxui::Event::Character('N') ||
+            event.character() == "т" || event.character() == "Т") {
             QMetaObject::invokeMethod(QCoreApplication::instance(), [this]() {
                 m_playlist.Next();
             }, Qt::QueuedConnection);
@@ -216,7 +221,8 @@ bool TuiInputRouter::RouteEvent(ftxui::Event event) {
         }
 
         // B -> Предыдущий трек
-        if (event == ftxui::Event::Character('b') || event == ftxui::Event::Character('B')) {
+        if (event == ftxui::Event::Character('b') || event == ftxui::Event::Character('B') ||
+            event.character() == "и" || event.character() == "И") {
             QMetaObject::invokeMethod(QCoreApplication::instance(), [this]() {
                 m_playlist.Previous();
             }, Qt::QueuedConnection);
@@ -224,29 +230,17 @@ bool TuiInputRouter::RouteEvent(ftxui::Event event) {
         }
 
         // L -> Лайк / Избранное
-        if (event == ftxui::Event::Character('l') || event == ftxui::Event::Character('L')) {
+        if (event == ftxui::Event::Character('l') || event == ftxui::Event::Character('L') ||
+            event.character() == "д" || event.character() == "Д") {
             if (m_callbacks.toggleLike) {
                 m_callbacks.toggleLike();
             }
             return true;
         }
 
-        // Громкость: + и -
-        if (event == ftxui::Event::Character('+') || event == ftxui::Event::Character('=')) {
-            QMetaObject::invokeMethod(QCoreApplication::instance(), [this]() {
-                m_audio.SetVolume(std::clamp(m_audio.GetVolume() + 0.05f, 0.0f, 1.0f));
-            }, Qt::QueuedConnection);
-            return true;
-        }
-        if (event == ftxui::Event::Character('-') || event == ftxui::Event::Character('_')) {
-            QMetaObject::invokeMethod(QCoreApplication::instance(), [this]() {
-                m_audio.SetVolume(std::clamp(m_audio.GetVolume() - 0.05f, 0.0f, 1.0f));
-            }, Qt::QueuedConnection);
-            return true;
-        }
-
         // V -> Переключение стиля визуализатора
-        if (event == ftxui::Event::Character('v') || event == ftxui::Event::Character('V')) {
+        if (event == ftxui::Event::Character('v') || event == ftxui::Event::Character('V') ||
+            event.character() == "м" || event.character() == "М") {
             if (m_callbacks.cycleVisualizerMode) {
                 m_callbacks.cycleVisualizerMode();
                 m_screen.PostEvent(ftxui::Event::Custom);
@@ -256,7 +250,8 @@ bool TuiInputRouter::RouteEvent(ftxui::Event event) {
     }
 
     // 11. Q -> Выход
-    if (!isTyping && (event == ftxui::Event::Character('q') || event == ftxui::Event::Character('Q'))) {
+    if (!isTyping && (event == ftxui::Event::Character('q') || event == ftxui::Event::Character('Q') ||
+                      event.character() == "й" || event.character() == "Й")) {
         m_screen.Exit();
         return true;
     }

@@ -437,8 +437,9 @@ bool PlaylistModalComponent::OnEvent(ftxui::Event event) {
         return true;
     }
 
-    // Delete or D key when list item is focused
-    if (event == ftxui::Event::Delete || event == ftxui::Event::Character('d') || event == ftxui::Event::Character('D')) {
+    // Delete or D key when list item is focused (в / В)
+    if (event == ftxui::Event::Delete || event == ftxui::Event::Character('d') || event == ftxui::Event::Character('D') ||
+        event.character() == "в" || event.character() == "В") {
         if (m_focusSection == FocusSection::LIST && !m_playlists.empty() &&
             m_selectedPlaylistIndex >= 0 && m_selectedPlaylistIndex < static_cast<int>(m_playlists.size())) {
             m_isConfirmingDelete = true;
@@ -447,8 +448,8 @@ bool PlaylistModalComponent::OnEvent(ftxui::Event event) {
         }
     }
 
-    // Arrow Up / Down
-    if (event == ftxui::Event::ArrowUp) {
+    // Arrow Up / Down (or K / J, л / о when list is focused)
+    if (event == ftxui::Event::ArrowUp || (m_focusSection == FocusSection::LIST && (event == ftxui::Event::Character('k') || event == ftxui::Event::Character('K') || event.character() == "л" || event.character() == "Л"))) {
         if (m_focusSection == FocusSection::LIST) {
             if (m_selectedPlaylistIndex > 0) {
                 m_selectedPlaylistIndex--;
@@ -463,7 +464,7 @@ bool PlaylistModalComponent::OnEvent(ftxui::Event event) {
         }
     }
 
-    if (event == ftxui::Event::ArrowDown) {
+    if (event == ftxui::Event::ArrowDown || (m_focusSection == FocusSection::LIST && (event == ftxui::Event::Character('j') || event == ftxui::Event::Character('J') || event.character() == "о" || event.character() == "О"))) {
         if (m_focusSection == FocusSection::INPUT || m_focusSection == FocusSection::CREATE_BTN) {
             if (!m_playlists.empty()) {
                 m_focusSection = FocusSection::LIST;
