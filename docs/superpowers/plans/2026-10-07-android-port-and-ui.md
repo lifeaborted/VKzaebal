@@ -218,29 +218,29 @@
 **Interfaces:**
 - Produces: Installed, runnable Android APK on emulator `Medium_Phone_API_36`.
 
-- [ ] **Step 1: Build Android APK**
+- [x] **Step 1: Build Android APK**
   - Run `build_android.bat x86_64 debug`.
   - Verify that compilation and Gradle APK assembly succeed with 0 errors.
 
-- [ ] **Step 2: Launch Android Emulator**
+- [x] **Step 2: Launch Android Emulator**
   - Start emulator `Medium_Phone_API_36` via `emulator.exe -avd Medium_Phone_API_36`.
   - Wait for `adb` connection.
 
-- [ ] **Step 3: Install and Launch APK**
+- [x] **Step 3: Install and Launch APK**
   - Install: `adb install -r <path_to_apk>`.
   - Launch: `adb shell am start -n com.vkaudioplayer.app/org.qtproject.qt.android.bindings.QtActivity`.
 
-- [ ] **Step 4: Verify Runtime & Functionality**
+- [x] **Step 4: Verify Runtime & Functionality**
   - Check logcat: confirm `MiniaudioEngine` successfully opened AAudio stream.
   - Perform test search (SoundCloud / YouTube / VK).
   - Tap track to play, verify stream playback and progress bar movement.
   - Test opening left Drawer to switch source.
   - Test expanding Now Playing sheet from bottom mini-player tray.
 
-- [ ] **Step 5: Verify Desktop Regression**
+- [x] **Step 5: Verify Desktop Regression**
   - Run `build_helper.bat debug`.
   - Confirm desktop Windows build remains 100% working and unaffected.
 
-- [ ] **Step 6: Commit and Final Summary**
+- [x] **Step 6: Commit and Final Summary**
   - `git add .`
   - `git commit -m "feat(android): complete Android port with VK-style touch interface"`
