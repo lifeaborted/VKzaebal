@@ -118,6 +118,10 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+#if defined(Q_OS_ANDROID)
+    UiMode uiMode = UiMode::ANDROID;
+    Logger::Log(LogLevel::INFO, "Main: Selected UI mode: ANDROID (default on Android)");
+#else
     UiMode uiMode = UiMode::TUI;
     if (parser.isSet(cliLightOption)) {
         uiMode = UiMode::CLI_LIGHT;
@@ -129,6 +133,7 @@ int main(int argc, char *argv[]) {
         uiMode = UiMode::TUI;
         Logger::Log(LogLevel::INFO, "Main: Selected UI mode: TUI (default / --tui)");
     }
+#endif
 
     QMap<QString, QString> envVars = EnvParser::Parse(".env");
     Logger::Log(LogLevel::INFO, "--- VK Audio Player Started ---");

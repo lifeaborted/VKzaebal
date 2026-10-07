@@ -157,6 +157,14 @@ set(COMMON_SOURCES
         src/ui/UiFactory.h
         src/ui/UiFactory.cpp
 
+        # --- UI Android / Mobile ---
+        src/ui/android/AndroidUiController.h
+        src/ui/android/AndroidUiController.cpp
+        src/ui/android/AndroidPlayerBridge.h
+        src/ui/android/AndroidPlayerBridge.cpp
+        src/ui/android/TrackListModel.h
+        src/ui/android/TrackListModel.cpp
+
         # --- CLI ---
         src/ui/console/core/ConsoleController.h
         src/ui/console/core/ConsoleController.cpp

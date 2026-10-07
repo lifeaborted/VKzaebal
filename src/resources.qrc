@@ -1,5 +1,7 @@
 <!DOCTYPE RCC><RCC version="1.0">
     <qresource prefix="/">
         <file>core/auth/auth.qml</file>
+        <file>ui/android/qml/Main.qml</file>
+        <file>ui/android/qml/NowPlayingSheet.qml</file>
     </qresource>
 </RCC>

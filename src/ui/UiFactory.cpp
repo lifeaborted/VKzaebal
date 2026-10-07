@@ -9,10 +9,15 @@
 
 #include "ui/console/core/ConsoleController.h"
 #include "ui/console/light/LightConsoleController.h"
+#include "ui/android/AndroidUiController.h"
 #include "core/auth/router/SourceRouter.h"
 
 std::unique_ptr<IUiController> UiFactory::Create(UiMode mode, ApplicationCore& core) {
     switch (mode) {
+        case UiMode::ANDROID: {
+            Logger::Log(LogLevel::INFO, "UiFactory: Creating Android UI controller (QML)");
+            return std::make_unique<ui::android::AndroidUiController>(core);
+        }
         case UiMode::TUI: {
 #ifdef ENABLE_FTXUI
             Logger::Log(LogLevel::INFO, "UiFactory: Creating TUI controller (FTXUI)");
