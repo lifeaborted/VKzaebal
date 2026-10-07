@@ -6,7 +6,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Опции модульной сборки интерфейса
-option(ENABLE_FTXUI "Build with modern FTXUI terminal interface" ON)
+if(ANDROID)
+    set(ENABLE_FTXUI OFF CACHE BOOL "" FORCE)
+else()
+    option(ENABLE_FTXUI "Build with modern FTXUI terminal interface" ON)
+endif()
 
 # Включаем автоматическую генерацию мета-кода Qt глобально
 set(CMAKE_AUTOMOC ON)
@@ -28,8 +32,19 @@ if(NOT CMAKE_PREFIX_PATH)
     endif()
 endif()
 
+# Upstream Qt 6.8 Windows packaging workaround:
+# Qt6WebView CMake metadata erroneously declares Qt6WebEngineQuick as a dependency,
+# even though the Qt6::WebView target only links Qt6Core and Qt6Gui, and on Windows
+# uses the native Microsoft Edge WebView2 runtime (zero WebEngine bloat).
+if(NOT TARGET Qt6::WebEngineQuick)
+    set(Qt6WebEngineQuick_FOUND TRUE CACHE BOOL "" FORCE)
+    set(Qt6WebEngineQuick_DIR "IGNORE" CACHE PATH "" FORCE)
+    add_library(Qt6::WebEngineQuick INTERFACE IMPORTED)
+endif()
+
 # Ищем базовые модули Qt
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Sql Qml WebView Concurrent)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Sql Qml Quick QuickControls2 Concurrent)
+find_package(Qt6 OPTIONAL_COMPONENTS WebView)
 
 # Указываем путь к исходникам и заголовкам
 set(COMMON_SOURCES
@@ -297,7 +312,8 @@ if(ENABLE_FTXUI)
 endif()
 
 # Создаем исполняемый файл
-add_executable(${PROJECT_NAME}
+qt_add_executable(${PROJECT_NAME}
+        MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
         libs/tiny-aes/aes.c)
 
@@ -317,10 +333,22 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         Qt6::Widgets
         Qt6::Sql
         Qt6::Qml
-        Qt6::WebView
+        Qt6::Quick
+        Qt6::QuickControls2
         qt6keychain
         Qt6::Concurrent
 )
+
+if(TARGET Qt6::WebView)
+    target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::WebView)
+endif()
+
+if(ANDROID)
+    target_link_libraries(${PROJECT_NAME} PRIVATE aaudio OpenSLES log)
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android"
+    )
+endif()
 
 # Подключение FTXUI к приложению (если включено)
 if(ENABLE_FTXUI)
@@ -352,17 +380,24 @@ if (WIN32)
     endif()
 endif()
 
-# Включение аппаратного ускорения AVX2
-if(MSVC)
-    target_compile_options(VKAudioPlayer PRIVATE
-            $<$<CONFIG:Release>:/O2>
-            /arch:AVX2
-            /fp:fast
-    )
+# Оптимизации компилятора
+if(WIN32)
+    if(MSVC)
+        target_compile_options(VKAudioPlayer PRIVATE
+                $<$<CONFIG:Release>:/O2>
+                /arch:AVX2
+                /fp:fast
+        )
+    else()
+        target_compile_options(VKAudioPlayer PRIVATE
+                $<$<CONFIG:Release>:-O3>
+                -mavx2
+                -ffast-math
+        )
+    endif()
 else()
     target_compile_options(VKAudioPlayer PRIVATE
             $<$<CONFIG:Release>:-O3>
-            -mavx2
             -ffast-math
     )
 endif()
@@ -374,27 +409,31 @@ if(ipo_supported)
     set_property(TARGET ${PROJECT_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 endif()
 
+qt_finalize_target(${PROJECT_NAME})
+
 # ==============================================================================
-# Qt CMake Deployment API (Qt 6.3+)
+# Qt CMake Deployment API (Desktop Windows)
 # ==============================================================================
-if(WIN32 AND NOT DEFINED CMAKE_INSTALL_BINDIR)
-    set(CMAKE_INSTALL_BINDIR ".")
+if(WIN32)
+    if(NOT DEFINED CMAKE_INSTALL_BINDIR)
+        set(CMAKE_INSTALL_BINDIR ".")
+    endif()
+    include(GNUInstallDirs)
+
+    install(TARGETS ${PROJECT_NAME}
+            BUNDLE DESTINATION .
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+
+    qt_generate_deploy_app_script(
+            TARGET ${PROJECT_NAME}
+            OUTPUT_SCRIPT deploy_script
+            NO_TRANSLATIONS
+            NO_COMPILER_RUNTIME
+            NO_UNSUPPORTED_PLATFORM_ERROR
+    )
+    install(SCRIPT ${deploy_script})
 endif()
-include(GNUInstallDirs)
-
-install(TARGETS ${PROJECT_NAME}
-        BUNDLE DESTINATION .
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
-
-qt_generate_deploy_app_script(
-        TARGET ${PROJECT_NAME}
-        OUTPUT_SCRIPT deploy_script
-        NO_TRANSLATIONS
-        NO_COMPILER_RUNTIME
-        NO_UNSUPPORTED_PLATFORM_ERROR
-)
-install(SCRIPT ${deploy_script})
 
 if(WIN32)
     # fdk-aac DLL
