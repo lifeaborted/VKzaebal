@@ -1,0 +1,106 @@
+name: Build & Release VKAudioPlayer
+
+on:
+  push:
+    tags: [ "v*" ]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build Type'
+        required: true
+        default: 'Release'
+        type: choice
+        options:
+          - Release
+          - Debug
+
+jobs:
+  build-windows:
+    name: Windows x64 (${{ matrix.flavor }})
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavor: "Full"
+            enable_ftxui: "ON"
+            artifact_name: "VKAudioPlayer-Windows-x64"
+          - flavor: "Lite"
+            enable_ftxui: "OFF"
+            artifact_name: "VKAudioPlayer-Lite-Windows-x64"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSVC Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Shazam FFI (Rust DLL)
+        shell: pwsh
+        run: |
+          cd shazam_ffi
+          cargo build --release
+          cd ..
+
+      - name: Install Qt 6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.0'
+          arch: 'win64_msvc2022_64'
+          modules: 'qtwebview qtmultimedia'
+          cache: true
+
+      - name: Configure CMake
+        shell: pwsh
+        run: |
+          cmake -B build -G "Ninja" `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DENABLE_FTXUI=${{ matrix.enable_ftxui }}
+
+      - name: Build VKAudioPlayer
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel
+
+      - name: Package Distribution (Qt CMake Deployment API)
+        shell: pwsh
+        run: |
+          $distPath = Join-Path (Get-Location) "dist"
+          cmake --install build --prefix "$distPath" --config Release
+
+          # Clean headers and dev artifacts from submodules, keep runtime files
+          Remove-Item -Recurse -Force "$distPath/include" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "$distPath/lib" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "$distPath/share" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "$distPath/mkspecs" -ErrorAction SilentlyContinue
+
+          # Compress to zip archive
+          Compress-Archive -Path "$distPath/*" -DestinationPath "${{ matrix.artifact_name }}.zip"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}.zip
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact_name }}.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
