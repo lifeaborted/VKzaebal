@@ -356,6 +356,10 @@ if(ANDROID)
     set_target_properties(${PROJECT_NAME} PROPERTIES
         QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android"
     )
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/android_openssl/android_openssl.cmake")
+        include("${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/android_openssl/android_openssl.cmake")
+        add_android_openssl_libraries(${PROJECT_NAME})
+    endif()
 endif()
 
 # Подключение FTXUI к приложению (если включено)

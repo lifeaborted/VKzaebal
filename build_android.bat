@@ -37,6 +37,11 @@ if not exist "%BUILD_DIR%" (
     mkdir "%BUILD_DIR%"
 )
 
+if not exist "3rdparty\android_openssl" (
+    echo [INFO] Cloning Android OpenSSL prebuilts...
+    git clone --depth 1 https://github.com/KDAB/android_openssl.git 3rdparty\android_openssl
+)
+
 call "%QT_DIR%\bin\qt-cmake.bat" -B "%BUILD_DIR%" -S . ^
     -G Ninja ^
     -DCMAKE_BUILD_TYPE=%CMAKE_CONFIG% ^
@@ -54,7 +59,7 @@ if "%3"=="--config-only" (
     exit /b 0
 )
 
-"C:\Qt\Tools\CMake_64\bin\cmake.exe" --build "%BUILD_DIR%" --target VKAudioPlayer_apk --parallel
+"C:\Qt\Tools\CMake_64\bin\cmake.exe" --build "%BUILD_DIR%" --target VKAudioPlayer_make_apk --parallel
 
 if errorlevel 1 (
     echo [ERROR] Build failed!

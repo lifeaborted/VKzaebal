@@ -8,6 +8,10 @@
 #include <iomanip>
 #include <sstream>
 
+#if defined(Q_OS_ANDROID) || defined(__ANDROID__)
+#include <android/log.h>
+#endif
+
 namespace fs = std::filesystem;
 
 static std::ofstream logFile;
@@ -102,6 +106,17 @@ void Logger::Log(LogLevel level, const std::string& message) {
 
         cb = s_callback;
     }
+
+#if defined(Q_OS_ANDROID) || defined(__ANDROID__)
+    android_LogPriority prio = ANDROID_LOG_INFO;
+    switch (level) {
+        case LogLevel::DEBUG:   prio = ANDROID_LOG_DEBUG; break;
+        case LogLevel::INFO:    prio = ANDROID_LOG_INFO; break;
+        case LogLevel::WARNING: prio = ANDROID_LOG_WARN; break;
+        case LogLevel::ERROR:   prio = ANDROID_LOG_ERROR; break;
+    }
+    __android_log_print(prio, "VKAudioPlayer", "%s", message.c_str());
+#endif
 
     // Вызываем callback ВНЕ мьютекса, чтобы избежать взаимоблокировки (deadlock)
     if (cb) {

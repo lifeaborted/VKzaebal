@@ -163,8 +163,14 @@ void AndroidPlayerBridge::search(const QString& query) {
 void AndroidPlayerBridge::playTrackAtIndex(int index) {
     const Track* track = m_trackModel.GetTrackAt(index);
     if (track) {
+        Logger::Log(LogLevel::INFO, "AndroidPlayerBridge: Playing track at index " + std::to_string(index) + ": " + track->title);
         m_trackModel.SetPlayingIndex(index);
         m_core.GetPlaylist().PlayTrackNow(*track);
+        m_core.GetPlaylist().SetActiveTrack(*track);
+        m_core.GetPlaybackCtrl().AttemptPlay(*track);
+        UpdateCurrentTrack(*track);
+    } else {
+        Logger::Log(LogLevel::WARNING, "AndroidPlayerBridge: Track at index " + std::to_string(index) + " not found!");
     }
 }
 

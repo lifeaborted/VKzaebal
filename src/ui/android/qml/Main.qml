@@ -163,18 +163,23 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: 8
 
-                    ToolButton {
-                        text: "☰"
-                        font.pixelSize: 22
-                        contentItem: Text {
-                            text: parent.text
-                            font.pixelSize: 22
-                            color: "#E1E3E6"
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
+                    // Кнопка бокового меню (Гамбургер)
+                    Item {
+                        width: 38
+                        height: 38
+
+                        Column {
+                            anchors.centerIn: parent
+                            spacing: 4
+                            Rectangle { width: 18; height: 2.5; radius: 1; color: "#E1E3E6" }
+                            Rectangle { width: 18; height: 2.5; radius: 1; color: "#E1E3E6" }
+                            Rectangle { width: 18; height: 2.5; radius: 1; color: "#E1E3E6" }
                         }
-                        background: Rectangle { color: "transparent" }
-                        onClicked: sourceDrawer.open()
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: sourceDrawer.open()
+                        }
                     }
 
                     // Поле ввода поиска
@@ -195,7 +200,7 @@ ApplicationWindow {
                             TextField {
                                 id: searchInput
                                 Layout.fillWidth: true
-                                placeholderText: "Поиск музыки..."
+                                placeholderText: text.length === 0 ? "Поиск музыки..." : ""
                                 placeholderTextColor: "#76787A"
                                 color: "#FFFFFF"
                                 font.pixelSize: 14
@@ -207,8 +212,8 @@ ApplicationWindow {
 
                             ToolButton {
                                 visible: searchInput.text !== ""
-                                text: "✕"
-                                font.pixelSize: 12
+                                text: "×"
+                                font.pixelSize: 16
                                 contentItem: Text { text: parent.text; color: "#909499"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 background: Rectangle { color: "transparent" }
                                 onClicked: {
@@ -227,8 +232,8 @@ ApplicationWindow {
 
                         Text {
                             anchors.centerIn: parent
-                            text: "➔"
-                            font.pixelSize: 16
+                            text: "▶"
+                            font.pixelSize: 14
                             color: "#FFFFFF"
                         }
 
@@ -430,7 +435,7 @@ ApplicationWindow {
                     anchors.fill: parent
                     hoverEnabled: true
                     onClicked: {
-                        player.playTrackAtIndex(model.index)
+                        player.playTrackAtIndex(index)
                     }
                 }
             }
@@ -491,50 +496,62 @@ ApplicationWindow {
                 anchors.rightMargin: 12
                 spacing: 10
 
-                // Миниатюра обложки
-                Rectangle {
-                    Layout.preferredWidth: 40
-                    Layout.preferredHeight: 40
-                    radius: 6
-                    color: "#2B2B2F"
-                    clip: true
-
-                    Image {
-                        anchors.fill: parent
-                        source: player.currentCoverUrl
-                        fillMode: Image.PreserveAspectCrop
-                        asynchronous: true
-                        visible: player.currentCoverUrl !== "" && status === Image.Ready
-                    }
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "🎵"
-                        font.pixelSize: 16
-                        visible: player.currentCoverUrl === "" || !parent.children[0].visible
-                    }
-                }
-
-                // Текст играющего трека
-                ColumnLayout {
+                // Инфо о треке (клик открывает полноэкранный NowPlayingSheet)
+                MouseArea {
                     Layout.fillWidth: true
-                    spacing: 2
+                    Layout.fillHeight: true
+                    onClicked: nowPlayingSheet.open()
 
-                    Text {
-                        text: player.currentTitle
-                        font.pixelSize: 13
-                        font.bold: true
-                        color: "#FFFFFF"
-                        Layout.fillWidth: true
-                        elide: Text.ElideRight
-                    }
+                    RowLayout {
+                        anchors.fill: parent
+                        spacing: 10
 
-                    Text {
-                        text: player.currentArtist !== "" ? player.currentArtist : "Нажмите для открытия плеера"
-                        font.pixelSize: 11
-                        color: "#909499"
-                        Layout.fillWidth: true
-                        elide: Text.ElideRight
+                        // Миниатюра обложки
+                        Rectangle {
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
+                            radius: 6
+                            color: "#2B2B2F"
+                            clip: true
+
+                            Image {
+                                anchors.fill: parent
+                                source: player.currentCoverUrl
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                                visible: player.currentCoverUrl !== "" && status === Image.Ready
+                            }
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "🎵"
+                                font.pixelSize: 16
+                                visible: player.currentCoverUrl === "" || !parent.children[0].visible
+                            }
+                        }
+
+                        // Текст играющего трека
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            Text {
+                                text: player.currentTitle
+                                font.pixelSize: 13
+                                font.bold: true
+                                color: "#FFFFFF"
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                            }
+
+                            Text {
+                                text: player.currentArtist !== "" ? player.currentArtist : "Нажмите для открытия плеера"
+                                font.pixelSize: 11
+                                color: "#909499"
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                            }
+                        }
                     }
                 }
 
@@ -566,14 +583,6 @@ ApplicationWindow {
                     background: Rectangle { color: "transparent" }
                     onClicked: player.nextTrack()
                 }
-            }
-
-            // Тап по трею открывает полноэкранный NowPlayingSheet
-            MouseArea {
-                anchors.fill: parent
-                propagateComposedEvents: true
-                z: -1
-                onClicked: nowPlayingSheet.open()
             }
         }
     }

@@ -59,8 +59,16 @@ jobs:
         with:
           version: '6.8.0'
           arch: 'win64_msvc2022_64'
-          modules: 'qtwebview qtmultimedia'
+          modules: 'qtwebview'
           cache: true
+
+      - name: Patch Qt 6.8 WebView dependencies (remove phantom WebEngine dependency)
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path "$env:RUNNER_TEMP", "D:\" -Recurse -Filter "Qt6WebViewDependencies.cmake" -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "Patching $($_.FullName)"
+            (Get-Content $_.FullName) -replace 'Qt6WebEngineQuick\\;[0-9.]+', '' | Set-Content $_.FullName
+          }
 
       - name: Configure CMake
         shell: pwsh

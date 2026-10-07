@@ -33,12 +33,12 @@ Popup {
             Layout.topMargin: 10
 
             ToolButton {
-                text: "⌄"
-                font.pixelSize: 28
+                text: "▼"
+                font.pixelSize: 16
                 contentItem: Text {
                     text: parent.text
-                    font.pixelSize: 28
-                    color: "#FFFFFF"
+                    font.pixelSize: 16
+                    color: "#E1E3E6"
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                 }

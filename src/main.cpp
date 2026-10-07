@@ -119,8 +119,8 @@ int main(int argc, char *argv[]) {
     }
 
 #if defined(Q_OS_ANDROID)
-    UiMode uiMode = UiMode::ANDROID;
-    Logger::Log(LogLevel::INFO, "Main: Selected UI mode: ANDROID (default on Android)");
+    UiMode uiMode = UiMode::ANDROID_UI;
+    Logger::Log(LogLevel::INFO, "Main: Selected UI mode: ANDROID_UI (default on Android)");
 #else
     UiMode uiMode = UiMode::TUI;
     if (parser.isSet(cliLightOption)) {

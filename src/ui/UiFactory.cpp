@@ -14,7 +14,7 @@
 
 std::unique_ptr<IUiController> UiFactory::Create(UiMode mode, ApplicationCore& core) {
     switch (mode) {
-        case UiMode::ANDROID: {
+        case UiMode::ANDROID_UI: {
             Logger::Log(LogLevel::INFO, "UiFactory: Creating Android UI controller (QML)");
             return std::make_unique<ui::android::AndroidUiController>(core);
         }
