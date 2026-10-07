@@ -167,6 +167,6 @@ cmake --build build --config Release --parallel
 
 ## License
 
-This project is licensed under the **[[LICENSE]]**.
+This project is licensed under the **[MIT License](LICENSE)**.
 
 You are free to use, modify, distribute, combine, and use the code in personal or commercial projects. The only requirement is that the original copyright notice and license text remain in all copies or substantial portions of the software.
