@@ -59,7 +59,7 @@ jobs:
         with:
           version: '6.8.0'
           arch: 'win64_msvc2022_64'
-          modules: 'qtwebview qtmultimedia'
+          modules: 'qtwebview qtmultimedia qtwebengine'
           cache: true
 
       - name: Configure CMake
