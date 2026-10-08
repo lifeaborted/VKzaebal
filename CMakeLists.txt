@@ -28,6 +28,18 @@ if(NOT CMAKE_PREFIX_PATH)
     endif()
 endif()
 
+
+if(WIN32)
+    set(Qt6WebEngineQuick_FOUND TRUE CACHE BOOL "" FORCE)
+    set(Qt6WebEngineCore_FOUND TRUE CACHE BOOL "" FORCE)
+    if(NOT TARGET Qt6::WebEngineQuick)
+        add_library(Qt6::WebEngineQuick INTERFACE IMPORTED)
+    endif()
+    if(NOT TARGET Qt6::WebEngineCore)
+        add_library(Qt6::WebEngineCore INTERFACE IMPORTED)
+    endif()
+endif()
+
 # Ищем базовые модули Qt
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Sql Qml WebView Concurrent)
 
