@@ -63,6 +63,8 @@ public:
 
     void AuthenticateSource(const std::string& service);
     void RevalidateCurrentSource();
+    void SetCurrentAuthService(const QString& service) { m_currentAuthService = service; }
+    QString GetCurrentAuthService() const { return m_currentAuthService; }
 
 signals:
     void SourceChanged(const std::string& newSource);
@@ -73,6 +75,7 @@ signals:
     void FinishedFetching();
     void SourceAuthRequired(const std::string& source);
     void SourceAuthSuccess(const std::string& source);
+    void WebViewAuthRequested(const QString& service, const QString& authUrl);
 
 public slots:
     void Logout(const std::string& service);

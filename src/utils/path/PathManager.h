@@ -14,6 +14,9 @@ public:
     static QString GetLogsDir();
     static QString GetTempDir();
     static QString GetCacheDir();
+    static QString GetCoversDir();
+    static QString GetAudioCacheDir();
+    static void EnforceCacheLimit(const QString& dirPath, int maxMb);
 
     static QString GetDbPath();
     static QString GetConfigPath();
@@ -34,6 +37,8 @@ private:
     static QString s_logsDir;
     static QString s_tempDir;
     static QString s_cacheDir;
+    static QString s_coversDir;
+    static QString s_audioCacheDir;
     static QString s_cachedCustomDownloadsDir;
     static bool s_customDownloadsDirCached;
     static bool s_initialized;

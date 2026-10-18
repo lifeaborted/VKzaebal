@@ -217,13 +217,24 @@ std::vector<Track> VkClient::ParseVkTracks(const QJsonArray& items) {
             QJsonObject album = trackJson["album"].toObject();
             if (album.contains("thumb") && album["thumb"].isObject()) {
                 QJsonObject thumb = album["thumb"].toObject();
-                QStringList qualityKeys = {"photo_1200", "photo_600", "photo_300", "photo_270", "photo_135", "photo_68", "photo_34"};
-                for (const QString& key : qualityKeys) {
+                // Полноразмерная качественная обложка для карточки Now Playing
+                QStringList highQualityKeys = {"photo_1200", "photo_600", "photo_300"};
+                for (const QString& key : highQualityKeys) {
                     if (thumb.contains(key)) {
                         track.coverUrl = thumb[key].toString().toStdString();
                         break;
                     }
                 }
+                // Легковесная миниатюра для списков треков (10-15 КБ)
+                QStringList thumbQualityKeys = {"photo_135", "photo_68", "photo_300"};
+                for (const QString& key : thumbQualityKeys) {
+                    if (thumb.contains(key)) {
+                        track.thumbnailUrl = thumb[key].toString().toStdString();
+                        break;
+                    }
+                }
+                if (track.coverUrl.empty()) track.coverUrl = track.thumbnailUrl;
+                if (track.thumbnailUrl.empty()) track.thumbnailUrl = track.coverUrl;
             }
         }
 

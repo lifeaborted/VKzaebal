@@ -17,55 +17,49 @@ SessionRepository::SessionRepository(QSqlDatabase& db)
 void SessionRepository::SaveQueue(const std::vector<Track>& currentQueue, const std::string& source, bool isShuffle) {
     if (source.empty()) return;
 
-    QThreadPool::globalInstance()->start([currentQueue, source, isShuffle]() {
-        QString connectionName = QUuid::createUuid().toString();
-        {
-            QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connectionName);
-            db.setConnectOptions("QSQLITE_BUSY_TIMEOUT=5000");
-            db.setDatabaseName(PathManager::GetDbPath());
+    QSqlDatabase db = m_db.isOpen() ? m_db : QSqlDatabase::database();
+    if (!db.isValid() || !db.isOpen()) {
+        Logger::Log(LogLevel::ERROR, "DB: Database is not open in SaveQueue.");
+        return;
+    }
 
-            if (db.open()) {
-                QSqlQuery query(db);
-                QJsonArray arr;
-                for (const auto& track : currentQueue) {
-                    arr.append(QString::fromStdString(track.id));
-                }
-                QString jsonQueue = QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+    QSqlQuery query(db);
+    QJsonArray arr;
+    for (const auto& track : currentQueue) {
+        arr.append(QString::fromStdString(track.id));
+    }
+    QString jsonQueue = QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
 
-                if (isShuffle) {
-                    query.prepare(
-                        "INSERT INTO SourceSessions (source, shuffle_queue, updated_at) "
-                        "VALUES (:source, :queue, CURRENT_TIMESTAMP) "
-                        "ON CONFLICT(source) DO UPDATE SET "
-                        "shuffle_queue = excluded.shuffle_queue, "
-                        "updated_at = CURRENT_TIMESTAMP"
-                    );
-                } else {
-                    query.prepare(
-                        "INSERT INTO SourceSessions (source, standard_queue, updated_at) "
-                        "VALUES (:source, :queue, CURRENT_TIMESTAMP) "
-                        "ON CONFLICT(source) DO UPDATE SET "
-                        "standard_queue = excluded.standard_queue, "
-                        "updated_at = CURRENT_TIMESTAMP"
-                    );
-                }
-                query.bindValue(":source", QString::fromStdString(source));
-                query.bindValue(":queue", jsonQueue);
-                query.exec();
-                db.close();
-            } else {
-                Logger::Log(LogLevel::ERROR, "DB: Failed to open threaded connection for SaveQueue.");
-            }
-        }
-        QSqlDatabase::removeDatabase(connectionName);
-    });
+    if (isShuffle) {
+        query.prepare(
+            "INSERT INTO SourceSessions (source, shuffle_queue, updated_at) "
+            "VALUES (:source, :queue, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(source) DO UPDATE SET "
+            "shuffle_queue = excluded.shuffle_queue, "
+            "updated_at = CURRENT_TIMESTAMP"
+        );
+    } else {
+        query.prepare(
+            "INSERT INTO SourceSessions (source, standard_queue, updated_at) "
+            "VALUES (:source, :queue, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(source) DO UPDATE SET "
+            "standard_queue = excluded.standard_queue, "
+            "updated_at = CURRENT_TIMESTAMP"
+        );
+    }
+    query.bindValue(":source", QString::fromStdString(source));
+    query.bindValue(":queue", jsonQueue);
+    query.exec();
 }
 
 std::vector<std::string> SessionRepository::LoadQueueIds(const std::string& source, bool isShuffle) const {
     std::vector<std::string> ids;
     if (source.empty()) return ids;
 
-    QSqlQuery query(m_db);
+    QSqlDatabase db = m_db.isOpen() ? m_db : QSqlDatabase::database();
+    if (!db.isValid() || !db.isOpen()) return ids;
+
+    QSqlQuery query(db);
     if (isShuffle) {
         query.prepare("SELECT shuffle_queue FROM SourceSessions WHERE source = :source");
     } else {

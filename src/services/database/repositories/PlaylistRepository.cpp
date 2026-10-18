@@ -10,7 +10,10 @@ PlaylistRepository::PlaylistRepository(QSqlDatabase& db)
 
 bool PlaylistRepository::CreatePlaylist(const std::string& name) {
     if (name.empty()) return false;
-    QSqlQuery query(m_db);
+    QSqlDatabase db = m_db.isOpen() ? m_db : QSqlDatabase::database();
+    if (!db.isValid() || !db.isOpen()) return false;
+
+    QSqlQuery query(db);
     query.prepare("INSERT INTO Playlists (name) VALUES (:name)");
     query.bindValue(":name", QString::fromStdString(name));
     if (!query.exec()) {
@@ -22,19 +25,25 @@ bool PlaylistRepository::CreatePlaylist(const std::string& name) {
 }
 
 bool PlaylistRepository::DeletePlaylist(int playlistId) {
-    QSqlQuery q1(m_db);
+    QSqlDatabase db = m_db.isOpen() ? m_db : QSqlDatabase::database();
+    if (!db.isValid() || !db.isOpen()) return false;
+
+    QSqlQuery q1(db);
     q1.prepare("DELETE FROM PlaylistTracks WHERE playlist_id = :id");
     q1.bindValue(":id", playlistId);
     q1.exec();
 
-    QSqlQuery q2(m_db);
+    QSqlQuery q2(db);
     q2.prepare("DELETE FROM Playlists WHERE id = :id");
     q2.bindValue(":id", playlistId);
     return q2.exec();
 }
 
 bool PlaylistRepository::DeletePlaylist(const std::string& name) {
-    QSqlQuery query(m_db);
+    QSqlDatabase db = m_db.isOpen() ? m_db : QSqlDatabase::database();
+    if (!db.isValid() || !db.isOpen()) return false;
+
+    QSqlQuery query(db);
     query.prepare("SELECT id FROM Playlists WHERE name = :name COLLATE NOCASE");
     query.bindValue(":name", QString::fromStdString(name));
     if (query.exec() && query.next()) {
@@ -46,7 +55,10 @@ bool PlaylistRepository::DeletePlaylist(const std::string& name) {
 
 std::vector<PlaylistInfo> PlaylistRepository::GetPlaylists() {
     std::vector<PlaylistInfo> list;
-    QSqlQuery query(m_db);
+    QSqlDatabase db = m_db.isOpen() ? m_db : QSqlDatabase::database();
+    if (!db.isValid() || !db.isOpen()) return list;
+
+    QSqlQuery query(db);
     query.prepare("SELECT p.id, p.name, COUNT(pt.track_id) "
                   "FROM Playlists p "
                   "LEFT JOIN PlaylistTracks pt ON p.id = pt.playlist_id "
@@ -71,7 +83,10 @@ bool PlaylistRepository::AddTrackToPlaylist(int playlistId, const std::string& t
         return false;
     }
 
-    QSqlQuery posQuery(m_db);
+    QSqlDatabase db = m_db.isOpen() ? m_db : QSqlDatabase::database();
+    if (!db.isValid() || !db.isOpen()) return false;
+
+    QSqlQuery posQuery(db);
     posQuery.prepare("SELECT COALESCE(MAX(position), -1) + 1 FROM PlaylistTracks WHERE playlist_id = :pid");
     posQuery.bindValue(":pid", playlistId);
     int nextPos = 0;
@@ -79,7 +94,7 @@ bool PlaylistRepository::AddTrackToPlaylist(int playlistId, const std::string& t
         nextPos = posQuery.value(0).toInt();
     }
 
-    QSqlQuery insQuery(m_db);
+    QSqlQuery insQuery(db);
     insQuery.prepare("INSERT OR REPLACE INTO PlaylistTracks (playlist_id, position, track_id) VALUES (:pid, :pos, :tid)");
     insQuery.bindValue(":pid", playlistId);
     insQuery.bindValue(":pos", nextPos);
@@ -89,7 +104,10 @@ bool PlaylistRepository::AddTrackToPlaylist(int playlistId, const std::string& t
 
 bool PlaylistRepository::IsTrackInPlaylist(int playlistId, const std::string& trackId) {
     if (trackId.empty() || playlistId <= 0) return false;
-    QSqlQuery q(m_db);
+    QSqlDatabase db = m_db.isOpen() ? m_db : QSqlDatabase::database();
+    if (!db.isValid() || !db.isOpen()) return false;
+
+    QSqlQuery q(db);
     q.prepare("SELECT 1 FROM PlaylistTracks WHERE playlist_id = :pid AND track_id = :tid LIMIT 1;");
     q.bindValue(":pid", playlistId);
     q.bindValue(":tid", QString::fromStdString(trackId));
@@ -99,7 +117,10 @@ bool PlaylistRepository::IsTrackInPlaylist(int playlistId, const std::string& tr
 std::vector<int> PlaylistRepository::GetPlaylistIdsContainingTrack(const std::string& trackId) {
     std::vector<int> ids;
     if (trackId.empty()) return ids;
-    QSqlQuery q(m_db);
+    QSqlDatabase db = m_db.isOpen() ? m_db : QSqlDatabase::database();
+    if (!db.isValid() || !db.isOpen()) return ids;
+
+    QSqlQuery q(db);
     q.prepare("SELECT DISTINCT playlist_id FROM PlaylistTracks WHERE track_id = :tid;");
     q.bindValue(":tid", QString::fromStdString(trackId));
     if (q.exec()) {
@@ -111,13 +132,16 @@ std::vector<int> PlaylistRepository::GetPlaylistIdsContainingTrack(const std::st
 }
 
 bool PlaylistRepository::RemoveTrackFromPlaylist(int playlistId, int position) {
-    QSqlQuery delQuery(m_db);
+    QSqlDatabase db = m_db.isOpen() ? m_db : QSqlDatabase::database();
+    if (!db.isValid() || !db.isOpen()) return false;
+
+    QSqlQuery delQuery(db);
     delQuery.prepare("DELETE FROM PlaylistTracks WHERE playlist_id = :pid AND position = :pos");
     delQuery.bindValue(":pid", playlistId);
     delQuery.bindValue(":pos", position);
     if (!delQuery.exec()) return false;
 
-    QSqlQuery shiftQuery(m_db);
+    QSqlQuery shiftQuery(db);
     shiftQuery.prepare("UPDATE PlaylistTracks SET position = position - 1 WHERE playlist_id = :pid AND position > :pos");
     shiftQuery.bindValue(":pid", playlistId);
     shiftQuery.bindValue(":pos", position);
@@ -126,7 +150,10 @@ bool PlaylistRepository::RemoveTrackFromPlaylist(int playlistId, int position) {
 
 std::vector<Track> PlaylistRepository::LoadPlaylistTracks(int playlistId) {
     std::vector<Track> tracks;
-    QSqlQuery query(m_db);
+    QSqlDatabase db = m_db.isOpen() ? m_db : QSqlDatabase::database();
+    if (!db.isValid() || !db.isOpen()) return tracks;
+
+    QSqlQuery query(db);
     query.prepare("SELECT t.id, t.external_id, t.artist, t.title, t.duration, t.cover_url, t.lyrics_id, t.lyrics, t.source "
                   "FROM PlaylistTracks pt "
                   "JOIN Tracks t ON pt.track_id = t.external_id "
@@ -144,7 +171,10 @@ std::vector<Track> PlaylistRepository::LoadPlaylistTracks(int playlistId) {
 
 std::vector<Track> PlaylistRepository::LoadPlaylistTracksByName(const std::string& name, int& outId) {
     outId = -1;
-    QSqlQuery query(m_db);
+    QSqlDatabase db = m_db.isOpen() ? m_db : QSqlDatabase::database();
+    if (!db.isValid() || !db.isOpen()) return {};
+
+    QSqlQuery query(db);
     query.prepare("SELECT id FROM Playlists WHERE name = :name COLLATE NOCASE");
     query.bindValue(":name", QString::fromStdString(name));
     if (query.exec() && query.next()) {

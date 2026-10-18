@@ -11,8 +11,17 @@ struct Track {
     std::string url;
     int duration = 0; // в секундах
     std::string coverUrl = "";
+    std::string thumbnailUrl = "";
     std::string lyrics_id;
     std::string lyrics;
+    bool isLibrary = false;
+
+    std::string GetDisplayCoverUrl(bool fullRes = false) const {
+        if (fullRes) {
+            return !coverUrl.empty() ? coverUrl : thumbnailUrl;
+        }
+        return !thumbnailUrl.empty() ? thumbnailUrl : coverUrl;
+    }
 
     // Вывод времени (ММ:СС)
     std::string GetFormattedDuration() const {

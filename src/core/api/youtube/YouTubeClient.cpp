@@ -270,6 +270,7 @@ std::vector<Track> YouTubeClient::parseTracksFromBrowseResponse(const QJsonObjec
 
                     QJsonArray thumbs = r["thumbnail"].toObject()["musicThumbnailRenderer"].toObject()["thumbnail"].toObject()["thumbnails"].toArray();
                     if (!thumbs.isEmpty()) {
+                        track.thumbnailUrl = thumbs.first().toObject()["url"].toString().toStdString();
                         track.coverUrl = thumbs.last().toObject()["url"].toString().toStdString();
                     }
 
@@ -304,6 +305,7 @@ std::vector<Track> YouTubeClient::parseTracksFromBrowseResponse(const QJsonObjec
 
                     QJsonArray thumbs = r["thumbnail"].toObject()["thumbnails"].toArray();
                     if (!thumbs.isEmpty()) {
+                        track.thumbnailUrl = thumbs.first().toObject()["url"].toString().toStdString();
                         track.coverUrl = thumbs.last().toObject()["url"].toString().toStdString();
                     }
 

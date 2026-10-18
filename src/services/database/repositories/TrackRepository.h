@@ -9,7 +9,7 @@ class TrackRepository {
 public:
     explicit TrackRepository(QSqlDatabase& db);
 
-    void SaveTracks(const std::vector<Track>& tracks, bool isLibrary = true);
+    void SaveTracks(const std::vector<Track>& tracks, bool isLibrary = true, int startPosition = 0);
     void SetTrackIsLibrary(const std::string& trackId, bool isLibrary);
     std::vector<Track> LoadTracks(const std::string& source, const std::vector<std::string>& standardOrder = {});
     std::vector<Track> LoadAllSourcesTracks();

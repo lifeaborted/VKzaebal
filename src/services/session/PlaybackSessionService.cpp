@@ -16,6 +16,8 @@ void PlaybackSessionService::RestoreSessionState(IAudioEngine& audio,
                                                  const ConfigurationService& config) {
     playlist.SetRepeatMode(config.GetRepeatMode());
     audio.SetVolume(config.GetVolume());
+    audio.SetCrossfadeEnabled(config.GetCrossfadeEnabled());
+    audio.SetCrossfadeDurationMs(config.GetCrossfadeDurationMs());
     playbackCtrl.SetCrossfadeEnabled(config.GetCrossfadeEnabled());
     playbackCtrl.SetStartPaused(!config.GetAutoPlay());
 }

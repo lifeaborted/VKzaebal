@@ -11,6 +11,7 @@ public:
     PlaylistManager() = default;
 
     void AddTrack(const Track& track);
+    void SetTracks(const std::vector<Track>& tracks);
     void PlayTrackNow(const Track& track);
     bool HasTracks() const;
     bool IsShuffle() const;

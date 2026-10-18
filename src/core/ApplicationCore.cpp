@@ -106,6 +106,7 @@ bool ApplicationCore::Initialize() {
 
     // 3. DI в контроллеры
     m_playbackCtrl = std::make_unique<PlaybackController>(*m_audio, *m_playlist, *m_streamer);
+    m_playbackCtrl->SetDownloader(m_downloader.get(), m_configService.get());
     m_router = std::make_unique<SourceRouter>(m_envVars, m_networkManager.get(), this);
 
     // 4. Создание или внедрение UI через UiFactory / Dependency Injection
@@ -128,11 +129,8 @@ bool ApplicationCore::Initialize() {
         if (m_audio) {
             m_audio->PollEvents();
 
-            size_t netBuf = m_audio->GetNetworkBufferSize();
-            if (netBuf <= 512 * 1024) {
-                m_streamer->ResumeDownload();
-            } else if (netBuf >= 2 * 1024 * 1024) {
-                m_streamer->PauseDownload();
+            if (m_streamer) {
+                m_streamer->UpdatePlaybackPosition(m_audio->GetPositionSeconds());
             }
         }
     });
@@ -153,7 +151,7 @@ void ApplicationCore::WireConnections() {
     // Сеть -> Аудио
     connect(m_streamer.get(), &NetworkStreamer::DataReceived, this, [this](const QByteArray& data) {
         m_audio->PushNetworkData(reinterpret_cast<const uint8_t*>(data.constData()), data.size());
-        if (m_audio->GetNetworkBufferSize() >= 2 * 1024 * 1024) {
+        if (m_audio->GetNetworkBufferSize() >= 8 * 1024 * 1024) {
             m_streamer->PauseDownload();
         }
     });
@@ -211,6 +209,7 @@ void ApplicationCore::WireConnections() {
         m_ui->OnGaplessModeChanged = [this](bool isCrossfade) {
             m_configService->SetCrossfadeEnabled(isCrossfade);
             m_playbackCtrl->SetCrossfadeEnabled(isCrossfade);
+            m_audio->SetCrossfadeEnabled(isCrossfade);
             Logger::Log(LogLevel::INFO, std::string("Crossfade transition set to ") + (isCrossfade ? "ON" : "OFF"));
         };
     }
@@ -293,6 +292,7 @@ void ApplicationCore::InitPlaylistAndStart(bool isOnline) {
 }
 
 void ApplicationCore::OnAudioFetched(const std::vector<Track>& tracks) {
+    int startPos = m_syncIndex;
     for (const auto& track : tracks) {
         if (m_syncExistingIds.find(track.id) == m_syncExistingIds.end()) {
             m_playlist->InsertTrack(m_syncIndex, track);
@@ -306,7 +306,7 @@ void ApplicationCore::OnAudioFetched(const std::vector<Track>& tracks) {
         m_syncIndex++;
     }
 
-    m_dbManager->SaveTracks(tracks);
+    m_dbManager->SaveTracks(tracks, true, startPos);
     if (!m_isPlaybackStarted) {
         InitPlaylistAndStart(true);
     }

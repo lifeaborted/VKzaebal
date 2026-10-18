@@ -12,6 +12,8 @@ QString PathManager::s_lyricsDir;
 QString PathManager::s_logsDir;
 QString PathManager::s_tempDir;
 QString PathManager::s_cacheDir;
+QString PathManager::s_coversDir;
+QString PathManager::s_audioCacheDir;
 QString PathManager::s_cachedCustomDownloadsDir;
 bool PathManager::s_customDownloadsDirCached = false;
 bool PathManager::s_initialized = false;
@@ -39,12 +41,30 @@ void PathManager::Init() {
     s_logsDir = s_appDataDir + "/logs";
     s_tempDir = s_appDataDir + "/temp";
     s_cacheDir = s_appDataDir + "/cache";
+    s_coversDir = s_cacheDir + "/covers";
+    s_audioCacheDir = s_cacheDir + "/audio";
 
     QDir().mkpath(s_downloadsDir);
     QDir().mkpath(s_lyricsDir);
     QDir().mkpath(s_logsDir);
     QDir().mkpath(s_tempDir);
     QDir().mkpath(s_cacheDir);
+    QDir().mkpath(s_coversDir);
+    QDir().mkpath(s_audioCacheDir);
+
+    // Скрываем кэш от системного медиа-сканера Android через .nomedia
+    QFile noMediaCovers(s_coversDir + "/.nomedia");
+    if (!noMediaCovers.exists()) {
+        if (noMediaCovers.open(QIODevice::WriteOnly)) {
+            noMediaCovers.close();
+        }
+    }
+    QFile noMediaAudio(s_audioCacheDir + "/.nomedia");
+    if (!noMediaAudio.exists()) {
+        if (noMediaAudio.open(QIODevice::WriteOnly)) {
+            noMediaAudio.close();
+        }
+    }
 
     s_initialized = true;
 }
@@ -114,6 +134,38 @@ QString PathManager::GetTempDir() {
 QString PathManager::GetCacheDir() {
     if (!s_initialized) Init();
     return s_cacheDir;
+}
+
+QString PathManager::GetCoversDir() {
+    if (!s_initialized) Init();
+    return s_coversDir;
+}
+
+QString PathManager::GetAudioCacheDir() {
+    if (!s_initialized) Init();
+    return s_audioCacheDir;
+}
+
+void PathManager::EnforceCacheLimit(const QString& dirPath, int maxMb) {
+    if (maxMb <= 0) return;
+    QDir dir(dirPath);
+    if (!dir.exists()) return;
+
+    QFileInfoList list = dir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot, QDir::Time | QDir::Reversed);
+    qint64 totalBytes = 0;
+    for (const QFileInfo& fi : list) {
+        if (fi.fileName() == ".nomedia") continue;
+        totalBytes += fi.size();
+    }
+    qint64 maxBytes = static_cast<qint64>(maxMb) * 1024 * 1024;
+    for (const QFileInfo& fi : list) {
+        if (totalBytes <= maxBytes) break;
+        if (fi.fileName() == ".nomedia") continue;
+        qint64 sz = fi.size();
+        if (QFile::remove(fi.absoluteFilePath())) {
+            totalBytes -= sz;
+        }
+    }
 }
 
 QString PathManager::GetDbPath() {

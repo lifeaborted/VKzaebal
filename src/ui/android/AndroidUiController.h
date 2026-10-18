@@ -35,7 +35,10 @@ private:
     QQmlApplicationEngine m_qmlEngine;
     AndroidPlayerBridge* m_bridge{nullptr};
     TrackListModel* m_trackModel{nullptr};
+    TrackListModel* m_previewTrackModel{nullptr};
     bool m_started{false};
+
+    void ProcessIntentExtras();
 };
 
 } // namespace ui::android

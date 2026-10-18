@@ -3,6 +3,8 @@
 #include "core/playlist/PlaylistManager.h"
 #include "core/api/IAudioProvider.h"
 #include "services/network/NetworkStreamer.h"
+#include "services/downloader/TrackDownloader.h"
+#include "services/config/ConfigurationService.h"
 #include "utils/logger/Logger.h"
 #include "utils/path/PathManager.h"
 
@@ -102,6 +104,9 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
     }
 
     if (attempt == 1) {
+        m_currentPlayingTrack = Track();
+        m_currentPlayingUrl = "";
+
         if (m_savedPositionTrackId != track.id) {
             m_savedPosition = 0.0;
             m_savedPositionTrackId = "";
@@ -111,6 +116,12 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
     QString localPath = PathManager::GetDownloadFilePath(track.GetSafeFilename(), "mp3");
     if (!QFile::exists(localPath)) {
         localPath = PathManager::GetDownloadFilePath(track.GetSafeFilename(), "aac");
+    }
+    if (!QFile::exists(localPath)) {
+        localPath = PathManager::GetAudioCacheDir() + "/" + QString::fromStdString(track.GetSafeFilename()) + ".mp3";
+    }
+    if (!QFile::exists(localPath)) {
+        localPath = PathManager::GetAudioCacheDir() + "/" + QString::fromStdString(track.GetSafeFilename()) + ".aac";
     }
     bool isDownloaded = QFile::exists(localPath);
 
@@ -142,6 +153,9 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
         m_preloadedTrack = Track();
         m_skipCount = 0;
 
+        m_currentPlayingTrack = track;
+        m_currentPlayingUrl = urlToPlay;
+
         m_streamer.StopDownload();
         bool shouldCrossfade = m_crossfadeEnabled && m_audio.IsPlaying();
         m_audio.ClearBuffers(shouldCrossfade, track.duration);
@@ -162,8 +176,8 @@ void PlaybackController::AttemptPlay(const Track& track, int attempt) {
     // 3. Сетевой трек (ссылка еще не получена)
     // Мгновенно останавливаем предыдущий аудиопоток и отменяем предыдущий запрос ссылки
     CancelProviderFetch();
-    m_streamer.StopDownload();
     if (!m_crossfadeEnabled || !m_audio.IsPlaying()) {
+        m_streamer.StopDownload();
         m_audio.Pause();
         m_audio.ClearBuffers(false, track.duration);
     }
@@ -212,6 +226,8 @@ void PlaybackController::ExecuteAttemptPlay(const Track& track, int attempt, int
         safeThis->m_skipCount = 0;
 
         if (!freshUrl.empty()) {
+            safeThis->m_currentPlayingTrack = track;
+            safeThis->m_currentPlayingUrl = freshUrl;
             safeThis->m_streamer.StopDownload();
             bool shouldCrossfade = safeThis->m_crossfadeEnabled && safeThis->m_audio.IsPlaying();
             safeThis->m_audio.ClearBuffers(shouldCrossfade, track.duration);
@@ -247,4 +263,21 @@ void PlaybackController::ExecuteAttemptPlay(const Track& track, int attempt, int
     };
 
     provider->FetchTrackUrl(track.id, executePlay);
+}
+
+void PlaybackController::MaybeCacheTrack(const Track& track, const std::string& url) {
+    if (!m_downloader || !m_configService || !m_configService->GetAudioDiskCacheEnabled()) {
+        return;
+    }
+    if (track.id.empty() || url.empty()) {
+        return;
+    }
+    QString mp3Path = PathManager::GetAudioCacheDir() + "/" + QString::fromStdString(track.GetSafeFilename()) + ".mp3";
+    QString aacPath = PathManager::GetAudioCacheDir() + "/" + QString::fromStdString(track.GetSafeFilename()) + ".aac";
+    if (QFile::exists(mp3Path) || QFile::exists(aacPath)) {
+        return;
+    }
+    Logger::Log(LogLevel::INFO, "PlaybackController: Caching track to disk -> " + track.title);
+    m_downloader->Download(track, url, PathManager::GetAudioCacheDir());
+    PathManager::EnforceCacheLimit(PathManager::GetAudioCacheDir(), m_configService->GetAudioDiskCacheMaxMb());
 }

@@ -156,8 +156,13 @@ std::vector<Track> YandexClient::ParseYandexTracks(const QJsonArray& items) {
         }
         QString coverUri = trackObj["coverUri"].toString();
         if (!coverUri.isEmpty()) {
-            coverUri.replace("%%", "200x200");
-            track.coverUrl = "https://" + coverUri.toStdString();
+            QString thumbUri = coverUri;
+            thumbUri.replace("%%", "200x200");
+            track.thumbnailUrl = "https://" + thumbUri.toStdString();
+
+            QString fullUri = coverUri;
+            fullUri.replace("%%", "600x600");
+            track.coverUrl = "https://" + fullUri.toStdString();
         }
         if (!track.id.empty() && !track.title.empty()) chunkTracks.push_back(std::move(track));
     }

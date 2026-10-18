@@ -125,8 +125,8 @@ void MiniaudioEngine::SetPositionSeconds(double pos) {
             m_nearEndSignaled.store(false, std::memory_order_release);
             m_finishedSignaled.store(false, std::memory_order_release);
             StopFadeOut();
-            double crossfadeSec = m_crossfadeDurationMs / 1000.0;
-            m_seekedNearEnd.store(pos >= static_cast<double>(m_currentDurationSec) - crossfadeSec, std::memory_order_release);
+            double crossfadeSec = m_crossfadeDurationMs.load(std::memory_order_relaxed) / 1000.0;
+            m_seekedNearEnd.store(pos >= static_cast<double>(m_currentDurationSec) - crossfadeSec - 1.5, std::memory_order_release);
             std::memset(m_mainBuffer.data(), 0, m_mainBuffer.size() * sizeof(int16_t));
             Logger::Log(LogLevel::INFO, "Miniaudio: Exact seeked to " + std::to_string(m_playbackFrameCount.load() / static_cast<double>(SAMPLE_RATE)) + "s");
         } else {
@@ -136,15 +136,18 @@ void MiniaudioEngine::SetPositionSeconds(double pos) {
             m_nearEndSignaled.store(false, std::memory_order_release);
             m_finishedSignaled.store(false, std::memory_order_release);
             StopFadeOut();
-            double crossfadeSec = m_crossfadeDurationMs / 1000.0;
-            m_seekedNearEnd.store(pos >= static_cast<double>(m_currentDurationSec) - crossfadeSec, std::memory_order_release);
+            double crossfadeSec = m_crossfadeDurationMs.load(std::memory_order_relaxed) / 1000.0;
+            m_seekedNearEnd.store(pos >= static_cast<double>(m_currentDurationSec) - crossfadeSec - 1.5, std::memory_order_release);
+            std::memset(m_mainBuffer.data(), 0, m_mainBuffer.size() * sizeof(int16_t));
             m_pcmBuffer.Clear();
         }
     }
 
     // Блок 2: Работа с сетью
     if (!isLocalFile) {
+        m_seekGeneration.fetch_add(1, std::memory_order_release);
         m_isNetworkFinished = false;
+        m_isPrebuffering.store(true, std::memory_order_release);
         m_networkDiscardFrames = 0;
         {
             std::lock_guard<std::mutex> netLock(m_networkMutex);
@@ -156,8 +159,12 @@ void MiniaudioEngine::SetPositionSeconds(double pos) {
             if (m_aacDecoder) {
                 aacDecoder_Close(m_aacDecoder);
                 m_aacDecoder = aacDecoder_Open(TT_MP4_ADTS, 1);
+                if (m_aacDecoder) {
+                    aacDecoder_SetParam(m_aacDecoder, AAC_CONCEAL_METHOD, 1);
+                }
             }
             mp3dec_init(&m_mp3Decoder);
+            CleanupResampler();
         }
         m_decodeCv.notify_all();
         if (OnNetworkSeekRequested) {
@@ -208,8 +215,8 @@ std::vector<float> MiniaudioEngine::GetSpectrumData() {
 }
 
 bool MiniaudioEngine::Init() {
-    QSettings settings("config.ini", QSettings::IniFormat);
-    m_crossfadeDurationMs = settings.value("Audio/CrossfadeDurationMs", 3000).toInt();
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    m_crossfadeDurationMs.store(settings.value("Audio/CrossfadeDurationMs", 3000).toInt(), std::memory_order_relaxed);
 
     m_pcmBuffer.Init(SAMPLE_RATE * 2 * sizeof(int16_t) * 12);
     ma_device_config deviceConfig = ma_device_config_init(ma_device_type_playback);
@@ -224,6 +231,7 @@ bool MiniaudioEngine::Init() {
         Logger::Log(LogLevel::ERROR, "Miniaudio: Failed to open FDK-AAC decoder.");
         return false;
     }
+    aacDecoder_SetParam(m_aacDecoder, AAC_CONCEAL_METHOD, 1);
 
     mp3dec_init(&m_mp3Decoder);
 
@@ -264,9 +272,18 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
             ma_decoder_read_pcm_frames(engine->m_decoder.get(), engine->m_mainBuffer.data(), frameCount, &read);
             framesRead = read;
         } else {
-            ma_uint32 bytesToRead = frameCount * 2 * sizeof(int16_t);
-            size_t bytesRead = engine->m_pcmBuffer.Read(reinterpret_cast<uint8_t*>(engine->m_mainBuffer.data()), bytesToRead);
-            framesRead = bytesRead / (2 * sizeof(int16_t));
+            if (engine->m_isPrebuffering.load(std::memory_order_acquire)) {
+                // Пребуферизация: ждем пока наберется хотя бы 0.5 сек (88200 байт) или поток завершится
+                if (engine->m_pcmBuffer.GetAvailableRead() >= 88200 || engine->m_isNetworkFinished) {
+                    engine->m_isPrebuffering.store(false, std::memory_order_release);
+                }
+            }
+
+            if (!engine->m_isPrebuffering.load(std::memory_order_acquire)) {
+                ma_uint32 bytesToRead = frameCount * 2 * sizeof(int16_t);
+                size_t bytesRead = engine->m_pcmBuffer.Read(reinterpret_cast<uint8_t*>(engine->m_mainBuffer.data()), bytesToRead);
+                framesRead = bytesRead / (2 * sizeof(int16_t));
+            }
         }
 
         engine->m_playbackFrameCount += framesRead;
@@ -277,6 +294,9 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
                 ma_uint64 read = 0;
                 ma_decoder_read_pcm_frames(engine->m_fadeOutDecoder.get(), engine->m_fadeOutBuffer.data(), frameCount, &read);
                 fadeOutFramesRead = read;
+                if (read == 0) {
+                    engine->StopFadeOut();
+                }
             } else {
                 size_t elementsAvail = engine->m_fadeOutPcm.size() - engine->m_fadeOutPcmReadPos;
                 size_t elementsToRead = frameCount * 2;
@@ -286,8 +306,7 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
                     std::memcpy(engine->m_fadeOutBuffer.data(), engine->m_fadeOutPcm.data() + engine->m_fadeOutPcmReadPos, elementsToRead * sizeof(int16_t));
                     engine->m_fadeOutPcmReadPos += elementsToRead;
                     fadeOutFramesRead = elementsToRead / 2;
-                }
-                if (fadeOutFramesRead == 0 && !engine->m_fadeOutIsLocal) {
+                } else {
                     engine->StopFadeOut();
                 }
             }
@@ -302,11 +321,12 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
             float fadeOutVol = 0.0f;
 
             if (engine->m_isCrossfading) {
-                if (framesRead > 0) {
+                if (framesRead > 0 && engine->m_crossfadeFramesTotal > 0) {
                     if (engine->m_crossfadeFramesRemaining > 0) {
                         float progress = 1.0f - (static_cast<float>(engine->m_crossfadeFramesRemaining) / engine->m_crossfadeFramesTotal);
-                        mainVol = progress;
-                        fadeOutVol = 1.0f - progress;
+                        float angle = progress * 1.57079632679f;
+                        mainVol = std::sin(angle);
+                        fadeOutVol = std::cos(angle);
                         engine->m_crossfadeFramesRemaining--;
                     } else {
                         engine->StopFadeOut();
@@ -319,13 +339,13 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
 
             for (int c = 0; c < 2; ++c) {
                 int idx = i * 2 + c;
-                float s1 = (i < framesRead) ? engine->m_mainBuffer[idx] * mainVol : 0.0f;
-                float s2 = (i < fadeOutFramesRead) ? engine->m_fadeOutBuffer[idx] * fadeOutVol : 0.0f;
+                float s1 = (i < framesRead) ? (static_cast<float>(engine->m_mainBuffer[idx]) / 32768.0f) * mainVol : 0.0f;
+                float s2 = (i < fadeOutFramesRead) ? (static_cast<float>(engine->m_fadeOutBuffer[idx]) / 32768.0f) * fadeOutVol : 0.0f;
                 engine->m_mixBuffer[idx] = s1 + s2;
             }
         }
 
-        // --- ЭКВАЛАЙЗЕР (32-bit float DSP Biquad in-place) ---
+        // --- ЭКВАЛАЙЗЕР (32-bit float DSP Biquad in-place [-1.0f, 1.0f]) ---
         if (engine->m_eqEnabled.load(std::memory_order_relaxed) && engine->m_eqFiltersInitialized) {
             for (size_t b = 0; b < EQ_NUM_BANDS; ++b) {
                 ma_peak2_process_pcm_frames(&engine->m_eqFilters[b], engine->m_mixBuffer.data(), engine->m_mixBuffer.data(), frameCount);
@@ -334,7 +354,7 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
 
         int16_t* pOut = static_cast<int16_t*>(pOutput);
         for (ma_uint32 i = 0; i < frameCount * 2; ++i) {
-            float val = engine->m_mixBuffer[i];
+            float val = engine->m_mixBuffer[i] * 32767.0f;
             if (val > 32767.0f) val = 32767.0f;
             if (val < -32768.0f) val = -32768.0f;
             pOut[i] = static_cast<int16_t>(val);
@@ -364,10 +384,10 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
 
         double currentSec = static_cast<double>(engine->m_playbackFrameCount.load()) / static_cast<double>(SAMPLE_RATE);
         double totalSec = static_cast<double>(engine->m_currentDurationSec);
-        double crossfadeSec = engine->m_crossfadeDurationMs / 1000.0;
+        double crossfadeSec = engine->m_crossfadeDurationMs.load(std::memory_order_relaxed) / 1000.0;
 
         // --- ДЕТЕКТОР EOF ---
-        if (framesRead == 0 && frameCount > 0) {
+        if (framesRead == 0 && frameCount > 0 && !engine->m_isPrebuffering.load(std::memory_order_relaxed)) {
             static int s_underflowLogCount = 0;
             if (++s_underflowLogCount <= 5) {
                 Logger::Log(LogLevel::WARNING, "audioCallback: underflow! currentSec=" + std::to_string(currentSec) +
@@ -398,9 +418,10 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
             }
 
             double endTriggerSec = totalSec;
-            if (engine->m_isCrossfadeEnabled && engine->m_crossfadeDurationMs > 0 && totalSec > 0.0) {
+            if (engine->m_isCrossfadeEnabled.load(std::memory_order_relaxed) && engine->m_crossfadeDurationMs.load(std::memory_order_relaxed) > 0 && totalSec > 0.0) {
                 if (!engine->m_seekedNearEnd.load(std::memory_order_acquire)) {
-                    endTriggerSec = totalSec - crossfadeSec;
+                    // 1.5s lead time ensures next network track prebuffers without cutting into crossfade duration
+                    endTriggerSec = totalSec - crossfadeSec - 1.5;
                     if (endTriggerSec < 0.0) endTriggerSec = 0.0;
                 }
             }
@@ -415,12 +436,18 @@ void MiniaudioEngine::DataCallback(ma_device* pDevice, void* pOutput, const void
 
 bool MiniaudioEngine::PlayStream(const std::string& url, int durationSec, bool crossfade, const std::string& trackId) {
     m_currentTrackId = trackId;
-    m_isCrossfadeEnabled = crossfade;
 
     QString localPath = PathManager::GetDownloadFilePath(trackId, "mp3");
 
     if (!QFile::exists(localPath)) {
         localPath = PathManager::GetDownloadFilePath(trackId, "aac");
+    }
+
+    if (!QFile::exists(localPath)) {
+        localPath = PathManager::GetAudioCacheDir() + "/" + QString::fromStdString(trackId) + ".mp3";
+    }
+    if (!QFile::exists(localPath)) {
+        localPath = PathManager::GetAudioCacheDir() + "/" + QString::fromStdString(trackId) + ".aac";
     }
 
     if (trackId.empty() || !QFile::exists(localPath)) {
@@ -436,6 +463,7 @@ bool MiniaudioEngine::PlayStream(const std::string& url, int durationSec, bool c
     m_finishedSignaled.store(false, std::memory_order_release);
     m_playbackFrameCount = 0;
     m_seekedNearEnd.store(false, std::memory_order_release);
+    m_isPrebuffering.store(false, std::memory_order_release);
 
     if (crossfade && m_crossfadeDurationMs > 0) {
         InitiateCrossfade();
@@ -541,10 +569,18 @@ void MiniaudioEngine::DecodeLoop() {
             }
         } // m_networkMutex разблокирован! Все декодирование идет без удержания мьютекса
 
+        uint64_t chunkGen = m_seekGeneration.load(std::memory_order_acquire);
+        m_currentDecodeGen.store(chunkGen, std::memory_order_release);
+
         while (m_isDecoding && m_pcmBuffer.GetAvailableWrite() < 176400) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            if (m_seekGeneration.load(std::memory_order_acquire) != chunkGen) break;
         }
         if (!m_isDecoding) break;
+        if (m_seekGeneration.load(std::memory_order_acquire) != chunkGen) {
+            localChunk.clear();
+            continue;
+        }
 
         if (!localChunk.empty()) {
             if (!m_demuxer.IsTsStreamDetermined()) {
@@ -553,14 +589,19 @@ void MiniaudioEngine::DecodeLoop() {
 
             if (m_demuxer.IsTsStreamDetermined() && !m_demuxer.IsTsStream()) {
                 m_demuxer.ProcessBytes(localChunk.data(), localChunk.size());
-                DecodeMp3Payload(nullptr, 0);
+                if (m_seekGeneration.load(std::memory_order_acquire) == chunkGen) {
+                    DecodeMp3Payload(nullptr, 0);
+                }
             } else {
                 size_t bytesConsumed = 0;
                 while (localChunk.size() - bytesConsumed >= 188) {
+                    if (m_seekGeneration.load(std::memory_order_acquire) != chunkGen) break;
+
                     while (m_isDecoding && m_pcmBuffer.GetAvailableWrite() < 176400) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                        if (m_seekGeneration.load(std::memory_order_acquire) != chunkGen) break;
                     }
-                    if (!m_isDecoding) break;
+                    if (!m_isDecoding || m_seekGeneration.load(std::memory_order_acquire) != chunkGen) break;
 
                     m_demuxer.ProcessBytes(localChunk.data() + bytesConsumed, 188);
                     bytesConsumed += 188;
@@ -570,16 +611,20 @@ void MiniaudioEngine::DecodeLoop() {
                     }
                 }
 
-                if (!m_demuxer.IsTsStream() && bytesConsumed < localChunk.size()) {
-                    m_demuxer.ProcessBytes(localChunk.data() + bytesConsumed, localChunk.size() - bytesConsumed);
-                } else if (m_isNetworkFinished && bytesConsumed < localChunk.size()) {
-                    m_demuxer.ProcessBytes(localChunk.data() + bytesConsumed, localChunk.size() - bytesConsumed);
+                if (m_seekGeneration.load(std::memory_order_acquire) == chunkGen) {
+                    if (!m_demuxer.IsTsStream() && bytesConsumed < localChunk.size()) {
+                        m_demuxer.ProcessBytes(localChunk.data() + bytesConsumed, localChunk.size() - bytesConsumed);
+                    } else if (m_isNetworkFinished && bytesConsumed < localChunk.size()) {
+                        m_demuxer.ProcessBytes(localChunk.data() + bytesConsumed, localChunk.size() - bytesConsumed);
+                    }
                 }
             }
             localChunk.clear();
         }
 
-        DecodeMp3Payload(nullptr, 0);
+        if (m_seekGeneration.load(std::memory_order_acquire) == chunkGen) {
+            DecodeMp3Payload(nullptr, 0);
+        }
     }
 }
 
@@ -708,11 +753,13 @@ void MiniaudioEngine::DecodeAacPayload(const uint8_t* payload, size_t payloadSiz
                 }
 
                 if (framesToOutput > 0) {
+                    if (m_seekGeneration.load(std::memory_order_acquire) != m_currentDecodeGen.load(std::memory_order_acquire)) break;
                     size_t bytesToOutput = framesToOutput * 2 * sizeof(int16_t);
                     while (m_isDecoding && m_pcmBuffer.GetAvailableWrite() < bytesToOutput) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                        if (m_seekGeneration.load(std::memory_order_acquire) != m_currentDecodeGen.load(std::memory_order_acquire)) break;
                     }
-                    if (!m_isDecoding) break;
+                    if (!m_isDecoding || m_seekGeneration.load(std::memory_order_acquire) != m_currentDecodeGen.load(std::memory_order_acquire)) break;
                     m_pcmBuffer.Write(reinterpret_cast<uint8_t*>(pcmDataPtr), bytesToOutput);
                 }
             }
@@ -757,17 +804,17 @@ void MiniaudioEngine::DecodeMp3Payload(const uint8_t* payload, size_t payloadSiz
                                           static_cast<int>(m_mp3Buffer.size() - m_mp3ReadOffset),
                                           pcmBuf, &info);
 
+        if (info.frame_bytes == 0) {
+            break;
+        }
+
         if (samples == 0) {
-            if (!isEof) {
-                break;
+            if (info.frame_bytes <= (m_mp3Buffer.size() - m_mp3ReadOffset)) {
+                m_mp3ReadOffset += info.frame_bytes;
             } else {
-                if (info.frame_bytes > 0 && info.frame_bytes <= (m_mp3Buffer.size() - m_mp3ReadOffset)) {
-                    m_mp3ReadOffset += info.frame_bytes;
-                } else {
-                    m_mp3ReadOffset++;
-                }
-                continue;
+                m_mp3ReadOffset = m_mp3Buffer.size();
             }
+            continue;
         }
 
         if (info.channels > 0) {
@@ -807,7 +854,7 @@ void MiniaudioEngine::DecodeMp3Payload(const uint8_t* payload, size_t payloadSiz
                 pcmDataPtr += (framesToDrop * 2);
             }
 
-            if (framesToOutput > 0) {
+            if (framesToOutput > 0 && m_seekGeneration.load(std::memory_order_acquire) == m_currentDecodeGen.load(std::memory_order_acquire)) {
                 size_t bytesToOutput = framesToOutput * 2 * sizeof(int16_t);
                 m_pcmBuffer.Write(reinterpret_cast<uint8_t*>(pcmDataPtr), bytesToOutput);
             }
@@ -826,13 +873,14 @@ void MiniaudioEngine::DecodeMp3Payload(const uint8_t* payload, size_t payloadSiz
 }
 
 void MiniaudioEngine::ClearBuffers(bool crossfade, int nextDurationSec) {
+    m_seekGeneration.fetch_add(1, std::memory_order_release);
     m_isNetworkFinished = false;
+    m_isPrebuffering.store(true, std::memory_order_release);
 
     {
         std::lock_guard<std::mutex> lock(m_audioMutex);
 
         m_currentDurationSec = nextDurationSec;
-        m_isCrossfadeEnabled = crossfade;
         m_nearEndTriggered = false;
         m_finishedTriggered = false;
         m_nearEndSignaled.store(false, std::memory_order_release);
@@ -862,6 +910,9 @@ void MiniaudioEngine::ClearBuffers(bool crossfade, int nextDurationSec) {
         if (m_aacDecoder) {
             aacDecoder_Close(m_aacDecoder);
             m_aacDecoder = aacDecoder_Open(TT_MP4_ADTS, 1);
+            if (m_aacDecoder) {
+                aacDecoder_SetParam(m_aacDecoder, AAC_CONCEAL_METHOD, 1);
+            }
         }
         mp3dec_init(&m_mp3Decoder);
         CleanupResampler();
@@ -869,7 +920,17 @@ void MiniaudioEngine::ClearBuffers(bool crossfade, int nextDurationSec) {
     m_decodeCv.notify_all();
 }
 
+void MiniaudioEngine::PrepareCrossfade() {
+    std::lock_guard<std::mutex> lock(m_audioMutex);
+    InitiateCrossfade();
+}
+
 void MiniaudioEngine::InitiateCrossfade() {
+    if (m_isCrossfading && (!m_fadeOutPcm.empty() || m_fadeOutDecoder)) {
+        m_pcmBuffer.Clear();
+        return;
+    }
+
     StopFadeOut();
 
     if (m_decoder) {
@@ -890,16 +951,16 @@ void MiniaudioEngine::InitiateCrossfade() {
     m_pcmBuffer.Clear();
 
     if (m_fadeOutDecoder || !m_fadeOutPcm.empty()) {
-        ma_uint32 targetFrames = static_cast<ma_uint32>((m_crossfadeDurationMs / 1000.0) * SAMPLE_RATE);
-        if (!m_fadeOutIsLocal && !m_fadeOutPcm.empty()) {
-            ma_uint32 availFrames = static_cast<ma_uint32>(m_fadeOutPcm.size() / 2);
-            targetFrames = std::min(targetFrames, availFrames);
-        }
+        ma_uint32 targetFrames = static_cast<ma_uint32>((m_crossfadeDurationMs.load(std::memory_order_relaxed) / 1000.0) * SAMPLE_RATE);
         m_crossfadeFramesTotal = targetFrames;
         m_crossfadeFramesRemaining = targetFrames;
         m_isCrossfading = (targetFrames > 0);
+        Logger::Log(LogLevel::INFO, "Miniaudio: InitiateCrossfade started (fadeOutFrames=" +
+                    std::to_string(m_fadeOutIsLocal ? 0 : (m_fadeOutPcm.size() / 2)) +
+                    ", targetFrames=" + std::to_string(targetFrames) + ")");
     } else {
         m_isCrossfading = false;
+        Logger::Log(LogLevel::WARNING, "Miniaudio: InitiateCrossfade skipped (no audio frames to fade out)");
     }
 }
 

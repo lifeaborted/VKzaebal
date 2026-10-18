@@ -41,6 +41,10 @@ void NetworkStreamer::StartDownload(const std::string& urlString) {
     m_reply = m_manager->get(request);
     m_reply->setReadBufferSize(512 * 1024);
     m_isPaused = false;
+    m_downloadedPositionSec = 0.0;
+    m_currentPlaybackSec = 0.0;
+    m_downloadedBytes = 0;
+    m_seekStartSec = 0.0;
 
     if (urlString.find(".m3u8") != std::string::npos) {
         connect(m_reply, &QNetworkReply::finished, this, [this, url, currentGen]() {
@@ -92,6 +96,24 @@ void NetworkStreamer::StopDownload() {
         
         m_reply->disconnect();
 
+        m_reply->abort();
+        m_reply->deleteLater();
+        m_reply = nullptr;
+    }
+}
+
+void NetworkStreamer::AbortInFlightChunks() {
+    m_streamGeneration.fetch_add(1, std::memory_order_relaxed);
+    m_chunkQueue.clear();
+    m_currentChunk = HlsChunk();
+    m_isPaused = false;
+    m_readyChunks.clear();
+    m_chunksInFlight = 0;
+    m_currentChunkData.clear();
+    m_currentChunkData.squeeze();
+    if (m_reply) {
+        Logger::Log(LogLevel::INFO, "NetworkStreamer: Aborting in-flight reply for seek.");
+        m_reply->disconnect();
         m_reply->abort();
         m_reply->deleteLater();
         m_reply = nullptr;
@@ -349,6 +371,11 @@ void NetworkStreamer::OnChunkFinished() {
     uint64_t seq = completedChunk.mediaSequence;
     uint64_t currentGen = m_streamGeneration.load(std::memory_order_relaxed);
 
+    m_downloadedPositionSec += completedChunk.durationSec;
+    if (m_downloadedPositionSec - m_currentPlaybackSec >= BUFFER_AHEAD_MAX) {
+        PauseDownload();
+    }
+
     // --- PIPELINING: Скачивание следующего чанка запускаем СРАЗУ, не дожидаясь окончания дешифровки! ---
     if (!m_isPaused && !m_chunkQueue.isEmpty()) {
         DownloadNextChunk();
@@ -520,20 +547,41 @@ void NetworkStreamer::DeliverChunk(uint64_t seq, QByteArray data, uint64_t curre
     }
 }
 
+void NetworkStreamer::UpdatePlaybackPosition(double currentSeconds) {
+    m_currentPlaybackSec = currentSeconds;
+    if (m_isPaused) {
+        if (m_streamType == StreamType::DirectHttp) {
+            if (m_totalFileSize > 0 && m_trackDurationSec > 0) {
+                if (m_downloadedPositionSec - m_currentPlaybackSec <= BUFFER_AHEAD_MIN) {
+                    ResumeDownload();
+                }
+            }
+        } else {
+            if (m_downloadedPositionSec - m_currentPlaybackSec <= BUFFER_AHEAD_MIN) {
+                ResumeDownload();
+            }
+        }
+    }
+}
+
 void NetworkStreamer::PauseDownload() {
     if (m_streamType == StreamType::DirectHttp) {
         return;
     }
     if (!m_isPaused) {
         m_isPaused = true;
-        Logger::Log(LogLevel::INFO, "High Watermark reached. Pausing network read.");
+        Logger::Log(LogLevel::INFO, "Buffer window limit reached (downloaded=" +
+                    std::to_string(m_downloadedPositionSec) + "s, pos=" +
+                    std::to_string(m_currentPlaybackSec) + "s). Pausing network read.");
     }
 }
 
 void NetworkStreamer::ResumeDownload() {
     if (m_isPaused) {
         m_isPaused = false;
-        Logger::Log(LogLevel::INFO, "Low Watermark reached. Resuming network read.");
+        Logger::Log(LogLevel::INFO, "Buffer window below threshold (downloaded=" +
+                    std::to_string(m_downloadedPositionSec) + "s, pos=" +
+                    std::to_string(m_currentPlaybackSec) + "s). Resuming network read.");
         if (m_streamType == StreamType::DirectHttp) {
             if (m_reply && m_reply->bytesAvailable() > 0) {
                 OnReadyRead();
@@ -560,11 +608,16 @@ void NetworkStreamer::SeekTo(double targetSeconds) {
         Logger::Log(LogLevel::INFO, "NetworkStreamer: Manifest not loaded yet. Seek deferred to " + std::to_string(targetSeconds) + "s.");
         return;
     }
-    StopDownload();
+    AbortInFlightChunks();
     m_currentChunkData.clear();
 
     if (m_streamType == StreamType::DirectHttp) {
         if (m_totalFileSize > 0 && m_trackDurationSec > 0) {
+            m_downloadedBytes = 0;
+            m_seekStartSec = targetSeconds;
+            m_downloadedPositionSec = targetSeconds;
+            m_currentPlaybackSec = targetSeconds;
+            m_isPaused = false;
             qint64 targetByte = static_cast<qint64>((targetSeconds / m_trackDurationSec) * m_totalFileSize);
             Logger::Log(LogLevel::INFO, "NetworkStreamer: [Direct HTTP] Requesting bytes=" + std::to_string(targetByte) + "-");
 
@@ -573,6 +626,7 @@ void NetworkStreamer::SeekTo(double targetSeconds) {
             request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
 
             m_reply = m_manager->get(request);
+            m_reply->setReadBufferSize(512 * 1024);
             connect(m_reply, &QNetworkReply::readyRead, this, &NetworkStreamer::OnReadyRead);
             connect(m_reply, &QNetworkReply::finished, this, &NetworkStreamer::OnChunkFinished);
             connect(m_reply, &QNetworkReply::errorOccurred, this, &NetworkStreamer::OnErrorOccurred);
@@ -608,6 +662,9 @@ void NetworkStreamer::SeekTo(double targetSeconds) {
         m_nextEmitSequence = m_hlsChunks[targetIndex].mediaSequence;
         m_readyChunks.clear();
         m_chunksInFlight = 0;
+        m_isPaused = false;
+        m_currentPlaybackSec = targetSeconds;
+        m_downloadedPositionSec = accumulatedTime;
 
         double skipSeconds = targetSeconds - accumulatedTime;
         if (skipSeconds < 0.0) skipSeconds = 0.0;

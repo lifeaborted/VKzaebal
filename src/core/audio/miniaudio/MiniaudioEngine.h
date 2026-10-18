@@ -37,7 +37,7 @@ public:
 
     // Метод, куда NetworkStreamer будет пушить скачанные байты AAC
     void PushNetworkData(const uint8_t* data, size_t size);
-    void ClearBuffers(bool crossfade = false, int nextDurationSec = 0);
+    void ClearBuffers(bool crossfade = false, int nextDurationSec = 0) override;
     void PollEvents() override;
     size_t GetNetworkBufferSize() const override;
 
@@ -49,6 +49,12 @@ public:
         m_isNetworkFinished = true;
         m_decodeCv.notify_all();
     }
+
+    void SetCrossfadeEnabled(bool enabled) override { m_isCrossfadeEnabled.store(enabled, std::memory_order_release); }
+    bool IsCrossfadeEnabled() const override { return m_isCrossfadeEnabled.load(std::memory_order_acquire); }
+    void SetCrossfadeDurationMs(int ms) override { m_crossfadeDurationMs.store(ms, std::memory_order_release); }
+    int GetCrossfadeDurationMs() const override { return m_crossfadeDurationMs.load(std::memory_order_acquire); }
+    void PrepareCrossfade() override;
 
     void SetEqualizerEnabled(bool enabled) override;
     bool IsEqualizerEnabled() const override;
@@ -97,10 +103,13 @@ private:
     mutable std::mutex m_networkMutex;                              // Защита буфера скачивания
     std::atomic<size_t> m_atomicNetworkBufferSize{0};               // Неблокирующий размер сетевого буфера
     std::atomic<ma_uint64> m_playbackFrameCount{0};
+    std::atomic<uint64_t> m_seekGeneration{0};
+    std::atomic<uint64_t> m_currentDecodeGen{0};
+    std::atomic<bool> m_isPrebuffering{true};
 
     // --- ПЕРЕМЕННЫЕ КРОССФЕЙДА И ТАЙМИНГОВ ---
-    bool m_isCrossfadeEnabled = false;
-    int m_crossfadeDurationMs = 3000;
+    std::atomic<bool> m_isCrossfadeEnabled{false};
+    std::atomic<int> m_crossfadeDurationMs{3000};
     int m_currentDurationSec = 0;
     bool m_nearEndTriggered = false;
     bool m_finishedTriggered = false;

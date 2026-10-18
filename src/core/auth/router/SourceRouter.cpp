@@ -51,6 +51,7 @@ SourceRouter::SourceRouter(const QMap<QString, QString>& envVars,
             if (userId > 0) vk->SetUserId(std::to_string(userId));
             vk->FetchAllUserAudio(0, 200);
         }
+        emit SourceAuthSuccess("VK");
         emit ProviderReady(true);
     });
 
@@ -273,6 +274,10 @@ void SourceRouter::StartAuthFlow(const QString& service, const QString& authUrl,
         EmitStatus("[" + service.toStdString() + "] Фоновое обновление сессии...");
     }
 
+#if defined(Q_OS_ANDROID)
+    emit WebViewAuthRequested(service, authUrl);
+    return;
+#else
     if (m_silentAuthTimer) {
         m_silentAuthTimer->stop();
         m_silentAuthTimer->deleteLater();
@@ -336,6 +341,7 @@ void SourceRouter::StartAuthFlow(const QString& service, const QString& authUrl,
             });
         }
     }
+#endif
 }
 
 void SourceRouter::OnSpotifyTokenReceived(const std::string& token) {
@@ -657,30 +663,42 @@ void SourceRouter::TryFinalizeYouTubeAuth(int attempt, const std::string& jsCook
 }
 
 void SourceRouter::SwitchSource(const std::string& newSource) {
-    Logger::Log(LogLevel::INFO, "SourceRouter: Switching audio source to " + newSource);
+    std::string normSource = newSource;
+    std::string lowerS = newSource;
+    for (char& c : lowerS) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
-    if (newSource == "Offline" || newSource == "All" || newSource.rfind("Custom:", 0) == 0) {
+    if (lowerS == "vk") normSource = "VK";
+    else if (lowerS == "yandex") normSource = "Yandex";
+    else if (lowerS == "spotify") normSource = "Spotify";
+    else if (lowerS == "soundcloud" || lowerS == "sc") normSource = "SoundCloud";
+    else if (lowerS == "youtube" || lowerS == "yt") normSource = "YouTube";
+    else if (lowerS == "offline") normSource = "Offline";
+    else if (lowerS == "all") normSource = "All";
+
+    Logger::Log(LogLevel::INFO, "SourceRouter: Switching audio source to " + normSource);
+
+    if (normSource == "Offline" || normSource == "All" || normSource.rfind("Custom:", 0) == 0) {
         m_currentProvider = nullptr;
     } else {
-        m_currentProvider = GetOrCreateProvider(newSource);
+        m_currentProvider = GetOrCreateProvider(normSource);
     }
 
-    emit SourceChanged(newSource);
+    emit SourceChanged(normSource);
 
-    if (newSource == "VK") {
+    if (normSource == "VK") {
         StartVkService();
-    } else if (newSource == "Spotify") {
+    } else if (normSource == "Spotify") {
         StartSpotifyService();
-    } else if (newSource == "SoundCloud") {
+    } else if (normSource == "SoundCloud") {
         StartSoundCloudService();
-    } else if (newSource == "Yandex") {
+    } else if (normSource == "Yandex") {
         StartYandexService();
-    } else if (newSource == "YouTube") {
+    } else if (normSource == "YouTube") {
         StartYouTubeService();
-    } else if (newSource == "Offline") {
+    } else if (normSource == "Offline") {
         emit AuthUiStateChanged(false);
         emit ProviderReady(false);
-    } else if (newSource == "All" || newSource.rfind("Custom:", 0) == 0) {
+    } else if (normSource == "All" || normSource.rfind("Custom:", 0) == 0) {
         EnsureAllProvidersInitialized();
         emit AuthUiStateChanged(false);
         emit ProviderReady(true);
@@ -740,6 +758,7 @@ void SourceRouter::Logout(const std::string& service) {
 
     auto processLogout = [this](const QString& svcName, IAudioProvider* client) {
         m_authManager->ClearSavedToken(svcName);
+        m_authManager->ClearSavedSecret(svcName);
         m_authManager->ClearSavedCookies(svcName);
         m_authManager->ClearSavedUserId(svcName);
         WebViewCookieReader::ClearServiceCache(svcName.toStdString());
@@ -766,19 +785,22 @@ void SourceRouter::Logout(const std::string& service) {
 }
 
 void SourceRouter::CheckSourceAuthorized(const std::string& source, std::function<void(bool isAuth)> callback) const {
-    if (source == "VK") {
+    std::string s = source;
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    if (s == "vk") {
         m_authManager->GetSavedToken("VK", [callback](const std::string& token) {
             callback(!token.empty());
         });
-    } else if (source == "Yandex") {
+    } else if (s == "yandex") {
         m_authManager->GetSavedToken("Yandex", [callback](const std::string& token) {
             callback(!token.empty());
         });
-    } else if (source == "SoundCloud") {
+    } else if (s == "soundcloud" || s == "sc") {
         m_authManager->GetSavedToken("SoundCloud", [callback](const std::string& token) {
             callback(!token.empty());
         });
-    } else if (source == "Spotify") {
+    } else if (s == "spotify") {
         QString spDc = m_envVars.value("SPOTIFY_SP_DC", "");
         if (!spDc.isEmpty()) {
             callback(true);
@@ -787,7 +809,7 @@ void SourceRouter::CheckSourceAuthorized(const std::string& source, std::functio
         m_authManager->GetSavedToken("Spotify", [callback](const std::string& token) {
             callback(!token.empty());
         });
-    } else if (source == "YouTube") {
+    } else if (s == "youtube" || s == "yt") {
         QString envCookie = m_envVars.value("YOUTUBE_COOKIE", "");
         if (!envCookie.isEmpty()) {
             callback(true);

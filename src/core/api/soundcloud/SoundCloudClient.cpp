@@ -177,8 +177,10 @@ std::vector<Track> SoundCloudClient::ParseSoundCloudTracks(const QJsonArray& col
         QString artwork = trackObj["artwork_url"].toString();
         if (artwork.isEmpty()) artwork = trackObj["user"].toObject()["avatar_url"].toString();
         if (!artwork.isEmpty()) {
-            artwork.replace("-large.jpg", "-t500x500.jpg");
-            track.coverUrl = artwork.toStdString();
+            track.thumbnailUrl = artwork.toStdString();
+            QString fullArtwork = artwork;
+            fullArtwork.replace("-large.jpg", "-t500x500.jpg");
+            track.coverUrl = fullArtwork.toStdString();
         }
 
         // ОПТИМИЗАЦИЯ OPT-AUTH-02: Кэшируем транскодинг сразу при парсинге

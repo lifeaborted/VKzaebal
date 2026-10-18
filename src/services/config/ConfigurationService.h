@@ -43,6 +43,12 @@ public:
     int GetDiskCacheSizeMb() const;
     void SetDiskCacheSizeMb(int mb);
 
+    bool GetAudioDiskCacheEnabled() const;
+    void SetAudioDiskCacheEnabled(bool enabled);
+
+    int GetAudioDiskCacheMaxMb() const;
+    void SetAudioDiskCacheMaxMb(int mb);
+
     int GetSeekStepSeconds() const;
     void SetSeekStepSeconds(int seconds);
 

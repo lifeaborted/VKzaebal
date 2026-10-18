@@ -3,5 +3,30 @@
         <file>core/auth/auth.qml</file>
         <file>ui/android/qml/Main.qml</file>
         <file>ui/android/qml/NowPlayingSheet.qml</file>
+        <file>ui/android/qml/AuthDialog.qml</file>
+        <file>ui/android/qml/AuthWebViewSheet.qml</file>
+        <file>ui/android/qml/LogsDialog.qml</file>
+        <file>ui/android/qml/ShazamDialog.qml</file>
+        <file>ui/android/qml/ArgonIcon.qml</file>
+        <file>ui/android/qml/SourceBadge.qml</file>
+        <file>ui/android/qml/TrackDelegate.qml</file>
+        <file>ui/android/qml/EqualizerSheet.qml</file>
+        <file>ui/android/qml/SubScreen.qml</file>
+        <file>ui/android/qml/SortSheet.qml</file>
+        <file>ui/android/qml/Toast.qml</file>
+        <file>ui/android/qml/TrackActionSheet.qml</file>
+        <file>ui/android/qml/NetworkPlaylistModal.qml</file>
+        <file>ui/android/assets/icons/services/vk.png</file>
+        <file>ui/android/assets/icons/services/vk.svg</file>
+        <file>ui/android/assets/icons/services/soundcloud.png</file>
+        <file>ui/android/assets/icons/services/soundcloud.svg</file>
+        <file>ui/android/assets/icons/services/yandex.png</file>
+        <file>ui/android/assets/icons/services/yandex.svg</file>
+        <file>ui/android/assets/icons/services/youtube.png</file>
+        <file>ui/android/assets/icons/services/youtube.svg</file>
+        <file>ui/android/assets/icons/services/offline.png</file>
+        <file>ui/android/assets/icons/services/offline.svg</file>
+        <file>ui/android/assets/icons/services/all.png</file>
+        <file>ui/android/assets/icons/services/all.svg</file>
     </qresource>
 </RCC>

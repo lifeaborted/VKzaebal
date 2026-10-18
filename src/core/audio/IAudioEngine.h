@@ -28,6 +28,13 @@ public:
     virtual size_t GetNetworkBufferSize() const { return 0; }
     virtual void PollEvents() {}
 
+    // Кроссфейд (плавный переход)
+    virtual void SetCrossfadeEnabled(bool enabled) { (void)enabled; }
+    virtual bool IsCrossfadeEnabled() const { return false; }
+    virtual void SetCrossfadeDurationMs(int ms) { (void)ms; }
+    virtual int GetCrossfadeDurationMs() const { return 3000; }
+    virtual void PrepareCrossfade() {}
+
     // Эквалайзер (DSP biquad)
     virtual void SetEqualizerEnabled(bool enabled) { (void)enabled; }
     virtual bool IsEqualizerEnabled() const { return false; }

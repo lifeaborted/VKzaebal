@@ -165,6 +165,20 @@ void DatabaseManager::MigrateSchemaIfNeeded() {
                "AND external_id NOT IN (SELECT track_id FROM SourceSessions);");
         Logger::Log(LogLevel::INFO, "DB: Added is_library column to Tracks table.");
     }
+
+    // Проверяем наличие position в Tracks
+    bool hasPosition = false;
+    QSqlQuery checkTracksPos("PRAGMA table_info(Tracks)", m_db);
+    while (checkTracksPos.next()) {
+        if (checkTracksPos.value(1).toString() == "position") {
+            hasPosition = true;
+        }
+    }
+    if (tracksTableExists && !hasPosition) {
+        QSqlQuery q(m_db);
+        q.exec("ALTER TABLE Tracks ADD COLUMN position INTEGER DEFAULT 0;");
+        Logger::Log(LogLevel::INFO, "DB: Added position column to Tracks table.");
+    }
 }
 
 void DatabaseManager::CreateTables() {
@@ -182,8 +196,10 @@ void DatabaseManager::CreateTables() {
                "lyrics_id TEXT, "
                "lyrics TEXT, "
                "is_library INTEGER DEFAULT 1, "
+               "position INTEGER DEFAULT 0, "
                "UNIQUE(source, external_id))");
 
+    query.exec("CREATE INDEX IF NOT EXISTS idx_tracks_source_pos ON Tracks(source, position)");
     query.exec("CREATE INDEX IF NOT EXISTS idx_tracks_source_id ON Tracks(source, id)");
     query.exec("CREATE INDEX IF NOT EXISTS idx_tracks_external_id ON Tracks(external_id)");
     query.exec("DROP INDEX IF EXISTS idx_tracks_source");
@@ -240,8 +256,8 @@ void DatabaseManager::ClearSetting(const QString& key) {
     query.exec();
 }
 
-void DatabaseManager::SaveTracks(const std::vector<Track>& tracks, bool isLibrary) {
-    m_trackRepo->SaveTracks(tracks, isLibrary);
+void DatabaseManager::SaveTracks(const std::vector<Track>& tracks, bool isLibrary, int startPosition) {
+    m_trackRepo->SaveTracks(tracks, isLibrary, startPosition);
 }
 
 void DatabaseManager::SetTrackIsLibrary(const std::string& trackId, bool isLibrary) {

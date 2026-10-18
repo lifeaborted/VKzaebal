@@ -9,6 +9,12 @@ void PlaylistManager::AddTrack(const Track& track) {
     m_playQueue.push_back(m_tracks.size() - 1);
 }
 
+void PlaylistManager::SetTracks(const std::vector<Track>& tracks) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_tracks = tracks;
+    RebuildQueue(false);
+}
+
 void PlaylistManager::PlayTrackNow(const Track& track) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_activeTrack = track;
@@ -246,9 +252,8 @@ void PlaylistManager::JumpToQueueIndex(int index) {
 void PlaylistManager::ToggleShuffle() {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_isShuffle = !m_isShuffle;
-    RebuildQueue(false);
-    m_queueIndex = 0;
-    if (!m_playQueue.empty() && m_playQueue[0] < static_cast<int>(m_tracks.size())) {
+    RebuildQueue(true);
+    if (m_activeTrack.id.empty() && !m_playQueue.empty() && m_playQueue[0] < static_cast<int>(m_tracks.size())) {
         m_activeTrack = m_tracks[m_playQueue[0]];
     }
     Logger::Log(LogLevel::INFO, std::string("Shuffle is now ") + (m_isShuffle ? "ON" : "OFF"));
@@ -256,12 +261,11 @@ void PlaylistManager::ToggleShuffle() {
 
 void PlaylistManager::SetShuffle(bool enable) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (!enable && !m_isShuffle) return;
+    if (m_isShuffle == enable) return;
 
     m_isShuffle = enable;
-    RebuildQueue(false);
-    m_queueIndex = 0;
-    if (!m_playQueue.empty() && m_playQueue[0] < static_cast<int>(m_tracks.size())) {
+    RebuildQueue(true);
+    if (m_activeTrack.id.empty() && !m_playQueue.empty() && m_playQueue[0] < static_cast<int>(m_tracks.size())) {
         m_activeTrack = m_tracks[m_playQueue[0]];
     }
     Logger::Log(LogLevel::INFO, std::string("Shuffle is now ") + (m_isShuffle ? "ON (Reshuffled)" : "OFF"));

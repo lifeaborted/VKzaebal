@@ -15,10 +15,10 @@ if /I "%CONFIG%"=="release" (
 )
 
 set PATH=C:\Qt\Tools\Ninja;C:\Qt\Tools\CMake_64\bin;C:\Users\danya\AppData\Local\Android\Sdk\platform-tools;%PATH%
-if exist "C:\Program Files\Android\Android Studio\jbr" (
-    set "JAVA_HOME=C:\Program Files\Android\Android Studio\jbr"
-) else if exist "C:\Program Files\Java\jdk-20" (
+if exist "C:\Program Files\Java\jdk-20" (
     set "JAVA_HOME=C:\Program Files\Java\jdk-20"
+) else if exist "C:\Program Files\Android\Android Studio\jbr" (
+    set "JAVA_HOME=C:\Program Files\Android\Android Studio\jbr"
 )
 
 set QT_DIR=C:\Qt\6.11.1\android_%ARCH%

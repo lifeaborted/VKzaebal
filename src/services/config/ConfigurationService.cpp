@@ -8,8 +8,11 @@
 ConfigurationService::ConfigurationService() = default;
 
 void ConfigurationService::EnsureDefaultConfig() {
-    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
-    if (!settings.contains("Session/Volume")) {
+    QString configPath = PathManager::GetConfigPath();
+    bool fileExisted = QFile::exists(configPath);
+    QSettings settings(configPath, QSettings::IniFormat);
+
+    if (!fileExisted && settings.allKeys().isEmpty()) {
         settings.setValue("Audio/CrossfadeDurationMs", 3000);
         settings.setValue("Audio/CrossfadePlayback", false);
         settings.setValue("Session/Volume", 1.0f);
@@ -24,6 +27,12 @@ void ConfigurationService::EnsureDefaultConfig() {
         settings.setValue("Playback/SeekStepSeconds", 5);
         settings.sync();
     } else {
+        if (!settings.contains("Session/Volume")) {
+            settings.setValue("Session/Volume", 1.0f);
+        }
+        if (!settings.contains("Session/Shuffle")) {
+            settings.setValue("Session/Shuffle", false);
+        }
         if (!settings.contains("Network/DiskCacheSizeMb")) {
             settings.setValue("Network/DiskCacheSizeMb", 100);
         }
@@ -38,6 +47,12 @@ void ConfigurationService::EnsureDefaultConfig() {
         }
         if (!settings.contains("Playback/JumpToSourceTrack")) {
             settings.setValue("Playback/JumpToSourceTrack", true);
+        }
+        if (!settings.contains("Audio/CrossfadeDurationMs")) {
+            settings.setValue("Audio/CrossfadeDurationMs", 3000);
+        }
+        if (!settings.contains("Audio/CrossfadePlayback")) {
+            settings.setValue("Audio/CrossfadePlayback", false);
         }
         if (settings.contains("Session/Position")) {
             settings.remove("Session/Position");
@@ -197,6 +212,29 @@ int ConfigurationService::GetDiskCacheSizeMb() const {
 void ConfigurationService::SetDiskCacheSizeMb(int mb) {
     QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
     settings.setValue("Network/DiskCacheSizeMb", std::clamp(mb, 10, 10000));
+    settings.sync();
+}
+
+bool ConfigurationService::GetAudioDiskCacheEnabled() const {
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    return settings.value("Audio/DiskCacheEnabled", false).toBool();
+}
+
+void ConfigurationService::SetAudioDiskCacheEnabled(bool enabled) {
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    settings.setValue("Audio/DiskCacheEnabled", enabled);
+    settings.sync();
+}
+
+int ConfigurationService::GetAudioDiskCacheMaxMb() const {
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    int mb = settings.value("Audio/DiskCacheMaxMb", 300).toInt();
+    return std::clamp(mb, 50, 5000);
+}
+
+void ConfigurationService::SetAudioDiskCacheMaxMb(int mb) {
+    QSettings settings(PathManager::GetConfigPath(), QSettings::IniFormat);
+    settings.setValue("Audio/DiskCacheMaxMb", std::clamp(mb, 50, 5000));
     settings.sync();
 }
 

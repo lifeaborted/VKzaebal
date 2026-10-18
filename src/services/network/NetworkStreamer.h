@@ -43,6 +43,7 @@ public:
     
     void SetTrackDuration(int durationSec) { m_trackDurationSec = durationSec; }
     bool IsPaused() const { return m_isPaused; }
+    void UpdatePlaybackPosition(double currentSeconds);
 
 signals:
     void DataReceived(const QByteArray& data);
@@ -65,6 +66,7 @@ private:
     void DownloadKey(const QUrl& keyUrl);
     void StartChunkDownload();
     void DeliverChunk(uint64_t seq, QByteArray data, uint64_t currentGen, bool wasEncrypted);
+    void AbortInFlightChunks();
 
     bool m_isPaused = false;
     QNetworkAccessManager* m_manager;
@@ -75,6 +77,8 @@ private:
     QUrl m_baseUrl;
     qint64 m_totalFileSize = 0;
     int m_trackDurationSec = 0;
+    qint64 m_downloadedBytes = 0;
+    double m_seekStartSec = 0.0;
 
     // --- ПЕРЕМЕННЫЕ ДЛЯ HLS ---
     QQueue<HlsChunk> m_chunkQueue;
@@ -91,4 +95,10 @@ private:
     uint64_t m_nextEmitSequence = 0;
     std::map<uint64_t, QByteArray> m_readyChunks;
     int m_chunksInFlight = 0;
+
+    // --- TIME-BASED BUFFER WINDOW THROTTLING ---
+    double m_downloadedPositionSec = 0.0;
+    double m_currentPlaybackSec = 0.0;
+    static constexpr double BUFFER_AHEAD_MAX = 40.0; // Максимум 40 сек запаса вперед
+    static constexpr double BUFFER_AHEAD_MIN = 15.0; // Порог возобновления скачивания
 };

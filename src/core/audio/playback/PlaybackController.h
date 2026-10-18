@@ -22,6 +22,10 @@ public:
     void SetCrossfadeEnabled(bool enabled);
     void SetSavedPosition(double pos, const std::string& trackId = "");
     void SetStartPaused(bool paused) { m_startPaused = paused; }
+    void SetDownloader(class TrackDownloader* dl, class ConfigurationService* cfg) {
+        m_downloader = dl;
+        m_configService = cfg;
+    }
 
     void AttemptPlay(const Track& track, int attempt = 1);
     void HandleTrackFinished();
@@ -32,12 +36,15 @@ public:
 private:
     void ExecuteAttemptPlay(const Track& track, int attempt, int expectedGen);
     void CancelProviderFetch();
+    void MaybeCacheTrack(const Track& track, const std::string& url);
 
     IAudioEngine& m_audio;
     PlaylistManager& m_playlist;
     NetworkStreamer& m_streamer;
     IAudioProvider* m_currentProvider = nullptr;
     std::function<IAudioProvider*(const std::string& source)> m_providerResolver;
+    class TrackDownloader* m_downloader = nullptr;
+    class ConfigurationService* m_configService = nullptr;
 
     bool m_crossfadeEnabled = false;
     double m_savedPosition = 0.0;
@@ -48,6 +55,8 @@ private:
 
     Track m_preloadedTrack;
     std::string m_cachedNextUrl = "";
+    Track m_currentPlayingTrack;
+    std::string m_currentPlayingUrl;
 
     bool m_startPaused = false;
 

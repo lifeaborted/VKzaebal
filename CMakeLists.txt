@@ -145,6 +145,8 @@ set(COMMON_SOURCES
         src/services/config/ConfigurationService.cpp
         src/services/session/PlaybackSessionService.h
         src/services/session/PlaybackSessionService.cpp
+        src/services/cache/CoverCacheService.h
+        src/services/cache/CoverCacheService.cpp
 
         # --- Shazam ---
         src/core/shazam/ShazamFFI.h
